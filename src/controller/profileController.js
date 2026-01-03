@@ -48,25 +48,82 @@ exports.uploadProfilePicture = async (req, res) => {
   }
 };
 
-// Remove Profile Picture
+// Remove Profile Picture 
 exports.removeProfilePicture = async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
+    console.log('Removing profile picture for user ID:', userId);
+
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
-    if (!user.picture_public_id) return res.status(400).json({ success: false, message: "No profile picture to remove" });
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found" 
+      });
+    }
 
-    // Delete from Cloudinary
-    await cloudinary.uploader.destroy(user.picture_public_id, { resource_type: "image" });
+    // FIXED: Check only picture field (since picture_public_id doesn't exist)
+    if (!user.picture || user.picture.trim() === '') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "No profile picture to remove" 
+      });
+    }
 
-    user.picture = null;
-    user.picture_public_id = null;
+    console.log('Current picture:', user.picture);
+
+    // Try to delete from Cloudinary if it's a Cloudinary URL
+    if (user.picture.includes('cloudinary')) {
+      try { 
+        const urlParts = user.picture.split('/');
+        const uploadIndex = urlParts.indexOf('upload');
+        
+        if (uploadIndex !== -1) {
+          // Get everything after 'upload/'
+          const afterUpload = urlParts.slice(uploadIndex + 1).join('/');
+          // Remove version and file extension
+          const publicId = afterUpload.replace(/^v\d+\//, '').replace(/\.[^/.]+$/, '');
+          
+          console.log('Extracted public_id:', publicId);
+          
+          // Delete from Cloudinary
+          await cloudinary.uploader.destroy(publicId, { 
+            resource_type: "image" 
+          });
+          console.log('Deleted from Cloudinary:', publicId);
+        }
+      } catch (cloudinaryError) {
+        console.log('Cloudinary delete error (non-critical):', cloudinaryError.message);
+        // Continue even if Cloudinary delete fails
+      }
+    }
+
+    // Clear picture field
+    user.picture = '';
     await user.save();
 
-    res.status(200).json({ success: true, message: "Profile picture removed" });
+    console.log('Profile picture removed from database');
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Profile picture removed successfully",
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        picture: user.picture,
+        role: user.role
+      }
+    });
 
   } catch (error) {
     console.error("Remove error:", error.message);
-    res.status(500).json({ success: false, message: "Failed to remove picture" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to remove profile picture",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
