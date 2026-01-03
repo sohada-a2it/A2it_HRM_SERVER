@@ -99,31 +99,35 @@ router.put('/editHoliday/:id', protect, adminOnly, holidayController.updateHolid
 router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);  
 
 // =================== Leave Routes ==================== 
-// Employee routes
-router.post('/request',protect, leaveController.requestLeave);
-router.get('/my-leaves',protect, leaveController.getMyLeaves);
-router.put('/my-leaves/:id',protect, leaveController.updateLeave);
-router.delete('/leaves/:id',protect, leaveController.deleteLeave);
+// ✅ CORRECT ROUTE ORDER:
+
+// Employee routes - FIRST (specific routes)
+router.post('/request', protect, leaveController.requestLeave);
+router.get('/my-leaves', protect, leaveController.getMyLeaves);
+router.put('/my-leaves/:id', protect, leaveController.updateLeave);
 
 // Admin routes
-router.get('/allLeave',protect,adminOnly, leaveController.getAllLeaves);
-router.put('/approve/:id',protect,adminOnly, leaveController.approveLeave);
-router.patch('/reject/:id',protect,adminOnly, leaveController.rejectLeave);
+router.get('/allLeave', protect, adminOnly, leaveController.getAllLeaves);
+router.put('/approve/:id', protect, adminOnly, leaveController.approveLeave);
+router.patch('/reject/:id', protect, adminOnly, leaveController.rejectLeave);
 
 // Bulk operations (Admin)
-router.post('/leaves/bulk-approve',protect,adminOnly, leaveController.bulkApproveLeaves);
-router.post('/leaves/bulk-reject',protect,adminOnly, leaveController.bulkRejectLeaves);
-router.delete('/leaves/bulk-delete',protect,adminOnly, leaveController.bulkDeleteLeaves);
+router.post('/leaves/bulk-approve', protect, adminOnly, leaveController.bulkApproveLeaves);
+router.post('/leaves/bulk-reject', protect, adminOnly, leaveController.bulkRejectLeaves);
+router.delete('/leaves/bulk-delete', protect, adminOnly, leaveController.bulkDeleteLeaves);
 
-// Common routes
-router.get('/leaves/:id',protect, leaveController.getLeaveById);
-router.get('/stats',protect, leaveController.getLeaveStats);
-router.get('/balance',protect, leaveController.getLeaveBalance);
-router.get('/export',protect, leaveController.exportLeaves);
+// Common routes - AFTER specific routes
+router.get('/leaves/:id', protect, leaveController.getLeaveById); 
+router.delete('/leaves/:id', protect, leaveController.deleteLeave);  
+
+// Other routes
+router.get('/stats', protect, leaveController.getLeaveStats);
+router.get('/balance', protect, leaveController.getLeaveBalance);
+router.get('/export', protect, leaveController.exportLeaves);
 
 // Utility routes
-router.get('/users/departments',protect, leaveController.getDepartments);
-router.get('/type-summary',protect, leaveController.getLeaveTypeSummary); 
+router.get('/users/departments', protect, leaveController.getDepartments);
+router.get('/type-summary', protect, leaveController.getLeaveTypeSummary);
 
 // =================== SalaryRule Routes ====================
 router.post('/createSalary', protect, adminOnly, salaryRuleController.createSalaryRule);
