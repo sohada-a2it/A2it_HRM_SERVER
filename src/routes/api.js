@@ -98,20 +98,32 @@ router.post('/addHoliday', protect, adminOnly, holidayController.addHoliday);
 router.put('/editHoliday/:id', protect, adminOnly, holidayController.updateHoliday); 
 router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);  
 
-// =================== Leave Routes ====================
+// =================== Leave Routes ==================== 
 // Employee routes
-router.post('/request', protect, leaveController.requestLeave);
-router.get('/my-leaves', protect, leaveController.getMyLeaves);
-router.get('/balance', protect, leaveController.getLeaveBalance);
-router.get('/stats', protect, leaveController.getLeaveStats);
-router.get('/my-leavesGet/:id', protect, leaveController.getLeaveById);
-router.put('/my-leavesUpdate/:id', protect, leaveController.updateLeave);
-router.delete('my-leavesDelete/:id', protect, leaveController.deleteLeave);
+router.post('/request',protect, leaveController.requestLeave);
+router.get('/my-leaves',protect, leaveController.getMyLeaves);
+router.put('/my-leaves/:id',protect, leaveController.updateLeave);
+router.delete('/leaves/:id',protect, leaveController.deleteLeave);
 
 // Admin routes
-router.get('/allLeave', protect, adminOnly, leaveController.getAllLeaves);
-router.put('/approve/:id', protect, adminOnly, leaveController.approveLeave);
-router.patch('/reject/:id', protect, adminOnly, leaveController.rejectLeave); 
+router.get('/allLeave',protect,adminOnly, leaveController.getAllLeaves);
+router.put('/approve/:id',protect,adminOnly, leaveController.approveLeave);
+router.patch('/reject/:id',protect,adminOnly, leaveController.rejectLeave);
+
+// Bulk operations (Admin)
+router.post('/leaves/bulk-approve',protect,adminOnly, leaveController.bulkApproveLeaves);
+router.post('/leaves/bulk-reject',protect,adminOnly, leaveController.bulkRejectLeaves);
+router.delete('/leaves/bulk-delete',protect,adminOnly, leaveController.bulkDeleteLeaves);
+
+// Common routes
+router.get('/leaves/:id',protect, leaveController.getLeaveById);
+router.get('/stats',protect, leaveController.getLeaveStats);
+router.get('/balance',protect, leaveController.getLeaveBalance);
+router.get('/export',protect, leaveController.exportLeaves);
+
+// Utility routes
+router.get('/users/departments',protect, leaveController.getDepartments);
+router.get('/type-summary',protect, leaveController.getLeaveTypeSummary); 
 
 // =================== SalaryRule Routes ====================
 router.post('/createSalary', protect, adminOnly, salaryRuleController.createSalaryRule);
