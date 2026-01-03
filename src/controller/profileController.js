@@ -1,5 +1,5 @@
-const User = require('../models/User');
-const cloudinary = require('../config/cloudinary');
+const User = require('../models/UsersModel');
+const cloudinary = require('../services/Cloudinary');
 const streamifier = require('streamifier');
 
 // Upload Profile Picture
