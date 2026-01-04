@@ -131,13 +131,13 @@ router.delete('/:id',protect, leaveController.deleteLeave);
 
 // =================== SalaryRule Routes ====================
 router.get('/active', protect, salaryRuleController.getActiveSalaryRules);
-router.get('/:id', protect, salaryRuleController.getSalaryRuleById);
+router.get('/salaryRule/:id', protect, salaryRuleController.getSalaryRuleById);
 
 // Admin routes (full CRUD)
-router.get('/', protect, adminOnly, salaryRuleController.getAllSalaryRules);
-router.post('/', protect, adminOnly, salaryRuleController.createSalaryRule);
-router.put('/:id', protect, adminOnly, salaryRuleController.updateSalaryRule);
-router.delete('/:id', protect, adminOnly, salaryRuleController.deleteSalaryRule);
+router.post('/salaryRule', protect, adminOnly, salaryRuleController.createSalaryRule);
+router.get('/salaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);
+router.put('/salaryRule/:id', protect, adminOnly, salaryRuleController.updateSalaryRule);
+router.delete('/salaryRule/:id', protect, adminOnly, salaryRuleController.deleteSalaryRule);
 
 // =================== WeaklyOff Routes ====================
 router.get("/getWeekly-off", protect, OfficeSchedule.getWeeklyOff);
