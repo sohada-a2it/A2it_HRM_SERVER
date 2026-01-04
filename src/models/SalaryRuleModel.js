@@ -1,117 +1,131 @@
 const mongoose = require('mongoose');
 
-const salaryRuleSchema = new mongoose.Schema({
+const SalaryRuleSchema = new mongoose.Schema({
   title: {
     type: String,
     required: [true, 'Title is required'],
     trim: true,
     maxlength: [100, 'Title cannot exceed 100 characters']
   },
+  
+  salaryType: {
+    type: String,
+    required: [true, 'Salary type is required'],
+    enum: ['Monthly', 'Hourly', 'Project', 'Daily', 'Weekly'],
+    default: 'Monthly'
+  },
+  
+  rate: {
+    type: Number,
+    required: [true, 'Rate is required'],
+    min: [0, 'Rate cannot be negative'],
+    default: 0
+  },
+  
   description: {
     type: String,
-    required: [true, 'Description is required'],
     trim: true,
     maxlength: [500, 'Description cannot exceed 500 characters']
   },
-  ruleType: {
-    type: String,
-    enum: ['late_deduction', 'adjustment_deduction', 'bonus', 'allowance'],
-    default: 'late_deduction',
-    required: [true, 'Rule type is required']
-  },
-  calculation: {
-    type: String,
-    default: '',
-    trim: true
-  },
-  deductionAmount: {
+  
+  // Overtime rules
+  overtimeRate: {
     type: Number,
-    default: 1,
-    min: [0, 'Deduction amount cannot be negative'],
-    required: [true, 'Deduction amount is required']
+    min: [0, 'Overtime rate cannot be negative'],
+    default: 0
   },
-  conditions: {
-    threshold: {
+  overtimeEnabled: {
+    type: Boolean,
+    default: false
+  },
+  
+  // Leave rules
+  leaveRule: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    perDayDeduction: {
       type: Number,
-      default: 1,
-      min: [0, 'Threshold cannot be negative']
+      min: [0, 'Per day deduction cannot be negative'],
+      default: 0
     },
-    deductionType: {
-      type: String,
-      enum: ['daily_salary', 'percentage', 'fixed_amount'],
-      default: 'daily_salary'
-    },
-    applicableTo: [{
-      type: String,
-      enum: ['all_employees', 'permanent', 'contractual', 'probation'],
-      default: ['all_employees']
-    }],
-    effectiveFrom: {
-      type: Date,
-      default: Date.now,
-      required: [true, 'Effective date is required']
+    paidLeaves: {
+      type: Number,
+      min: [0, 'Paid leaves cannot be negative'],
+      default: 0
     }
   },
+  
+  // Late rules
+  lateRule: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    lateDaysThreshold: {
+      type: Number,
+      min: [1, 'Late days threshold must be at least 1'],
+      default: 3
+    },
+    equivalentLeaveDays: {
+      type: Number,
+      min: [0, 'Equivalent leave days cannot be negative'],
+      default: 0.5
+    }
+  },
+  
+  // Bonus rules
+  bonusAmount: {
+    type: Number,
+    min: [0, 'Bonus amount cannot be negative'],
+    default: 0
+  },
+  bonusConditions: {
+    type: String,
+    trim: true
+  },
+  
+  // Status
   isActive: {
     type: Boolean,
     default: true
   },
-  isSystemDefault: {
-    type: Boolean,
-    default: false
+  
+  // Additional fields
+  department: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Department'
   },
-  ruleCode: {
-    type: String,
-    unique: true,
-    required: [true, 'Rule code is required']
-  },
-  date: {
-    type: Date,
-    default: Date.now,
-    required: [true, 'Date is required']
-  },
+  
+  applicableTo: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  
+  // Timestamps
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: [true, 'Created by is required']
+    ref: 'User'
   },
+  
   createdAt: {
     type: Date,
     default: Date.now
   },
+  
   updatedAt: {
     type: Date,
     default: Date.now
-  },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
   }
+}, {
+  timestamps: true // This will auto-add createdAt and updatedAt
 });
 
-// Update timestamp on save
-salaryRuleSchema.pre('save', function(next) {
+// Update the updatedAt field before saving
+SalaryRuleSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
 
-// Generate rule code before save
-salaryRuleSchema.pre('save', function(next) {
-  if (!this.ruleCode) {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.ruleCode = `SR-${timestamp}-${random}`;
-  }
-  next();
-});
-
-// Indexes for better performance
-salaryRuleSchema.index({ ruleCode: 1 });
-salaryRuleSchema.index({ isActive: 1 });
-salaryRuleSchema.index({ ruleType: 1 });
-salaryRuleSchema.index({ isSystemDefault: 1 });
-salaryRuleSchema.index({ createdAt: -1 });
-
-const SalaryRule = mongoose.model('SalaryRule', salaryRuleSchema);
-
-module.exports = SalaryRule;
+module.exports = mongoose.model('SalaryRule', SalaryRuleSchema);

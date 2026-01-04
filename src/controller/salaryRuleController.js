@@ -1,537 +1,434 @@
 const SalaryRule = require('../models/SalaryRuleModel');
-const mongoose = require('mongoose');
+const User = require('../models/UsersModel');
 
-// Default static rules data (with correct field names)
-const DEFAULT_RULES = [
-  {
-    ruleCode: "LATE_DEDUCTION_001",
-    title: "Late Attendance Policy",
-    description: "3 days late = 1 day salary deduction",
-    ruleType: "late_deduction",
-    calculation: "3 days late = 1 day salary deduction",
-    deductionAmount: 1,
-    conditions: {
-      threshold: 3,
-      deductionType: "daily_salary",
-      applicableTo: ["all_employees"],
-      effectiveFrom: new Date()
-    },
-    isActive: true,
-    isSystemDefault: true,
-    date: new Date()
-  },
-  {
-    ruleCode: "ADJUSTMENT_001",
-    title: "Adjustment Policy",
-    description: "1 day adjustment = 1 day salary deduction",
-    ruleType: "adjustment_deduction",
-    calculation: "1 day adjustment = 1 day salary deduction",
-    deductionAmount: 1,
-    conditions: {
-      threshold: 1,
-      deductionType: "daily_salary",
-      applicableTo: ["all_employees"],
-      effectiveFrom: new Date()
-    },
-    isActive: true,
-    isSystemDefault: true,
-    date: new Date()
-  }
-];
-
-// Helper: Create default rules
-const createDefaultRules = async (adminUserId) => {
-  try {
-    // Check if default rules already exist
-    const existingRules = await SalaryRule.find({ isSystemDefault: true });
-    
-    if (existingRules.length === 0) {
-      const rulesWithAdmin = DEFAULT_RULES.map(rule => ({
-        ...rule,
-        createdBy: adminUserId || new mongoose.Types.ObjectId()
-      }));
-      
-      await SalaryRule.insertMany(rulesWithAdmin);
-      console.log("✅ Default salary rules created");
-    }
-  } catch (error) {
-    console.error("❌ Error creating default rules:", error.message);
-  }
-};
-
-// ---------------- Get All Salary Rules ----------------
-exports.getAllSalaryRules = async (req, res) => {
-  try {
-    // Ensure user is authenticated
-    if (!req.user) {
-      return res.status(401).json({
-        status: 'fail',
-        message: 'Authentication required'
-      });
-    }
-
-    // Ensure default rules exist (pass admin user ID if available)
-    await createDefaultRules(req.user._id);
-
-    // Get all rules
-    const rules = await SalaryRule.find()
-      .populate('createdBy', 'name email role')
-      .populate('updatedBy', 'name email')
-      .sort({ createdAt: -1 });
-    
-    res.status(200).json({
-      status: 'success',
-      count: rules.length,
-      rules
-    });
-  } catch (err) {
-    console.error("❌ Get all rules error:", err.message);
-    res.status(500).json({
-      status: 'fail',
-      message: 'Server error while fetching salary rules',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
-};
-
-// ---------------- Get Active Salary Rules ----------------
-exports.getActiveSalaryRules = async (req, res) => {
-  try {
-    // Ensure user is authenticated
-    if (!req.user) {
-      return res.status(401).json({
-        status: 'fail',
-        message: 'Authentication required'
-      });
-    }
-
-    // For employees, only show active rules
-    const rules = await SalaryRule.find({ isActive: true })
-      .select('title description ruleType calculation deductionAmount conditions isActive ruleCode isSystemDefault')
-      .sort({ createdAt: -1 });
-    
-    res.status(200).json({
-      status: 'success',
-      count: rules.length,
-      rules
-    });
-  } catch (err) {
-    console.error("❌ Get active rules error:", err.message);
-    res.status(500).json({
-      status: 'fail',
-      message: 'Server error while fetching active salary rules',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
-};
-
-// ---------------- Create Salary Rule ----------------
+// CREATE Salary Rule
 exports.createSalaryRule = async (req, res) => {
   try {
+    console.log('Creating salary rule with data:', req.body);
+    
     const {
       title,
+      salaryType,
+      rate,
       description,
-      ruleType,
-      calculation,
-      deductionAmount,
-      conditions,
+      overtimeRate,
+      overtimeEnabled,
+      leaveRule,
+      lateRule,
+      bonusAmount,
+      bonusConditions,
       isActive,
-      date
+      department,
+      applicableTo
     } = req.body;
 
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        status: 'fail',
-        message: 'Only admin can create salary rules'
-      });
-    }
-
-    // Validate required fields
-    if (!title || !title.trim()) {
+    // Validation
+    if (!title || !salaryType || rate === undefined) {
       return res.status(400).json({
-        status: 'fail',
-        message: 'Title is required'
+        success: false,
+        message: 'Title, salaryType, and rate are required fields'
       });
     }
 
-    if (!description || !description.trim()) {
+    // Convert rate to number
+    const numericRate = parseFloat(rate);
+    if (isNaN(numericRate)) {
       return res.status(400).json({
-        status: 'fail',
-        message: 'Description is required'
+        success: false,
+        message: 'Rate must be a valid number'
       });
     }
 
-    if (!ruleType) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Rule type is required'
-      });
-    }
-
-    // Validate deduction amount
-    const parsedDeductionAmount = parseFloat(deductionAmount);
-    if (isNaN(parsedDeductionAmount) || parsedDeductionAmount < 0) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Valid deduction amount is required'
-      });
-    }
-
-    // Prepare conditions object
-    const ruleConditions = {
-      threshold: conditions?.threshold || 1,
-      deductionType: conditions?.deductionType || 'daily_salary',
-      applicableTo: Array.isArray(conditions?.applicableTo) && conditions.applicableTo.length > 0
-        ? conditions.applicableTo
-        : ['all_employees'],
-      effectiveFrom: conditions?.effectiveFrom ? new Date(conditions.effectiveFrom) : new Date()
+    // Create salary rule object
+    const salaryRuleData = {
+      title,
+      salaryType,
+      rate: numericRate,
+      createdBy: req.user._id // Make sure user is authenticated
     };
 
-    // Create the salary rule
-    const rule = await SalaryRule.create({
-      title: title.trim(),
-      description: description.trim(),
-      ruleType,
-      calculation: calculation || `${parsedDeductionAmount} day's salary deduction`,
-      deductionAmount: parsedDeductionAmount,
-      conditions: ruleConditions,
-      isActive: isActive !== undefined ? isActive : true,
-      date: date ? new Date(date) : new Date(),
-      createdBy: req.user._id,
-      isSystemDefault: false
-    });
+    // Add optional fields if provided
+    if (description) salaryRuleData.description = description;
+    if (overtimeRate !== undefined) {
+      salaryRuleData.overtimeRate = parseFloat(overtimeRate) || 0;
+      salaryRuleData.overtimeEnabled = overtimeEnabled || false;
+    }
+    if (leaveRule) {
+      salaryRuleData.leaveRule = {
+        enabled: leaveRule.enabled || false,
+        perDayDeduction: parseFloat(leaveRule.perDayDeduction) || 0,
+        paidLeaves: parseInt(leaveRule.paidLeaves) || 0
+      };
+    }
+    if (lateRule) {
+      salaryRuleData.lateRule = {
+        enabled: lateRule.enabled || false,
+        lateDaysThreshold: parseInt(lateRule.lateDaysThreshold) || 3,
+        equivalentLeaveDays: parseFloat(lateRule.equivalentLeaveDays) || 0.5
+      };
+    }
+    if (bonusAmount !== undefined) {
+      salaryRuleData.bonusAmount = parseFloat(bonusAmount) || 0;
+      if (bonusConditions) salaryRuleData.bonusConditions = bonusConditions;
+    }
+    if (isActive !== undefined) salaryRuleData.isActive = isActive;
+    if (department) salaryRuleData.department = department;
+    if (applicableTo && Array.isArray(applicableTo)) {
+      salaryRuleData.applicableTo = applicableTo;
+    }
 
-    // Populate createdBy
-    await rule.populate('createdBy', 'name email');
+    console.log('Processed salary rule data:', salaryRuleData);
+
+    // Create new salary rule
+    const salaryRule = new SalaryRule(salaryRuleData);
+    
+    // Save to database
+    const savedSalaryRule = await salaryRule.save();
+    
+    console.log('Salary rule saved successfully:', savedSalaryRule._id);
+
+    // Populate createdBy field
+    const populatedRule = await SalaryRule.findById(savedSalaryRule._id)
+      .populate('createdBy', 'firstName lastName email')
+      .populate('department', 'name')
+      .populate('applicableTo', 'firstName lastName employeeId');
 
     res.status(201).json({
-      status: 'success',
+      success: true,
       message: 'Salary rule created successfully',
-      rule
+      data: populatedRule
     });
-  } catch (err) {
-    console.error("❌ Create rule error:", err.message);
+
+  } catch (error) {
+    console.error('Error creating salary rule:', error);
     
-    // Handle duplicate rule code error
-    if (err.code === 11000) {
+    // Handle specific MongoDB errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(val => val.message);
       return res.status(400).json({
-        status: 'fail',
-        message: 'Rule with this code already exists'
+        success: false,
+        message: 'Validation Error',
+        errors: messages
       });
     }
-
-    // Handle validation errors
-    if (err.name === 'ValidationError') {
-      const errors = Object.values(err.errors).map(el => el.message);
+    
+    if (error.code === 11000) {
       return res.status(400).json({
-        status: 'fail',
-        message: 'Validation error',
-        errors: errors.length > 0 ? errors : [err.message]
+        success: false,
+        message: 'Duplicate title found'
       });
     }
-
+    
     res.status(500).json({
-      status: 'fail',
-      message: 'Server error while creating salary rule',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 };
 
-// ---------------- Update Salary Rule ----------------
-exports.updateSalaryRule = async (req, res) => {
+// GET ALL Salary Rules
+exports.getAllSalaryRules = async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    // Validate ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Invalid rule ID'
-      });
-    }
-
-    const rule = await SalaryRule.findById(id);
-    
-    if (!rule) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Rule not found'
-      });
-    }
-
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        status: 'fail',
-        message: 'Only admin can update salary rules'
-      });
-    }
-
-    // Check if it's a system default rule (optional: can update but show warning)
-    if (rule.isSystemDefault) {
-      // You can decide whether to allow updates to system rules
-      // For now, we allow but add a note
-      console.log('⚠️ Updating system default rule:', rule.ruleCode);
-    }
-
     const {
-      title,
-      description,
-      ruleType,
-      calculation,
-      deductionAmount,
-      conditions,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      search = '',
       isActive,
-      date
-    } = req.body;
+      salaryType
+    } = req.query;
 
-    // Update fields if provided
-    if (title !== undefined && title.trim()) rule.title = title.trim();
-    if (description !== undefined && description.trim()) rule.description = description.trim();
-    if (ruleType !== undefined) rule.ruleType = ruleType;
-    if (calculation !== undefined) rule.calculation = calculation;
-    if (deductionAmount !== undefined) {
-      const parsedAmount = parseFloat(deductionAmount);
-      if (!isNaN(parsedAmount) && parsedAmount >= 0) {
-        rule.deductionAmount = parsedAmount;
-      }
+    // Build query
+    const query = {};
+    
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
     }
     
-    // Update conditions if provided
-    if (conditions) {
-      if (conditions.threshold !== undefined) {
-        const parsedThreshold = parseFloat(conditions.threshold);
-        if (!isNaN(parsedThreshold) && parsedThreshold >= 0) {
-          rule.conditions.threshold = parsedThreshold;
-        }
-      }
-      if (conditions.deductionType !== undefined) rule.conditions.deductionType = conditions.deductionType;
-      if (conditions.applicableTo !== undefined && Array.isArray(conditions.applicableTo)) {
-        rule.conditions.applicableTo = conditions.applicableTo;
-      }
-      if (conditions.effectiveFrom !== undefined) {
-        rule.conditions.effectiveFrom = new Date(conditions.effectiveFrom);
-      }
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
     }
     
-    if (isActive !== undefined) rule.isActive = isActive;
-    if (date !== undefined) rule.date = new Date(date);
-    
-    rule.updatedAt = new Date();
-    rule.updatedBy = req.user._id;
+    if (salaryType) {
+      query.salaryType = salaryType;
+    }
 
-    await rule.save();
-    
-    // Populate user fields
-    await rule.populate('createdBy', 'name email');
-    await rule.populate('updatedBy', 'name email');
-    
+    // Pagination
+    const currentPage = parseInt(page);
+    const pageLimit = parseInt(limit);
+    const skip = (currentPage - 1) * pageLimit;
+
+    // Sorting
+    const sort = {};
+    sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+
+    // Get total count
+    const total = await SalaryRule.countDocuments(query);
+
+    // Get data
+    const salaryRules = await SalaryRule.find(query)
+      .populate('createdBy', 'firstName lastName email')
+      .populate('department', 'name')
+      .populate('applicableTo', 'firstName lastName employeeId')
+      .sort(sort)
+      .skip(skip)
+      .limit(pageLimit);
+
     res.status(200).json({
-      status: 'success',
-      message: 'Salary rule updated successfully',
-      rule
+      success: true,
+      data: salaryRules,
+      pagination: {
+        page: currentPage,
+        limit: pageLimit,
+        total,
+        pages: Math.ceil(total / pageLimit)
+      }
     });
 
-  } catch (err) {
-    console.error("❌ Update rule error:", err.message);
-    
-    // Handle validation errors
-    if (err.name === 'ValidationError') {
-      const errors = Object.values(err.errors).map(el => el.message);
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Validation error',
-        errors: errors.length > 0 ? errors : [err.message]
-      });
-    }
-
+  } catch (error) {
+    console.error('Error fetching salary rules:', error);
     res.status(500).json({
-      status: 'fail',
-      message: 'Server error while updating salary rule',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      success: false,
+      message: 'Server error'
     });
   }
 };
 
-// ---------------- Delete Salary Rule ----------------
-exports.deleteSalaryRule = async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Validate ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Invalid rule ID'
-      });
-    }
-
-    const rule = await SalaryRule.findById(id);
-    
-    if (!rule) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Rule not found'
-      });
-    }
-
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        status: 'fail',
-        message: 'Only admin can delete salary rules'
-      });
-    }
-
-    // Prevent deletion of system default rules
-    if (rule.isSystemDefault) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Cannot delete system default rules'
-      });
-    }
-
-    await rule.deleteOne();
-    
-    res.status(200).json({
-      status: 'success',
-      message: 'Salary rule deleted successfully'
-    });
-  } catch (err) {
-    console.error("❌ Delete rule error:", err.message);
-    res.status(500).json({
-      status: 'fail',
-      message: 'Server error while deleting salary rule',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
-};
-
-// ---------------- Get Salary Rule by ID ----------------
+// GET SINGLE Salary Rule
 exports.getSalaryRuleById = async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    // Validate ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Invalid rule ID'
-      });
-    }
+    const salaryRule = await SalaryRule.findById(req.params.id)
+      .populate('createdBy', 'firstName lastName email')
+      .populate('department', 'name')
+      .populate('applicableTo', 'firstName lastName employeeId department');
 
-    const rule = await SalaryRule.findById(id)
-      .populate('createdBy', 'name email role')
-      .populate('updatedBy', 'name email');
-    
-    if (!rule) {
+    if (!salaryRule) {
       return res.status(404).json({
-        status: 'fail',
-        message: 'Rule not found'
+        success: false,
+        message: 'Salary rule not found'
       });
     }
 
     res.status(200).json({
-      status: 'success',
-      rule
+      success: true,
+      data: salaryRule
     });
-  } catch (err) {
-    console.error("❌ Get rule by ID error:", err.message);
+
+  } catch (error) {
+    console.error('Error fetching salary rule:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid salary rule ID'
+      });
+    }
+    
     res.status(500).json({
-      status: 'fail',
-      message: 'Server error while fetching salary rule',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      success: false,
+      message: 'Server error'
     });
   }
 };
 
-// ---------------- Get Salary Rules by Type ----------------
-exports.getSalaryRulesByType = async (req, res) => {
+// UPDATE Salary Rule
+exports.updateSalaryRule = async (req, res) => {
   try {
-    const { type } = req.params;
+    const {
+      title,
+      salaryType,
+      rate,
+      description,
+      overtimeRate,
+      overtimeEnabled,
+      leaveRule,
+      lateRule,
+      bonusAmount,
+      bonusConditions,
+      isActive,
+      department,
+      applicableTo
+    } = req.body;
+
+    // Find salary rule
+    const salaryRule = await SalaryRule.findById(req.params.id);
     
-    // Validate rule type
-    const validTypes = ['late_deduction', 'adjustment_deduction', 'bonus', 'allowance'];
-    if (!validTypes.includes(type)) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Invalid rule type'
+    if (!salaryRule) {
+      return res.status(404).json({
+        success: false,
+        message: 'Salary rule not found'
       });
     }
 
-    const rules = await SalaryRule.find({ ruleType: type, isActive: true })
-      .select('title description calculation deductionAmount conditions')
-      .sort({ createdAt: -1 });
+    // Update fields
+    if (title) salaryRule.title = title;
+    if (salaryType) salaryRule.salaryType = salaryType;
+    if (rate !== undefined) salaryRule.rate = parseFloat(rate);
+    if (description !== undefined) salaryRule.description = description;
     
+    if (overtimeRate !== undefined) {
+      salaryRule.overtimeRate = parseFloat(overtimeRate);
+      if (overtimeEnabled !== undefined) {
+        salaryRule.overtimeEnabled = overtimeEnabled;
+      }
+    }
+    
+    if (leaveRule) {
+      salaryRule.leaveRule = {
+        enabled: leaveRule.enabled || salaryRule.leaveRule.enabled,
+        perDayDeduction: parseFloat(leaveRule.perDayDeduction) || salaryRule.leaveRule.perDayDeduction,
+        paidLeaves: parseInt(leaveRule.paidLeaves) || salaryRule.leaveRule.paidLeaves
+      };
+    }
+    
+    if (lateRule) {
+      salaryRule.lateRule = {
+        enabled: lateRule.enabled || salaryRule.lateRule.enabled,
+        lateDaysThreshold: parseInt(lateRule.lateDaysThreshold) || salaryRule.lateRule.lateDaysThreshold,
+        equivalentLeaveDays: parseFloat(lateRule.equivalentLeaveDays) || salaryRule.lateRule.equivalentLeaveDays
+      };
+    }
+    
+    if (bonusAmount !== undefined) {
+      salaryRule.bonusAmount = parseFloat(bonusAmount);
+      if (bonusConditions !== undefined) {
+        salaryRule.bonusConditions = bonusConditions;
+      }
+    }
+    
+    if (isActive !== undefined) salaryRule.isActive = isActive;
+    if (department !== undefined) salaryRule.department = department;
+    if (applicableTo !== undefined) salaryRule.applicableTo = applicableTo;
+
+    // Save updated salary rule
+    const updatedSalaryRule = await salaryRule.save();
+    
+    // Populate references
+    const populatedRule = await SalaryRule.findById(updatedSalaryRule._id)
+      .populate('createdBy', 'firstName lastName email')
+      .populate('department', 'name')
+      .populate('applicableTo', 'firstName lastName employeeId');
+
     res.status(200).json({
-      status: 'success',
-      count: rules.length,
-      rules
+      success: true,
+      message: 'Salary rule updated successfully',
+      data: populatedRule
     });
-  } catch (err) {
-    console.error("❌ Get rules by type error:", err.message);
+
+  } catch (error) {
+    console.error('Error updating salary rule:', error);
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation Error',
+        errors: messages
+      });
+    }
+    
     res.status(500).json({
-      status: 'fail',
-      message: 'Server error while fetching salary rules by type',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      success: false,
+      message: 'Server error'
     });
   }
 };
 
-// ---------------- Toggle Rule Status ----------------
-exports.toggleRuleStatus = async (req, res) => {
+// DELETE Salary Rule
+exports.deleteSalaryRule = async (req, res) => {
   try {
-    const { id } = req.params;
+    const salaryRule = await SalaryRule.findById(req.params.id);
     
-    // Validate ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Invalid rule ID'
-      });
-    }
-
-    const rule = await SalaryRule.findById(id);
-    
-    if (!rule) {
+    if (!salaryRule) {
       return res.status(404).json({
-        status: 'fail',
-        message: 'Rule not found'
+        success: false,
+        message: 'Salary rule not found'
       });
     }
 
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        status: 'fail',
-        message: 'Only admin can toggle rule status'
-      });
-    }
-
-    // Toggle isActive status
-    rule.isActive = !rule.isActive;
-    rule.updatedAt = new Date();
-    rule.updatedBy = req.user._id;
-
-    await rule.save();
+    // Check if any employee is using this salary rule
+    const usersUsingRule = await User.countDocuments({ salaryRule: req.params.id });
     
+    if (usersUsingRule > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete salary rule. ${usersUsingRule} employee(s) are using this rule.`
+      });
+    }
+
+    // Delete salary rule
+    await salaryRule.deleteOne();
+
     res.status(200).json({
-      status: 'success',
-      message: `Rule ${rule.isActive ? 'activated' : 'deactivated'} successfully`,
-      rule: {
-        _id: rule._id,
-        title: rule.title,
-        isActive: rule.isActive
+      success: true,
+      message: 'Salary rule deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Error deleting salary rule:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// TOGGLE Active Status
+exports.toggleActiveStatus = async (req, res) => {
+  try {
+    const salaryRule = await SalaryRule.findById(req.params.id);
+    
+    if (!salaryRule) {
+      return res.status(404).json({
+        success: false,
+        message: 'Salary rule not found'
+      });
+    }
+
+    // Toggle status
+    salaryRule.isActive = !salaryRule.isActive;
+    await salaryRule.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Salary rule ${salaryRule.isActive ? 'activated' : 'deactivated'} successfully`,
+      data: {
+        id: salaryRule._id,
+        isActive: salaryRule.isActive
       }
     });
-  } catch (err) {
-    console.error("❌ Toggle rule status error:", err.message);
+
+  } catch (error) {
+    console.error('Error toggling salary rule status:', error);
     res.status(500).json({
-      status: 'fail',
-      message: 'Server error while toggling rule status',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// GET ACTIVE Salary Rules
+exports.getActiveSalaryRules = async (req, res) => {
+  try {
+    const salaryRules = await SalaryRule.find({ isActive: true })
+      .select('title salaryType rate description')
+      .sort({ title: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: salaryRules
+    });
+
+  } catch (error) {
+    console.error('Error fetching active salary rules:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
     });
   }
 };
