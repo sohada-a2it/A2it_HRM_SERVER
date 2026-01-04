@@ -1,35 +1,40 @@
-// models/SalaryRuleModel.js
 const mongoose = require('mongoose');
 
 const salaryRuleSchema = new mongoose.Schema({
   title: {
     type: String,
     required: [true, 'Title is required'],
-    trim: true
+    trim: true,
+    maxlength: [100, 'Title cannot exceed 100 characters']
   },
   description: {
-    type: String, 
-    trim: true
+    type: String,
+    required: [true, 'Description is required'],
+    trim: true,
+    maxlength: [500, 'Description cannot exceed 500 characters']
   },
   ruleType: {
     type: String,
     enum: ['late_deduction', 'adjustment_deduction', 'bonus', 'allowance'],
-    default: 'late_deduction'
+    default: 'late_deduction',
+    required: [true, 'Rule type is required']
   },
   calculation: {
     type: String,
-    default: ''
+    default: '',
+    trim: true
   },
   deductionAmount: {
     type: Number,
-    default: 0,
-    min: 0
+    default: 1,
+    min: [0, 'Deduction amount cannot be negative'],
+    required: [true, 'Deduction amount is required']
   },
   conditions: {
     threshold: {
       type: Number,
       default: 1,
-      min: 0
+      min: [0, 'Threshold cannot be negative']
     },
     deductionType: {
       type: String,
@@ -38,11 +43,13 @@ const salaryRuleSchema = new mongoose.Schema({
     },
     applicableTo: [{
       type: String,
+      enum: ['all_employees', 'permanent', 'contractual', 'probation'],
       default: ['all_employees']
     }],
     effectiveFrom: {
       type: Date,
-      default: Date.now
+      default: Date.now,
+      required: [true, 'Effective date is required']
     }
   },
   isActive: {
@@ -55,11 +62,18 @@ const salaryRuleSchema = new mongoose.Schema({
   },
   ruleCode: {
     type: String,
-    unique: true
+    unique: true,
+    required: [true, 'Rule code is required']
+  },
+  date: {
+    type: Date,
+    default: Date.now,
+    required: [true, 'Date is required']
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
+    required: [true, 'Created by is required']
   },
   createdAt: {
     type: Date,
@@ -68,6 +82,10 @@ const salaryRuleSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 });
 
@@ -77,5 +95,23 @@ salaryRuleSchema.pre('save', function(next) {
   next();
 });
 
+// Generate rule code before save
+salaryRuleSchema.pre('save', function(next) {
+  if (!this.ruleCode) {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    this.ruleCode = `SR-${timestamp}-${random}`;
+  }
+  next();
+});
+
+// Indexes for better performance
+salaryRuleSchema.index({ ruleCode: 1 });
+salaryRuleSchema.index({ isActive: 1 });
+salaryRuleSchema.index({ ruleType: 1 });
+salaryRuleSchema.index({ isSystemDefault: 1 });
+salaryRuleSchema.index({ createdAt: -1 });
+
 const SalaryRule = mongoose.model('SalaryRule', salaryRuleSchema);
+
 module.exports = SalaryRule;
