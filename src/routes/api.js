@@ -185,8 +185,8 @@ router.put('/:id',protect, leaveController.updateLeave);
 router.delete('/:id',protect, leaveController.deleteLeave);
 
 // =================== SalaryRule Routes ====================
-router.get('/activeEmployee/:id', protect, salaryRuleController.getSalaryRuleById);
-router.get('/activeEmployee', protect, salaryRuleController.getActiveSalaryRules);
+router.get('/salaryRule/:id', protect, salaryRuleController.getSalaryRuleById);
+router.get('/salaryRule', protect, salaryRuleController.getActiveSalaryRules);
 
 // Admin routes (full CRUD)
 router.route('/salary-rules1')
