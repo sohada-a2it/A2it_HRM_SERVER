@@ -93,10 +93,20 @@ router.get('/admin/statistics', protect, adminOnly, sessionController.getSession
 router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById); 
 
 // =====================Holiday Routes===================== 
-router.get('/getAllHoliday', protect, holidayController.getHolidays); 
-router.post('/addHoliday', protect, adminOnly, holidayController.addHoliday); 
-router.put('/editHoliday/:id', protect, adminOnly, holidayController.updateHoliday); 
-router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);  
+// Public endpoints (no auth required)
+router.get('/', protect,holidayController.getHolidays);
+router.get('/stats', protect,holidayController.getHolidayStats);
+router.get('/export', protect,holidayController.exportHolidays);
+
+// Protected endpoints (require auth)
+router.get('/:id',protect, adminOnly, holidayController.getHolidayById);
+
+// Admin only endpoints (require auth + admin role)
+router.post('/',protect, adminOnly, holidayController.addHoliday); // POST /holidays
+router.put('/:id',protect, adminOnly, holidayController.updateHoliday); // PUT /holidays/:id
+router.delete('/:id',protect, adminOnly, holidayController.deleteHoliday); // DELETE /holidays/:id
+router.post('/import',protect, adminOnly, holidayController.importHolidays); // POST /holidays/import
+
 
 // =================== Leave Routes ==================== 
 // ✅ CORRECT ROUTE ORDER:
