@@ -193,7 +193,7 @@ router.route('/salary-rules1')
   .get(protect, adminOnly, salaryRuleController.getAllSalaryRules)
   .post(protect, adminOnly, salaryRuleController.createSalaryRule);
 
-router.route('/salary-rules2')
+router.route('/salary-rules2/:id')
   .put(protect, adminOnly, salaryRuleController.updateSalaryRule)
   .delete(protect, adminOnly, salaryRuleController.deleteSalaryRule);
 
