@@ -11,48 +11,56 @@ const AdminRequestOtp = async (req, res) => {
   try {
     const { userEmail } = req.body;
 
-    // Check if user exists
-    const user = await User.findOne({ email: userEmail });
-    if (!user) {
-      return res.status(404).json({ status: "fail", message: "User not found" });
-    }
+    console.log('🚀 OTP REQUEST FOR:', userEmail);
 
-    // Generate a 6-digit OTP
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000);
 
-    // Invalidate old OTPs for this user
-    await OtpModel.updateMany(
-      { email: ADMIN_EMAIL, userEmail, status: 0 },
-      { status: 1 }
-    );
-
-    // Save new OTP
+    // Save to database
     await OtpModel.create({
-      email: ADMIN_EMAIL,
-      userEmail,
+      email: process.env.ADMIN_EMAIL || 'admin@a2it.com',
       otp,
       status: 0,
-      createdAt: new Date()
+      userEmail
     });
 
-    // Send OTP email (async, non-blocking)
-    sendEmail(
-      ADMIN_EMAIL,
-      "A2IT Admin Password Reset OTP",
-      `OTP to reset password for ${userEmail} is ${otp}`
-    ).catch(err => {
-      console.error("❌ Email error:", err.message);
-    });
+    // DEVELOPMENT MODE: Show OTP in console instead of sending email
+    if (process.env.NODE_ENV === 'development') {
+      console.log('='.repeat(50));
+      console.log('📧 DEVELOPMENT MODE - OTP NOT SENT VIA EMAIL');
+      console.log('👤 User:', userEmail);
+      console.log('🔢 OTP CODE:', otp);
+      console.log('⏰ Time:', new Date().toLocaleTimeString());
+      console.log('='.repeat(50));
+    } else {
+      // PRODUCTION: Send actual email
+      try {
+        await sendEmail(
+          process.env.ADMIN_EMAIL,
+          `Password Reset OTP - ${userEmail}`,
+          `OTP: ${otp}\nFor: ${userEmail}\nValid for 10 minutes`
+        );
+      } catch (emailError) {
+        console.error('Email error (non-blocking):', emailError.message);
+      }
+    }
 
-    // Respond to frontend
-    return res.status(200).json({
+    res.status(200).json({
       status: "success",
-      message: "OTP sent to admin email"
+      message: process.env.NODE_ENV === 'development' 
+        ? "OTP generated (check console)" 
+        : "OTP sent to admin email",
+      adminEmail: process.env.ADMIN_EMAIL,
+      otp: process.env.NODE_ENV === 'development' ? otp : undefined,
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error("❌ AdminRequestOtp error:", error);
-    return res.status(500).json({ status: "fail", message: error.message });
+    console.error('OTP Error:', error);
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
   }
 };
 
