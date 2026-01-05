@@ -37,7 +37,8 @@ router.get('/all-sessions', protect, adminOnly, userController.getAllSessions);
 router.get('/session/:id', protect, adminOnly, userController.getSessionById);
 // =================== Employee Routes ====================  
 router.get("/users/getProfile", protect,userController.getProfile); 
-router.post("/users/updateProfile", protect,userController.updateProfile);     
+router.post("/users/updateProfile", protect, userController.updateProfile);
+router.put("/users/updateProfile", protect, userController.updateProfile);     
 
 // =================== ProfileImage Routes ==================== 
 router.post(
