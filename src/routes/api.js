@@ -26,8 +26,8 @@ router.post("/admin/updateAdminProfile", protect, adminOnly, userController.upda
 router.get("/admin/getAll-user", protect, adminOnly, userController.getAllUsers); 
 router.put("/admin/update-user/:id", protect, adminOnly, userController.adminUpdateUser); 
 router.delete("/admin/user-delete/:id", protect, adminOnly, userController.deleteUser); 
-// router.post('/admin/request-otp', protect, adminOnly, userController.AdminRequestOtp);
-// router.post('/admin/reset-password', protect, adminOnly, userController.AdminResetPassword );  
+router.post('/admin/request-otp', protect, adminOnly, authController.AdminRequestOtp);
+router.post('/admin/reset-password', protect, adminOnly, authController.AdminResetPassword );  
 router.get('/my-sessions', protect, userController.getAllSessions);
 router.delete('/terminate-session/:id', protect, userController.terminateSession);
 router.post('/logout-all', protect, userController.logoutAllSessions);
