@@ -54,9 +54,7 @@ const userSchema = new mongoose.Schema(
     // Employee ID - শুধুমাত্র String (ObjectId নয়)
     employeeId: { 
       type: String, 
-      default: '',
-      unique: true,
-      sparse: true
+      default: '', 
     },
 
     // Salary Info

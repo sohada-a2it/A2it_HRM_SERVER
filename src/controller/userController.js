@@ -1398,108 +1398,124 @@ exports.updateProfile = async (req, res) => {
       basicSalary: user.basicSalary,
       salary: user.salary,
       joiningDate: user.joiningDate,
-      picture: user.picture,
-      // Admin fields
-      companyName: user.companyName,
-      adminPosition: user.adminPosition,
-      adminLevel: user.adminLevel,
-      permissions: user.permissions,
-      isSuperAdmin: user.isSuperAdmin,
-      canManageUsers: user.canManageUsers,
-      canManagePayroll: user.canManagePayroll,
-      // Employee fields
-      managerId: user.managerId,
-      attendanceId: user.attendanceId,
-      shiftTiming: user.shiftTiming
+      picture: user.picture
     };
 
+    console.log('🔄 Profile Update Request:', {
+      userId: req.user.id,
+      role: user.role,
+      requestedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
+    });
+
     // Update basic fields
-    user.firstName = firstName !== undefined ? firstName : user.firstName;
-    user.lastName = lastName !== undefined ? lastName : user.lastName;
-    user.phone = phone !== undefined ? phone : user.phone;
-    user.address = address !== undefined ? address : user.address;
-    user.department = department !== undefined ? department : user.department;
-    user.designation = designation !== undefined ? designation : user.designation;
-    user.employeeId = employeeId !== undefined ? employeeId : user.employeeId;
-    user.salaryType = salaryType !== undefined ? salaryType : user.salaryType;
-    user.rate = rate !== undefined ? rate : user.rate;
-    user.basicSalary = basicSalary !== undefined ? basicSalary : user.basicSalary;
-    user.salary = salary !== undefined ? salary : user.salary;
-    user.joiningDate = joiningDate !== undefined ? joiningDate : user.joiningDate;
-    user.picture = profilePicture !== undefined ? profilePicture : user.picture;
+    if (firstName !== undefined) user.firstName = firstName;
+    if (lastName !== undefined) user.lastName = lastName;
+    if (phone !== undefined) user.phone = phone;
+    if (address !== undefined) user.address = address;
+    if (department !== undefined) user.department = department;
+    if (designation !== undefined) user.designation = designation;
+    
+    // 🔹 IMPORTANT: employeeId update carefully
+    if (employeeId !== undefined && employeeId !== user.employeeId) {
+      // Check if new employeeId already exists
+      const existingUserWithEmpId = await User.findOne({ 
+        employeeId: employeeId,
+        _id: { $ne: user._id } // Exclude current user
+      });
+      
+      if (existingUserWithEmpId) {
+        return res.status(400).json({
+          success: false,
+          message: `Employee ID "${employeeId}" already exists`
+        });
+      }
+      user.employeeId = employeeId;
+    }
+    
+    if (salaryType !== undefined) user.salaryType = salaryType;
+    if (rate !== undefined) user.rate = rate;
+    if (basicSalary !== undefined) user.basicSalary = basicSalary;
+    if (salary !== undefined) user.salary = salary;
+    if (joiningDate !== undefined) user.joiningDate = new Date(joiningDate);
+    if (profilePicture !== undefined) user.picture = profilePicture;
 
     // Role-based updates
     if (user.role === 'admin') {
-      user.companyName = companyName !== undefined ? companyName : user.companyName;
-      user.adminPosition = adminPosition !== undefined ? adminPosition : user.adminPosition;
-      user.adminLevel = adminLevel !== undefined ? adminLevel : user.adminLevel;
-      user.permissions = permissions !== undefined ? permissions : user.permissions;
-      user.isSuperAdmin = isSuperAdmin !== undefined ? isSuperAdmin : user.isSuperAdmin;
-      user.canManageUsers = canManageUsers !== undefined ? canManageUsers : user.canManageUsers;
-      user.canManagePayroll = canManagePayroll !== undefined ? canManagePayroll : user.canManagePayroll;
+      if (companyName !== undefined) user.companyName = companyName;
+      if (adminPosition !== undefined) user.adminPosition = adminPosition;
+      if (adminLevel !== undefined) user.adminLevel = adminLevel;
+      if (permissions !== undefined) user.permissions = permissions;
+      if (isSuperAdmin !== undefined) user.isSuperAdmin = isSuperAdmin;
+      if (canManageUsers !== undefined) user.canManageUsers = canManageUsers;
+      if (canManagePayroll !== undefined) user.canManagePayroll = canManagePayroll;
     }
 
     if (user.role === 'employee') {
-      user.managerId = managerId !== undefined ? managerId : user.managerId;
-      user.attendanceId = attendanceId !== undefined ? attendanceId : user.attendanceId;
-      user.shiftTiming = shiftTiming !== undefined ? shiftTiming : user.shiftTiming;
+      if (managerId !== undefined) user.managerId = managerId;
+      if (attendanceId !== undefined) user.attendanceId = attendanceId;
+      if (shiftTiming !== undefined) user.shiftTiming = shiftTiming;
+      
+      // Clear admin fields for employees (security)
+      user.companyName = undefined;
+      user.adminPosition = undefined;
+      user.adminLevel = undefined;
+      user.permissions = [];
+      user.isSuperAdmin = undefined;
+      user.canManageUsers = undefined;
+      user.canManagePayroll = undefined;
     }
 
     // Save updated user
     await user.save();
 
-    // Prepare new data for audit log
-    const newData = {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      phone: user.phone,
-      address: user.address,
-      department: user.department,
-      designation: user.designation,
-      employeeId: user.employeeId,
-      salaryType: user.salaryType,
-      rate: user.rate,
-      basicSalary: user.basicSalary,
-      salary: user.salary,
-      joiningDate: user.joiningDate,
-      picture: user.picture,
-      // Admin fields
-      companyName: user.companyName,
-      adminPosition: user.adminPosition,
-      adminLevel: user.adminLevel,
-      permissions: user.permissions,
-      isSuperAdmin: user.isSuperAdmin,
-      canManageUsers: user.canManageUsers,
-      canManagePayroll: user.canManagePayroll,
-      // Employee fields
-      managerId: user.managerId,
-      attendanceId: user.attendanceId,
-      shiftTiming: user.shiftTiming
-    };
+    console.log('✅ Profile updated successfully:', user.email);
 
     // ✅ AuditLog
-    await AuditLog.create({
-      userId: req.user.id,
-      action: "Updated Profile",
-      target: user._id,
-      details: {
-        oldData,
-        newData,
-        updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
+    try {
+      await AuditLog.create({
+        userId: req.user.id,
+        action: "Updated Profile",
+        target: user._id,
+        details: {
+          oldData,
+          newData: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            phone: user.phone,
+            address: user.address,
+            department: user.department,
+            designation: user.designation,
+            employeeId: user.employeeId,
+            salaryType: user.salaryType,
+            rate: user.rate,
+            basicSalary: user.basicSalary,
+            salary: user.salary,
+            joiningDate: user.joiningDate,
+            picture: user.picture
+          },
+          updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
+        },
+        ip: req.ip,
+        device: req.headers['user-agent']
+      });
+    } catch (auditError) {
+      console.error('Audit log error:', auditError);
+      // Don't fail the update if audit log fails
+    }
 
     // ✅ Session activity
-    await addSessionActivity({
-      userId: req.user.id,
-      action: "Updated Profile",
-      target: user._id,
-      details: {
-        updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
-      }
-    });
+    try {
+      await addSessionActivity({
+        userId: req.user.id,
+        action: "Updated Profile",
+        target: user._id,
+        details: {
+          updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
+        }
+      });
+    } catch (sessionError) {
+      console.error('Session activity error:', sessionError);
+    }
 
     res.status(200).json({
       success: true,
@@ -1521,23 +1537,14 @@ exports.updateProfile = async (req, res) => {
         salary: user.salary,
         joiningDate: user.joiningDate,
         picture: user.picture,
-        companyName: user.companyName,
-        adminPosition: user.adminPosition,
-        adminLevel: user.adminLevel,
-        permissions: user.permissions,
-        isSuperAdmin: user.isSuperAdmin,
-        canManageUsers: user.canManageUsers,
-        canManagePayroll: user.canManagePayroll,
-        managerId: user.managerId,
-        attendanceId: user.attendanceId,
-        shiftTiming: user.shiftTiming,
         status: user.status,
-        isActive: user.isActive
+        isActive: user.isActive,
+        updatedAt: user.updatedAt
       }
     });
 
   } catch (error) {
-    console.error('Update Profile Error:', error);
+    console.error('❌ Update Profile Error:', error);
 
     // Handle validation errors
     if (error.name === 'ValidationError') {
@@ -1550,9 +1557,20 @@ exports.updateProfile = async (req, res) => {
 
     // Handle duplicate key error
     if (error.code === 11000) {
+      // Check which field caused duplicate error
+      const duplicateField = Object.keys(error.keyPattern)[0];
+      const duplicateValue = error.keyValue[duplicateField];
+      
+      let message = 'Duplicate value entered';
+      if (duplicateField === 'employeeId') {
+        message = `Employee ID "${duplicateValue}" already exists`;
+      } else if (duplicateField === 'email') {
+        message = `Email "${duplicateValue}" already exists`;
+      }
+      
       return res.status(400).json({
         success: false,
-        message: 'Duplicate field value entered'
+        message: message
       });
     }
 
@@ -1562,7 +1580,6 @@ exports.updateProfile = async (req, res) => {
     });
   }
 };
-
 // Change password (for all users)
 exports.changePassword = async (req, res) => {
   try {
