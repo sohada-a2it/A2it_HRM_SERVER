@@ -123,12 +123,15 @@ router.delete('/:id', protect, adminOnly, salaryRuleController.deleteSalaryRule)
 router.put('/:id/toggle-status', protect, adminOnly, salaryRuleController.toggleActiveStatus);
 
 // ====================AuditLog Admin Routes ==================== 
-router.get('/admin/getAllAudits', protect, adminOnly, auditController.getAllAuditLogs); 
-router.get('/admin/getAllAudits/:userId', protect, adminOnly, auditController.getAuditLogsByUserId); 
-router.delete('/admin/AuditDelete/:id', protect, adminOnly, auditController.deleteAuditLog); 
-router.get('/admin/auditSearch', protect, adminOnly, auditController.searchAuditLogs); 
-router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);  
-router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
+// Public routes (for users to view their own logs)
+router.get('/my-logs', protect, auditController.getMyAuditLogs);
+
+// Admin routes
+router.get('/admin/all', protect, adminOnly, auditController.getAllAuditLogs);
+router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);
+router.get('/admin/:id', protect, adminOnly, auditController.getAuditLogById);
+router.delete('/admin/:id', protect, adminOnly, auditController.deleteAuditLog);
+router.post('/admin/clear-old', protect, adminOnly, auditController.clearOldLogs); 
 
 // ==================== SessionLog Routes==================== 
 router.get('/my-sessions', protect, sessionController.getMySessions); 
