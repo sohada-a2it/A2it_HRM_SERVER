@@ -161,4 +161,4 @@ salaryRuleSchema.pre('save', function(next) {
   next();
 });
 
-module.exports = mongoose.model('SalaryRule', salaryRuleSchema);
+module.exports = mongoose.model('Salaryrule', salaryRuleSchema);
