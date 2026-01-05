@@ -123,7 +123,7 @@ router.get('/active', protect, salaryRuleController.getActiveSalaryRules);
 // Admin routes
 router.get('/getSalaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);
 router.get('/getSalaryRule/:id', protect, adminOnly, salaryRuleController.getSalaryRuleById);
-router.post('/createSalaryRule/', protect, adminOnly, salaryRuleController.createSalaryRule);
+router.post('/createSalaryRule', protect, adminOnly, salaryRuleController.createSalaryRule);
 router.put('/updateSalaryRule/:id', protect, adminOnly, salaryRuleController.updateSalaryRule);
 router.delete('deleteSalaryRule/:id', protect, adminOnly, salaryRuleController.deleteSalaryRule);
 router.put('/:id/toggle-status', protect, adminOnly, salaryRuleController.toggleActiveStatus);
