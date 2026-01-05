@@ -32,6 +32,7 @@ router.get('/my-sessions', protect, userController.getAllSessions);
 router.delete('/terminate-session/:id', protect, userController.terminateSession);
 router.post('/logout-all', protect, userController.logoutAllSessions);
 
+
 // Admin only routes
 router.get('/all-sessions', protect, adminOnly, userController.getAllSessions);
 router.get('/session/:id', protect, adminOnly, userController.getSessionById);
@@ -148,8 +149,8 @@ router.get('/my-current-session', sessionController.getMyCurrentSession);
 router.get('/my-session-state', sessionController.getMyCurrentSession); // Same as above
 router.get('/stats/attendance', sessionController.getSessionAttendanceStats);
 router.get('/stats', sessionController.getSessionStatistics);
-router.post('/clock-in', sessionController.clockIn);
-router.post('/clock-out', sessionController.clockOut);
+router.post('/sessions/clock-in', sessionController.clockIn);
+router.post('/sessions/clock-out', sessionController.clockOut);
 
 // ==================== ADMIN ROUTES ====================
 router.get('/admin/all-sessions', adminOnly, sessionController.getAllSessions);
