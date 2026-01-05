@@ -1347,6 +1347,41 @@ exports.getProfile = async (req, res) => {
 // Update profile
 exports.updateProfile = async (req, res) => {
   try {
+    console.log('🔄 Profile Update Request Received');
+    console.log('User ID:', req.user.id);
+    console.log('Request Body:', req.body);
+
+    // Find user without any role restriction
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      console.log('❌ User not found');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    console.log('✅ User found:', {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      employeeId: user.employeeId
+    });
+
+    // Store old data for comparison
+    const oldData = {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phone: user.phone,
+      address: user.address,
+      department: user.department,
+      designation: user.designation,
+      employeeId: user.employeeId,
+      picture: user.picture
+    };
+
+    // Extract fields from request body
     const {
       firstName,
       lastName,
@@ -1373,74 +1408,88 @@ exports.updateProfile = async (req, res) => {
       attendanceId,
       shiftTiming,
       // Profile
-      profilePicture
+      profilePicture,
+      picture // Alternative name
     } = req.body;
 
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+    // Basic info updates
+    if (firstName !== undefined) {
+      console.log(`- Updating firstName: ${oldData.firstName} -> ${firstName}`);
+      user.firstName = firstName;
+    }
+    
+    if (lastName !== undefined) {
+      console.log(`- Updating lastName: ${oldData.lastName} -> ${lastName}`);
+      user.lastName = lastName;
+    }
+    
+    if (phone !== undefined) {
+      console.log(`- Updating phone: ${oldData.phone} -> ${phone}`);
+      user.phone = phone;
+    }
+    
+    if (address !== undefined) {
+      console.log(`- Updating address: ${oldData.address} -> ${address}`);
+      user.address = address;
+    }
+    
+    if (department !== undefined) {
+      console.log(`- Updating department: ${oldData.department} -> ${department}`);
+      user.department = department;
+    }
+    
+    if (designation !== undefined) {
+      console.log(`- Updating designation: ${oldData.designation} -> ${designation}`);
+      user.designation = designation;
     }
 
-    // Store old data for audit log
-    const oldData = {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      phone: user.phone,
-      address: user.address,
-      department: user.department,
-      designation: user.designation,
-      employeeId: user.employeeId,
-      salaryType: user.salaryType,
-      rate: user.rate,
-      basicSalary: user.basicSalary,
-      salary: user.salary,
-      joiningDate: user.joiningDate,
-      picture: user.picture
-    };
-
-    console.log('🔄 Profile Update Request:', {
-      userId: req.user.id,
-      role: user.role,
-      requestedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
-    });
-
-    // Update basic fields
-    if (firstName !== undefined) user.firstName = firstName;
-    if (lastName !== undefined) user.lastName = lastName;
-    if (phone !== undefined) user.phone = phone;
-    if (address !== undefined) user.address = address;
-    if (department !== undefined) user.department = department;
-    if (designation !== undefined) user.designation = designation;
-    
-    // 🔹 IMPORTANT: employeeId update carefully
-    if (employeeId !== undefined && employeeId !== user.employeeId) {
-      // Check if new employeeId already exists
-      const existingUserWithEmpId = await User.findOne({ 
-        employeeId: employeeId,
-        _id: { $ne: user._id } // Exclude current user
-      });
+    // 🔹 CRITICAL: Handle employeeId update carefully
+    if (employeeId !== undefined) {
+      console.log(`- EmployeeId update requested: ${oldData.employeeId} -> ${employeeId}`);
       
-      if (existingUserWithEmpId) {
-        return res.status(400).json({
-          success: false,
-          message: `Employee ID "${employeeId}" already exists`
+      // If trying to set to empty string or same as current, allow it
+      if (employeeId === '' || employeeId === user.employeeId) {
+        user.employeeId = employeeId;
+        console.log('- EmployeeId updated (same or empty)');
+      } 
+      // If new employeeId is different
+      else if (employeeId !== user.employeeId) {
+        // Check if this employeeId already exists for another user
+        const existingUser = await User.findOne({
+          employeeId: employeeId,
+          _id: { $ne: user._id }
         });
+        
+        if (existingUser) {
+          console.log(`❌ EmployeeId ${employeeId} already exists for user ${existingUser.email}`);
+          return res.status(400).json({
+            success: false,
+            message: `Employee ID "${employeeId}" is already in use`
+          });
+        }
+        
+        user.employeeId = employeeId;
+        console.log('- EmployeeId updated to new value');
       }
-      user.employeeId = employeeId;
     }
-    
+
+    // Handle picture (could be profilePicture or picture)
+    const newPicture = profilePicture || picture;
+    if (newPicture !== undefined) {
+      console.log(`- Updating picture: ${oldData.picture} -> ${newPicture.substring(0, 30)}...`);
+      user.picture = newPicture;
+    }
+
+    // Salary fields (optional updates)
     if (salaryType !== undefined) user.salaryType = salaryType;
     if (rate !== undefined) user.rate = rate;
     if (basicSalary !== undefined) user.basicSalary = basicSalary;
     if (salary !== undefined) user.salary = salary;
     if (joiningDate !== undefined) user.joiningDate = new Date(joiningDate);
-    if (profilePicture !== undefined) user.picture = profilePicture;
 
-    // Role-based updates
+    // Role-based field updates
     if (user.role === 'admin') {
+      console.log('- User is admin, updating admin fields');
       if (companyName !== undefined) user.companyName = companyName;
       if (adminPosition !== undefined) user.adminPosition = adminPosition;
       if (adminLevel !== undefined) user.adminLevel = adminLevel;
@@ -1451,59 +1500,86 @@ exports.updateProfile = async (req, res) => {
     }
 
     if (user.role === 'employee') {
+      console.log('- User is employee, updating employee fields');
       if (managerId !== undefined) user.managerId = managerId;
       if (attendanceId !== undefined) user.attendanceId = attendanceId;
       if (shiftTiming !== undefined) user.shiftTiming = shiftTiming;
       
-      // Clear admin fields for employees (security)
-      user.companyName = undefined;
-      user.adminPosition = undefined;
-      user.adminLevel = undefined;
+      // Clear admin fields for employees (security measure)
+      user.companyName = '';
+      user.adminPosition = '';
+      user.adminLevel = '';
       user.permissions = [];
-      user.isSuperAdmin = undefined;
-      user.canManageUsers = undefined;
-      user.canManagePayroll = undefined;
+      user.isSuperAdmin = false;
+      user.canManageUsers = false;
+      user.canManagePayroll = false;
     }
 
-    // Save updated user
+    console.log('💾 Saving updated user...');
+    
+    // Save the updated user
     await user.save();
+    
+    console.log('✅ User saved successfully');
 
-    console.log('✅ Profile updated successfully:', user.email);
+    // Prepare response data
+    const responseData = {
+      id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      role: user.role,
+      phone: user.phone,
+      address: user.address,
+      department: user.department,
+      designation: user.designation,
+      employeeId: user.employeeId,
+      salaryType: user.salaryType,
+      rate: user.rate,
+      basicSalary: user.basicSalary,
+      salary: user.salary,
+      joiningDate: user.joiningDate,
+      picture: user.picture,
+      status: user.status,
+      isActive: user.isActive,
+      updatedAt: user.updatedAt
+    };
 
-    // ✅ AuditLog
+    // Add role-specific fields to response
+    if (user.role === 'admin') {
+      responseData.companyName = user.companyName;
+      responseData.adminPosition = user.adminPosition;
+      responseData.adminLevel = user.adminLevel;
+      responseData.permissions = user.permissions;
+      responseData.isSuperAdmin = user.isSuperAdmin;
+      responseData.canManageUsers = user.canManageUsers;
+      responseData.canManagePayroll = user.canManagePayroll;
+    }
+
+    if (user.role === 'employee') {
+      responseData.managerId = user.managerId;
+      responseData.attendanceId = user.attendanceId;
+      responseData.shiftTiming = user.shiftTiming;
+    }
+
+    // ✅ AuditLog (optional)
     try {
       await AuditLog.create({
         userId: req.user.id,
         action: "Updated Profile",
         target: user._id,
         details: {
-          oldData,
-          newData: {
-            firstName: user.firstName,
-            lastName: user.lastName,
-            phone: user.phone,
-            address: user.address,
-            department: user.department,
-            designation: user.designation,
-            employeeId: user.employeeId,
-            salaryType: user.salaryType,
-            rate: user.rate,
-            basicSalary: user.basicSalary,
-            salary: user.salary,
-            joiningDate: user.joiningDate,
-            picture: user.picture
-          },
           updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
         },
         ip: req.ip,
         device: req.headers['user-agent']
       });
+      console.log('📝 Audit log created');
     } catch (auditError) {
-      console.error('Audit log error:', auditError);
-      // Don't fail the update if audit log fails
+      console.error('Audit log error (non-fatal):', auditError);
     }
 
-    // ✅ Session activity
+    // ✅ Session activity (optional)
     try {
       await addSessionActivity({
         userId: req.user.id,
@@ -1514,58 +1590,46 @@ exports.updateProfile = async (req, res) => {
         }
       });
     } catch (sessionError) {
-      console.error('Session activity error:', sessionError);
+      console.error('Session activity error (non-fatal):', sessionError);
     }
 
+    console.log('🎉 Profile update successful');
+    
     res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-        address: user.address,
-        department: user.department,
-        designation: user.designation,
-        employeeId: user.employeeId,
-        salaryType: user.salaryType,
-        rate: user.rate,
-        basicSalary: user.basicSalary,
-        salary: user.salary,
-        joiningDate: user.joiningDate,
-        picture: user.picture,
-        status: user.status,
-        isActive: user.isActive,
-        updatedAt: user.updatedAt
-      }
+      user: responseData
     });
 
   } catch (error) {
-    console.error('❌ Update Profile Error:', error);
+    console.error('❌ Profile Update Error Details:', {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      keyPattern: error.keyPattern,
+      keyValue: error.keyValue,
+      stack: error.stack?.split('\n')[0]
+    });
 
-    // Handle validation errors
+    // Handle specific errors
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(val => val.message);
       return res.status(400).json({
         success: false,
-        message: messages.join(', ')
+        message: `Validation failed: ${messages.join(', ')}`
       });
     }
 
-    // Handle duplicate key error
     if (error.code === 11000) {
-      // Check which field caused duplicate error
-      const duplicateField = Object.keys(error.keyPattern)[0];
-      const duplicateValue = error.keyValue[duplicateField];
+      // Duplicate key error
+      const field = Object.keys(error.keyPattern)[0];
+      const value = error.keyValue[field];
       
       let message = 'Duplicate value entered';
-      if (duplicateField === 'employeeId') {
-        message = `Employee ID "${duplicateValue}" already exists`;
-      } else if (duplicateField === 'email') {
-        message = `Email "${duplicateValue}" already exists`;
+      if (field === 'email') {
+        message = `Email "${value}" already exists`;
+      } else if (field === 'employeeId') {
+        message = `Employee ID "${value}" already exists`;
       }
       
       return res.status(400).json({
@@ -1574,6 +1638,7 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
+    // Generic error
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to update profile'
