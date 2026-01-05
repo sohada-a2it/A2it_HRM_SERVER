@@ -7,86 +7,55 @@ const sendEmail = require("../utility/SendEmailUtility");
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL; // example: admin@a2it.com
 
 // -------------------- Admin Request OTP --------------------
-// controllers/userController.js
-exports.AdminRequestOtp = async (req, res) => {
-  try {
-    const { userEmail, adminEmail } = req.body;
+export const adminRequestOtp = async (email) => {
+  const MAX_RETRIES = 1;
+  let attempt = 0;
 
-    console.log('📧 OTP Request Body:', req.body);
-
-    // ✅ adminEmail যদি request body-তে না থাকে, environment থেকে নিন
-    const targetAdminEmail = adminEmail || process.env.ADMIN_EMAIL;
-    
-    console.log('🎯 Sending OTP to:', targetAdminEmail);
-    console.log('👤 For user:', userEmail);
-
-    // User আছে কিনা চেক করুন
-    const user = await User.findOne({ email: userEmail });
-    if (!user) {
-      return res.status(404).json({ 
-        status: "fail", 
-        message: "User not found" 
-      });
-    }
-
-    // OTP জেনারেট করুন
-    const otp = Math.floor(100000 + Math.random() * 900000);
-    console.log('🔢 Generated OTP:', otp);
-
-    // পুরনো OTP invalidate করুন
-    await OtpModel.updateMany(
-      { email: targetAdminEmail, userEmail, status: 0 },
-      { status: 1 }
-    );
-
-    // নতুন OTP সেভ করুন
-    await OtpModel.create({
-      email: targetAdminEmail,
-      otp,
-      status: 0,
-      userEmail
-    });
-
-    // Email পাঠান
-    const emailSubject = `A2IT HRM - Password Reset OTP`;
-    const emailText = `
-Password Reset Request
-
-User: ${userEmail}
-OTP Code: ${otp}
-
-This OTP is valid for 10 minutes.
-
-Regards,
-A2IT HRM System
-    `;
-
-    console.log('📤 Sending email...');
-    
+  while (attempt <= MAX_RETRIES) {
     try {
-      await sendEmail(targetAdminEmail, emailSubject, emailText);
-      console.log('✅ Email sent successfully');
-    } catch (emailError) {
-      console.error('❌ Email error:', emailError.message);
-      // Email fail হলেও OTP রেসপন্স পাঠাবেন
+      // Show loading toast on first attempt
+      if (attempt === 0) {
+        toast.loading("Requesting OTP...", { position: "top-right", duration: Infinity });
+      }
+
+      const response = await axios.post(
+        "/admin/request-otp",
+        { email },
+        { timeout: 10000 } // 10 seconds
+      );
+
+      // Dismiss loading toast
+      toast.dismiss();
+
+      if (response.data && response.data.success) {
+        toast.success("OTP sent successfully!", {
+          position: "top-right",
+          duration: 3000,
+          icon: "✅",
+        });
+        return response.data;
+      } else {
+        throw new Error(response.data?.message || "Failed to send OTP");
+      }
+    } catch (error) {
+      attempt += 1;
+
+      // Dismiss loading toast
+      toast.dismiss();
+
+      // Log full error for debugging
+      console.error("❌ OTP request failed:", error.message, error.response?.data);
+
+      if (attempt <= MAX_RETRIES) {
+        console.log(`Retrying OTP request... attempt ${attempt}`);
+      } else {
+        toast.error(
+          error.response?.data?.message || "Server timeout. Please try again.",
+          { position: "top-right", duration: 4000, icon: "❌" }
+        );
+        throw error; // Let calling function handle further if needed
+      }
     }
-
-    // Response
-    return res.status(200).json({
-      status: "success",
-      message: "OTP sent successfully",
-      adminEmail: targetAdminEmail,
-      userEmail: userEmail
-      // Development mode-এ OTPও পাঠান
-    (process.env.NODE_ENV === 'development' && { otp: otp })
-    });
-
-  } catch (error) {
-    console.error('❌ OTP Request Error:', error);
-    res.status(500).json({ 
-      status: "fail", 
-      message: error.message 
-    });
   }
 };
 
