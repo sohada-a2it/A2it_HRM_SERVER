@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
+    // Personal Info (পুরানো + নতুন থেকে নেওয়া)
     firstName: { 
       type: String, 
       required: [true, 'First name is required'],
@@ -27,9 +28,10 @@ const userSchema = new mongoose.Schema(
       minlength: [6, 'Password must be at least 6 characters']
     },
 
+    // Role & Status (পুরানো থেকে নেওয়া - সবচেয়ে important)
     role: { 
       type: String, 
-      enum: ["admin", "employee", "manager"], 
+      enum: ["admin", "employee"],  // আগেরটা থেকে
       default: "employee" 
     },
     isActive: { 
@@ -38,133 +40,54 @@ const userSchema = new mongoose.Schema(
     },
     status: { 
       type: String, 
-      enum: ['active', 'inactive', 'suspended', 'on-leave'], 
+      enum: ['active', 'inactive', 'suspended'],  // আগেরটা থেকে
       default: 'active' 
     },
 
-    department: { 
-      type: String, 
-      default: '' 
-    },
-    designation: { 
-      type: String, 
-      default: '' 
-    },
-    phone: { 
-      type: String, 
-      default: '',
-      trim: true
-    },
-    employeeId: { 
-      type: String, 
-      unique: true,
-      sparse: true,
-      trim: true
-    },
+    // Professional Info (দুইটা থেকে merge)
+    department: { type: String, default: '' },
+    designation: { type: String, default: '' },
+    phone: { type: String, default: '' },
+    employeeId: { type: String, default: '' },
 
-    // 🔹 Salary Info
+    // Salary Info (সহজ version নিন আগেরটা থেকে)
     salaryType: { 
       type: String, 
-      enum: ['hourly', 'monthly', 'weekly', 'project', 'daily'], 
-      default: 'monthly'
+      enum: ['hourly', 'monthly', 'project'],  // আগেরটা থেকে
     },
     rate: { 
       type: Number,  
-      min: 0,
-      default: 0
-    },
-    salary: {
-      type: Number,
-      default: 0,
-      min: 0
+      min: 0 
     },
     joiningDate: { 
-      type: Date,
-      default: Date.now
+      type: Date,  
     },
 
-    // 🔹 Leave Management (Fixed - was incorrectly placed)
-    leaveDays: [{
-      date: Date,
-      status: {
-        type: String,
-        enum: ['pending', 'approved', 'rejected']
-      },
-      leaveType: String,
-      leaveId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Leave'
-      }
-    }],
-
-    // 🔹 Salary Rule Reference
-    salaryRule: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'SalaryRule'
-    },
-
-    // 🖼️ Profile Picture
+    // Profile Picture
     picture: { 
       type: String,
-      default: 'https://res.cloudinary.com/demo/image/upload/v1586166987/avatar.png'
-    },
-
-    // 🔹 Additional fields for your controllers
-    lastLogin: {
-      type: Date
-    },
-    
-    loginCount: {
-      type: Number,
-      default: 0
-    },
-    
-    manager: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    
-    // For soft delete
-    isDeleted: {
-      type: Boolean,
-      default: false,
-      select: false
-    },
-    
-    deletedAt: {
-      type: Date
+      default: ''  // আগেরটা থেকে
     }
   },
-  {
+  { 
     timestamps: true,
+    // Optional: আপনি চাইলে toJSON transform add করতে পারেন
     toJSON: { 
-      virtuals: true,
       transform: function(doc, ret) {
         delete ret.password;
         delete ret.__v;
         return ret;
       }
-    },
-    toObject: { virtuals: true }
+    }
   }
 );
 
-// Virtual for full name
-userSchema.virtual('fullName').get(function() {
-  return `${this.firstName} ${this.lastName}`;
-});
-
-// Virtual for employment status
-userSchema.virtual('isEmployed').get(function() {
-  return this.status === 'active' && this.isActive && !this.isDeleted;
-});
-
-// Password hash middleware
+// ✅ **সঠিক Password Hashing (আগের model থেকে)**
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
   
   try {
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(10);  // এই line টি crucial
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {
@@ -172,51 +95,14 @@ userSchema.pre("save", async function (next) {
   }
 });
 
-// Password match method
+// ✅ **সঠিক Password Comparison (আগের model থেকে)**
 userSchema.methods.matchPassword = async function (password) {
-  return await bcrypt.compare(password, this.password);
+  return await bcrypt.compare(password, this.password);  // await টি important
 };
 
-// Update last login method
-userSchema.methods.updateLastLogin = function() {
-  this.lastLogin = new Date();
-  this.loginCount += 1;
-  return this.save();
-};
-
-// Soft delete method
-userSchema.methods.softDelete = function() {
-  this.isDeleted = true;
-  this.deletedAt = new Date();
-  this.status = 'inactive';
-  this.isActive = false;
-  return this.save();
-};
-
-// Restore method
-userSchema.methods.restore = function() {
-  this.isDeleted = false;
-  this.deletedAt = undefined;
-  this.status = 'active';
-  this.isActive = true;
-  return this.save();
-};
-
-// Exclude deleted users by default
-userSchema.pre(/^find/, function(next) {
-  if (!this.options.withDeleted) {
-    this.where({ isDeleted: false });
-  }
-  next();
+// Optional: Basic virtuals (নতুন model থেকে)
+userSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
 });
-
-// Indexes for better performance
-userSchema.index({ email: 1 }, { unique: true });
-userSchema.index({ employeeId: 1 }, { unique: true, sparse: true });
-userSchema.index({ department: 1 });
-userSchema.index({ role: 1 });
-userSchema.index({ status: 1 });
-userSchema.index({ isActive: 1 });
-userSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("User", userSchema);
