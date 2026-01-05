@@ -92,13 +92,13 @@ router.get('/admin/export', protect, adminOnly, leaveController.exportLeaves);
 
 // =====================Holiday Routes===================== 
 // Public routes (both admin and employee can view)
-router.get('/', protect, holidayController.getHolidays);
+router.get('/holiday', protect, holidayController.getHolidays);
 router.get('/stats', protect, holidayController.getHolidayStats);
 router.get('/export', protect, holidayController.exportHolidays);
 
 // Admin only routes
-router.get('/:id', protect, adminOnly, holidayController.getHolidayById);
-router.post('/', protect, adminOnly, holidayController.addHoliday);
+router.get('/getHoliday/:id', protect, adminOnly, holidayController.getHolidayById);
+router.post('/addHoliday', protect, adminOnly, holidayController.addHoliday);
 router.put('/updateHoliday/:id', protect, adminOnly, holidayController.updateHoliday);
 router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);
 router.post('/import', protect, adminOnly, holidayController.importHolidays);
@@ -106,7 +106,7 @@ router.post('/import', protect, adminOnly, holidayController.importHolidays);
   // ====================Payroll Routes(Admin Only) ==================== 
 // Employee routes
 router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrolls);
-router.post('/:id/action', protect, payrollController.employeeActionOnPayroll);
+router.post('/action/:id', protect, payrollController.employeeActionOnPayroll);
 
 // Admin routes - পরে রাখুন
 router.get('/admin/all', protect, adminOnly, payrollController.getAllPayrolls);
