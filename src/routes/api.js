@@ -121,7 +121,7 @@ router.post('/admin/generate/monthly', protect, adminOnly, payrollController.gen
 router.get('/active', protect, salaryRuleController.getActiveSalaryRules);
 
 // Admin routes
-router.get('/getSalaryRule/', protect, adminOnly, salaryRuleController.getAllSalaryRules);
+router.get('/getSalaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);
 router.get('/getSalaryRule/:id', protect, adminOnly, salaryRuleController.getSalaryRuleById);
 router.post('/createSalaryRule/', protect, adminOnly, salaryRuleController.createSalaryRule);
 router.put('/updateSalaryRule/:id', protect, adminOnly, salaryRuleController.updateSalaryRule);
