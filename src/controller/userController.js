@@ -17,11 +17,11 @@ const addSessionActivity = async ({ userId, action, target, details }) => {
 };
 
 // Registration disabled
-exports.register = async (req, res) => {
-  return res.status(403).json({ 
-      message: 'Registration is disabled. Please contact administrator.' 
-  });
-};
+// exports.register = async (req, res) => {
+//   return res.status(403).json({ 
+//       message: 'Registration is disabled. Please contact administrator.' 
+//   });
+// };
 
 // User Login
 exports.userLogin = async (req, res) => {
