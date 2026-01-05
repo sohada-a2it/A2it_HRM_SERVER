@@ -78,7 +78,7 @@ A2IT HRM System
       adminEmail: targetAdminEmail,
       userEmail: userEmail
       // Development mode-এ OTPও পাঠান
-      ...(process.env.NODE_ENV === 'development' && { otp: otp })
+    (process.env.NODE_ENV === 'development' && { otp: otp })
     });
 
   } catch (error) {
