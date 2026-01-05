@@ -174,22 +174,7 @@ const userSchema = new mongoose.Schema(
     }
   }
 );
-
-// 🔹 **CRITICAL FIX: Password Hashing Middleware (First model থেকে নেওয়া)**
-userSchema.pre("save", async function (next) {
-  // Only hash the password if it has been modified (or is new)
-  if (!this.isModified("password")) return next();
-  
-  try {
-    // ✅ প্রথম model থেকে সঠিক implementation
-    const salt = await bcrypt.genSalt(10);  // 10 rounds of salt
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
+ 
 // 🔹 **Password Comparison Method (First model থেকে নেওয়া)**
 userSchema.methods.matchPassword = async function (enteredPassword) {
   try {
