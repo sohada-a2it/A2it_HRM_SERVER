@@ -1,4 +1,3 @@
-// models/SalaryRuleModel.js
 const mongoose = require('mongoose');
 
 const salaryRuleSchema = new mongoose.Schema({
@@ -13,57 +12,21 @@ const salaryRuleSchema = new mongoose.Schema({
     trim: true
   },
   
-  // Salary calculation method
+  // ✅ Updated salaryType enum to match frontend
   salaryType: {
     type: String,
-    enum: ['hourly', 'daily', 'weekly', 'monthly', 'project'],
-    default: 'monthly'
+    enum: ['fixed', 'hourly', 'commission', 'contract', 'daily', 'weekly', 'monthly', 'project'],
+    default: 'fixed'
   },
   
+  // ✅ Rate for salary calculation
   rate: {
     type: Number,
     required: [true, 'Rate is required'],
     min: [0, 'Rate cannot be negative']
   },
   
-  // Working days per month for calculation
-  workingDaysPerMonth: {
-    type: Number,
-    default: 26,
-    min: [1, 'Working days must be at least 1']
-  },
-  
-  // Whether to calculate per day or fixed monthly
-  perDaySalaryCalculation: {
-    type: Boolean,
-    default: true
-  },
-  
-  // Salary components (House Rent, Medical Allowance, etc.)
-  components: [{
-    name: {
-      type: String,
-      required: true
-    },
-    type: {
-      type: String,
-      enum: ['percentage', 'fixed', 'attendance_based'],
-      default: 'percentage'
-    },
-    value: {
-      type: Number,
-      required: true
-    },
-    category: {
-      type: String,
-      enum: ['addition', 'deduction'],
-      default: 'addition'
-    },
-    condition: String, // Optional condition for calculation
-    description: String
-  }],
-  
-  // Overtime rules
+  // ✅ Overtime configuration
   overtimeEnabled: {
     type: Boolean,
     default: false
@@ -74,7 +37,7 @@ const salaryRuleSchema = new mongoose.Schema({
     default: 0
   },
   
-  // Leave rules
+  // ✅ Leave rule configuration
   leaveRule: {
     enabled: {
       type: Boolean,
@@ -92,7 +55,7 @@ const salaryRuleSchema = new mongoose.Schema({
     }
   },
   
-  // Late rules
+  // ✅ Late rule configuration
   lateRule: {
     enabled: {
       type: Boolean,
@@ -110,7 +73,7 @@ const salaryRuleSchema = new mongoose.Schema({
     }
   },
   
-  // Bonus rules
+  // ✅ Bonus configuration
   bonusAmount: {
     type: Number,
     min: [0, 'Bonus amount cannot be negative'],
@@ -121,27 +84,32 @@ const salaryRuleSchema = new mongoose.Schema({
     trim: true
   },
   
-  // Status
+  // ✅ Status
   isActive: {
     type: Boolean,
     default: true
   },
   
-  // Who can use this rule
-  applicableTo: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  
+  // ✅ Department
   department: {
-    type: String
+    type: String,
+    trim: true
   },
   
+  // ✅ Applicable to
+  applicableTo: [{
+    type: String,
+    enum: ['all_employees', 'permanent', 'contractual', 'probation', 'intern'],
+    default: 'all_employees'
+  }],
+  
+  // ✅ Reference to creator
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
   
+  // ✅ Timestamps
   createdAt: {
     type: Date,
     default: Date.now
@@ -155,10 +123,25 @@ const salaryRuleSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Update timestamp
+// ✅ Update timestamp on save
 salaryRuleSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
 
-module.exports = mongoose.model('Salaryrule', salaryRuleSchema);
+// ✅ Virtual for formatted salary type
+salaryRuleSchema.virtual('salaryTypeLabel').get(function() {
+  const labels = {
+    'fixed': 'Fixed Salary',
+    'hourly': 'Hourly Rate',
+    'commission': 'Commission Based',
+    'contract': 'Contract Based',
+    'daily': 'Daily Rate',
+    'weekly': 'Weekly Rate',
+    'monthly': 'Monthly Salary',
+    'project': 'Project Based'
+  };
+  return labels[this.salaryType] || this.salaryType;
+});
+
+module.exports = mongoose.model('SalaryRule', salaryRuleSchema);
