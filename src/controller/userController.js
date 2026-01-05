@@ -27,67 +27,171 @@ exports.register = async (req, res) => {
 exports.userLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    // Input validation
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Email and password are required" 
+      });
+    }
+
     const emailClean = email.toLowerCase().trim();
     const passwordClean = password.trim();
 
-    const user = await User.findOne({ email: emailClean, role: "employee" });
-    if (!user) return res.status(401).json({ message: "User not found" });
-    if (user.status !== "active" || user.isActive === false) return res.status(403).json({ message: "Account is not active" });
-
-    let isMatch = user.password.startsWith("$2") 
-      ? await bcrypt.compare(passwordClean, user.password)
-      : passwordClean === user.password;
-
-    if (!isMatch) return res.status(401).json({ message: "Invalid password" });
-
-    if (!user.password.startsWith("$2") && isMatch) {
-      user.password = await bcrypt.hash(passwordClean, 10);
-      await user.save();
-    }
-
-    const token = generateToken(user);
-
-    // ✅ Audit Log
-    await AuditLog.create({
-      userId: user._id,
-      action: "User Login",
-      target: user._id,
-      details: { email: user.email },
-      ip: req.ip,
-      device: req.headers['user-agent']
+    // 🔹 PROBLEM 1: Find user without role restriction first
+    const user = await User.findOne({ 
+      email: emailClean,
+      isDeleted: false  // Add this to exclude deleted users
     });
 
-    // ✅ SessionLog creation
-const session = await SessionLog.create({
-  userId: user._id,
-  loginAt: new Date(),
-  ip: req.ip,
-  device: req.headers['user-agent'],
-  activities: [
-    {
-      action: "User Login",
-      target: user._id,
-      details: { email: user.email },
-      timestamp: new Date()
+    if (!user) {
+      console.log(`❌ User not found with email: ${emailClean}`);
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid email or password" 
+      });
     }
-  ]
-});
 
+    // 🔹 Check user role (case insensitive)
+    if (user.role.toLowerCase() !== "employee") {
+      console.log(`❌ User role is ${user.role}, expected employee`);
+      return res.status(403).json({ 
+        success: false,
+        message: "Access restricted to employees only" 
+      });
+    }
 
-    res.json({
+    // Check account status
+    if (user.status !== "active" || user.isActive === false) {
+      console.log(`❌ Account inactive: status=${user.status}, isActive=${user.isActive}`);
+      return res.status(403).json({ 
+        success: false,
+        message: "Account is not active" 
+      });
+    }
+
+    // Password verification
+    let isMatch = false;
+    
+    // 🔹 PROBLEM 2: Check if password is hashed properly
+    if (user.password && user.password.startsWith("$2")) {
+      // Bcrypt hash
+      isMatch = await bcrypt.compare(passwordClean, user.password);
+    } else if (user.password) {
+      // Plain text password (for development/testing)
+      isMatch = passwordClean === user.password;
+    } else {
+      console.log("❌ No password found in user document");
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid email or password" 
+      });
+    }
+
+    if (!isMatch) {
+      console.log("❌ Password doesn't match");
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid password" 
+      });
+    }
+
+    // Migrate legacy password to bcrypt
+    if (user.password && !user.password.startsWith("$2") && isMatch) {
+      try {
+        user.password = await bcrypt.hash(passwordClean, 10);
+        await user.save();
+        console.log("✅ Password migrated to bcrypt");
+      } catch (hashError) {
+        console.error("Password migration failed:", hashError);
+      }
+    }
+
+    // Generate token
+    const token = generateToken(user);
+
+    // Audit Log
+    try {
+      await AuditLog.create({
+        userId: user._id,
+        action: "User Login",
+        target: user._id,
+        details: { 
+          email: user.email,
+          role: user.role,
+          timestamp: new Date()
+        },
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown'
+      });
+    } catch (auditError) {
+      console.error("Audit log error:", auditError);
+      // Don't fail login if audit log fails
+    }
+
+    // SessionLog creation
+    let session = null;
+    try {
+      session = await SessionLog.create({
+        userId: user._id,
+        loginAt: new Date(),
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown',
+        userAgent: req.headers['user-agent'],
+        activities: [
+          {
+            action: "User Login",
+            target: user._id.toString(),
+            details: { 
+              email: user.email,
+              role: user.role 
+            },
+            timestamp: new Date()
+          }
+        ]
+      });
+    } catch (sessionError) {
+      console.error("Session log error:", sessionError);
+      // Don't fail login if session log fails
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    user.loginCount = (user.loginCount || 0) + 1;
+    await user.save();
+
+    // Return user data
+    res.status(200).json({
       success: true,
+      message: "Login successful",
       token,
       user: {
         id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        fullName: `${user.firstName} ${user.lastName}`.trim(),
         email: user.email,
         role: user.role,
+        department: user.department,
+        designation: user.designation,
+        employeeId: user.employeeId,
+        picture: user.picture,
+        phone: user.phone,
+        status: user.status,
+        isActive: user.isActive
       },
-      sessionId: session._id
+      sessionId: session ? session._id : null,
+      loginTime: new Date()
     });
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Login failed" });
+    console.error("❌ Login error details:", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Login failed",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
