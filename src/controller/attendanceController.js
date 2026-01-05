@@ -405,7 +405,7 @@ exports.clockOut = async (req, res) => {
     attendance.ipAddress = req.ip;
     attendance.device = deviceInfo;
     attendance.location = location || "Office";
-    attendance.autoClockOut = autoClockOut; // Add this field
+    attendance.clockOut = autoClockOut; // Add this field
 
     // Update status if it was "Clocked In" or "Late"
     if (attendance.status === "Clocked In" || attendance.status === "Late") {
