@@ -312,17 +312,27 @@ userSchema.statics.emailExists = async function(email) {
   return !!user;
 };
 
-// ✅ Method to fix password if it's plain text
-userSchema.methods.migratePassword = async function(plainPassword) {
-  if (!this.password.startsWith('$2')) {
-    console.log('🔄 Migrating plain password to bcrypt hash');
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(plainPassword, salt);
-    await this.save();
-    console.log('✅ Password migrated successfully');
-    return true;
+// ✅ **সঠিক Password Hashing (আগের model থেকে)**
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  
+  try {
+    const salt = await bcrypt.genSalt(10);  // এই line টি crucial
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
   }
-  return false;
+});
+
+// ✅ **সঠিক Password Comparison (আগের model থেকে)**
+userSchema.methods.matchPassword = async function (password) {
+  return await bcrypt.compare(password, this.password);  // await টি important
 };
+
+// Optional: Basic virtuals (নতুন model থেকে)
+userSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
+});
 
 module.exports = mongoose.model("User", userSchema);
