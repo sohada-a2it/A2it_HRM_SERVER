@@ -109,12 +109,12 @@ router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrol
 router.post('/action/:id', protect, payrollController.employeeActionOnPayroll);
 
 // Admin routes - পরে রাখুন
-router.get('/admin/all', protect, adminOnly, payrollController.getAllPayrolls);
-router.get('/admin/:id', protect, adminOnly, payrollController.getPayrollById);
-router.post('/admin', protect, adminOnly, payrollController.createPayroll);
-router.put('/admin/:id/status', protect, adminOnly, payrollController.updatePayrollStatus);
-router.delete('/admin/:id', protect, adminOnly, payrollController.deletePayroll);
-router.post('/admin/generate/monthly', protect, adminOnly, payrollController.generateMonthlyPayroll);
+router.get('/Payroll/all', protect, adminOnly, payrollController.getAllPayrolls);
+router.get('/Payroll/:id', protect, adminOnly, payrollController.getPayrollById);
+router.post('/createPayroll', protect, adminOnly, payrollController.createPayroll);
+router.put('/updatePayroll/:id/status', protect, adminOnly, payrollController.updatePayrollStatus);
+router.delete('/deletePayroll/:id', protect, adminOnly, payrollController.deletePayroll);
+router.post('/Payroll/generate/monthly', protect, adminOnly, payrollController.generateMonthlyPayroll);
 
 // =================== SalaryRule Routes ====================
 // All users can view active rules
