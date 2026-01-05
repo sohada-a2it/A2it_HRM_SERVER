@@ -99,8 +99,8 @@ router.get('/export', protect, holidayController.exportHolidays);
 // Admin only routes
 router.get('/:id', protect, adminOnly, holidayController.getHolidayById);
 router.post('/', protect, adminOnly, holidayController.addHoliday);
-router.put('/:id', protect, adminOnly, holidayController.updateHoliday);
-router.delete('/:id', protect, adminOnly, holidayController.deleteHoliday);
+router.put('/updateHoliday/:id', protect, adminOnly, holidayController.updateHoliday);
+router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);
 router.post('/import', protect, adminOnly, holidayController.importHolidays);
 
   // ====================Payroll Routes(Admin Only) ==================== 
@@ -108,13 +108,13 @@ router.post('/import', protect, adminOnly, holidayController.importHolidays);
 router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrolls);
 router.post('/:id/action', protect, payrollController.employeeActionOnPayroll);
 
-// Admin routes
-router.get('/', protect, adminOnly, payrollController.getAllPayrolls);
-router.get('/:id', protect, adminOnly, payrollController.getPayrollById);
-router.post('/', protect, adminOnly, payrollController.createPayroll);
-router.put('/:id/status', protect, adminOnly, payrollController.updatePayrollStatus);
-router.delete('/:id', protect, adminOnly, payrollController.deletePayroll);
-router.post('/generate/monthly', protect, adminOnly, payrollController.generateMonthlyPayroll);
+// Admin routes - পরে রাখুন
+router.get('/admin/all', protect, adminOnly, payrollController.getAllPayrolls);
+router.get('/admin/:id', protect, adminOnly, payrollController.getPayrollById);
+router.post('/admin', protect, adminOnly, payrollController.createPayroll);
+router.put('/admin/:id/status', protect, adminOnly, payrollController.updatePayrollStatus);
+router.delete('/admin/:id', protect, adminOnly, payrollController.deletePayroll);
+router.post('/admin/generate/monthly', protect, adminOnly, payrollController.generateMonthlyPayroll);
 
 // =================== SalaryRule Routes ====================
 // All users can view active rules
