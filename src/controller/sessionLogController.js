@@ -1,60 +1,637 @@
-// Add these new methods to your existing controller
+// controllers/sessionController.js - আপডেটেড
+const mongoose = require('mongoose');
+const SessionLog = require('../models/SessionLogModel');
 
-// ==================== USER - CLOCK IN ====================
-exports.clockIn = async (req, res) => {
+// ==================== HELPER FUNCTIONS ====================
+const validateUserId = (user) => {
+  if (!user || (!user._id && !user.id)) {
+    throw new Error('User ID not found');
+  }
+  
+  const userId = user._id || user.id;
+  
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    throw new Error('Invalid user ID format');
+  }
+  
+  return new mongoose.Types.ObjectId(userId);
+};
+
+// ==================== USER – GET MY SESSIONS ====================
+exports.getMySessions = async (req, res) => {
   try {
-    const userId = req.user._id;
-    const { timestamp, location, device } = req.body;
-
-    // Find active session or create new
-    let session = await SessionLog.findOne({
-      userId,
-      logoutAt: null,
-      sessionStatus: 'active'
-    });
-
-    const now = timestamp ? new Date(timestamp) : new Date();
-
-    if (!session) {
-      session = new SessionLog({
-        userId,
-        userName: `${req.user.firstName} ${req.user.lastName}`,
-        userEmail: req.user.email,
-        userRole: req.user.role,
-        loginAt: now,
-        ip: req.ip,
-        device: device || req.headers['user-agent'],
-        clockIn: now,
-        sessionStatus: 'active'
-      });
-    } else {
-      session.clockIn = now;
-      session.updatedAt = now;
-    }
-
-    // Add activity
-    session.activities.push({
-      action: 'Clock In',
-      details: { 
-        location: location || 'Office',
-        device: device || req.headers['user-agent'],
-        ip: req.ip
-      }
-    });
-
-    await session.save();
+    const userId = validateUserId(req.user);
+    
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    
+    // SessionLog.find ব্যবহার করুন
+    const sessions = await SessionLog.find({ userId })
+      .sort({ loginAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await SessionLog.countDocuments({ userId });
+    
+    // User তথ্য fetch করুন (একবারই)
+    const User = require('../models/UsersModel');
+    const user = await User.findById(userId).select('firstName lastName email role department');
+    
+    // formattedSessions এ clockIn, clockOut, totalHours এবং User Name যোগ করুন
+    const formattedSessions = sessions.map(session => ({
+      id: session._id,
+      
+      // ✅ User Information
+      userId: session.userId,
+      userName: session.userName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Unknown User',
+      userEmail: session.userEmail || user?.email || 'Unknown Email',
+      userRole: session.userRole || user?.role || 'employee',
+      userDepartment: session.userDepartment || user?.department || 'Not assigned',
+      
+      // Session Information
+      loginAt: session.loginAt,
+      logoutAt: session.logoutAt,
+      
+      // ✅ Attendance data
+      clockIn: session.clockIn,
+      clockOut: session.clockOut,
+      totalHours: session.totalHours || 0,
+      
+      // ✅ Formatted times
+      formattedClockIn: session.clockIn ? 
+        session.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+        'Not clocked in',
+      formattedClockOut: session.clockOut ? 
+        session.clockOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+        'Not clocked out',
+      formattedTotalHours: session.totalHours ? 
+        `${session.totalHours.toFixed(2)} hours` : 
+        '0 hours',
+      
+      // Session duration
+      duration: session.durationMinutes || 0,
+      formattedDuration: session.formattedDuration || '0m',
+      
+      // Device and location
+      ip: session.ip,
+      device: session.device,
+      browser: session.browser || 'Unknown',
+      os: session.os || 'Unknown',
+      location: session.location || {},
+      
+      // Status
+      status: session.sessionStatus,
+      activityCount: session.activities?.length || 0,
+      isActive: session.isActive || false,
+      
+      // ✅ Attendance status
+      isClockedIn: !!session.clockIn && !session.clockOut,
+      isClockedOut: !!session.clockOut,
+      hasAttendance: !!session.clockIn || !!session.clockOut,
+      
+      // Additional info
+      autoLogout: session.autoLogout || false,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      
+      // ✅ Formatted date and time
+      formattedLoginDate: session.loginAt ? 
+        session.loginAt.toLocaleDateString() : 'N/A',
+      formattedLoginTime: session.loginAt ? 
+        session.loginAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A',
+      formattedLogoutDate: session.logoutAt ? 
+        session.logoutAt.toLocaleDateString() : 'Still active',
+      formattedLogoutTime: session.logoutAt ? 
+        session.logoutAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Still active'
+    }));
 
     res.status(200).json({
       success: true,
-      message: 'Clocked in successfully',
-      data: {
-        sessionId: session._id,
-        clockIn: session.clockIn,
-        formattedClockIn: session.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      message: `Found ${sessions.length} sessions for ${user?.firstName || 'User'}`,
+      userInfo: {
+        id: user?._id,
+        name: `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
+        email: user?.email,
+        role: user?.role,
+        department: user?.department
+      },
+      data: formattedSessions,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
       }
     });
   } catch (error) {
-    console.error('❌ clockIn error:', error);
+    console.error('❌ getMySessions error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch your sessions',
+      error: error.message
+    });
+  }
+};
+
+// ==================== USER – GET CURRENT SESSION ====================
+exports.getMyCurrentSession = async (req, res) => {
+  try {
+    const userId = validateUserId(req.user);
+    
+    // ✅ findOne ব্যবহার করুন
+    const session = await SessionLog.findOne({
+      userId,
+      logoutAt: null,
+      sessionStatus: 'active'
+    }).sort({ loginAt: -1 });
+
+    if (!session) {
+      return res.status(200).json({
+        success: true,
+        message: 'No active session found',
+        data: null,
+        isActive: false
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Active session found',
+      data: {
+        sessionId: session._id,
+        loginAt: session.loginAt,
+        
+        // ✅ Attendance data
+        clockIn: session.clockIn,
+        clockOut: session.clockOut,
+        totalHours: session.totalHours || 0,
+        
+        // ✅ Formatted
+        formattedClockIn: session.clockIn ? 
+          session.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+          'Not clocked in',
+        formattedClockOut: session.clockOut ? 
+          session.clockOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+          'Not clocked out',
+        formattedTotalHours: session.totalHours ? 
+          `${session.totalHours.toFixed(2)} hours` : 
+          '0 hours',
+        
+        // ✅ Status
+        isClockedIn: !!session.clockIn && !session.clockOut,
+        isClockedOut: !!session.clockOut,
+        
+        duration: session.durationMinutes || 0,
+        formattedDuration: session.formattedDuration || '0m',
+        ip: session.ip,
+        device: session.device,
+        activities: session.activities?.slice(-5) || [],
+        totalActivities: session.activities?.length || 0
+      },
+      isActive: true
+    });
+  } catch (error) {
+    console.error('❌ getMyCurrentSession error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch current session',
+      error: error.message
+    });
+  }
+}; 
+
+// ==================== USER – GET SESSION STATISTICS (MULTI PERIOD) ====================
+exports.getSessionStatistics = async (req, res) => {
+  try {
+    const userId = validateUserId(req.user);
+    const now = new Date();
+
+    // Periods: last 7 days, last 30 days
+    const periods = [
+      { label: 'Last 7 days', days: 7 },
+      { label: 'Last 30 days', days: 30 }
+    ];
+
+    const statsResult = {};
+
+    for (const period of periods) {
+      const startDate = new Date();
+      startDate.setDate(now.getDate() - period.days);
+
+      const stats = await SessionLog.aggregate([
+        { $match: { userId, loginAt: { $gte: startDate } } },
+        {
+          $group: {
+            _id: null,
+            totalSessions: { $sum: 1 },
+            totalDuration: { $sum: '$durationMinutes' },
+            totalHoursWorked: { $sum: '$totalHours' },
+            daysClockedIn: { $sum: { $cond: [{ $ne: ['$clockIn', null] }, 1, 0] } },
+            daysClockedOut: { $sum: { $cond: [{ $ne: ['$clockOut', null] }, 1, 0] } },
+            avgHoursPerDay: { $avg: '$totalHours' }
+          }
+        }
+      ]);
+
+      const result = stats[0] || {
+        totalSessions: 0,
+        totalDuration: 0,
+        totalHoursWorked: 0,
+        daysClockedIn: 0,
+        daysClockedOut: 0,
+        avgHoursPerDay: 0
+      };
+
+      statsResult[period.label] = {
+        totalSessions: result.totalSessions,
+        totalDurationHours: (result.totalDuration / 60).toFixed(2),
+        totalHoursWorked: result.totalHoursWorked.toFixed(2),
+        daysClockedIn: result.daysClockedIn,
+        daysClockedOut: result.daysClockedOut,
+        avgHoursPerDay: result.avgHoursPerDay.toFixed(2),
+        attendanceRate: result.totalSessions > 0 ?
+          ((result.daysClockedIn / result.totalSessions) * 100).toFixed(2) + '%' : '0%'
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'User session statistics',
+      data: statsResult
+    });
+  } catch (error) {
+    console.error('❌ getSessionStatistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch session statistics',
+      error: error.message
+    });
+  }
+};
+
+// ==================== ADMIN – GET ALL SESSIONS ====================
+exports.getAllSessions = async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+
+    // Filters
+    const filter = {};
+    
+    if (req.query.userId) {
+      filter.userId = new mongoose.Types.ObjectId(req.query.userId);
+    }
+    
+    if (req.query.status) {
+      filter.sessionStatus = req.query.status;
+    }
+    
+    if (req.query.startDate && req.query.endDate) {
+      filter.loginAt = {
+        $gte: new Date(req.query.startDate),
+        $lte: new Date(req.query.endDate)
+      };
+    }
+
+    // ✅ find ব্যবহার করুন
+    const sessions = await SessionLog.find(filter)
+      .sort({ loginAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await SessionLog.countDocuments(filter);
+
+    // Format response with attendance data
+    const formattedSessions = sessions.map(session => ({
+      id: session._id,
+      userId: session.userId,
+      userName: session.userName || 'Unknown',
+      userEmail: session.userEmail || 'Unknown',
+      userRole: session.userRole || 'employee',
+      loginAt: session.loginAt,
+      logoutAt: session.logoutAt,
+      
+      // ✅ Attendance data
+      clockIn: session.clockIn,
+      clockOut: session.clockOut,
+      totalHours: session.totalHours || 0,
+      
+      // ✅ Formatted
+      formattedClockIn: session.clockIn ? 
+        session.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+        'Not clocked in',
+      formattedClockOut: session.clockOut ? 
+        session.clockOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+        'Not clocked out',
+      formattedTotalHours: session.totalHours ? 
+        `${session.totalHours.toFixed(2)} hours` : 
+        '0 hours',
+      
+      duration: session.durationMinutes || 0,
+      formattedDuration: session.formattedDuration || '0m',
+      ip: session.ip,
+      device: session.device,
+      status: session.sessionStatus,
+      activityCount: session.activities?.length || 0,
+      isActive: session.isActive || false,
+      
+      // ✅ Attendance status
+      isClockedIn: !!session.clockIn && !session.clockOut,
+      isClockedOut: !!session.clockOut
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: `Found ${sessions.length} sessions`,
+      data: formattedSessions,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('❌ getAllSessions error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch sessions',
+      error: error.message
+    });
+  }
+};
+
+// ==================== ADMIN – GET SESSION BY ID ====================
+exports.getSessionById = async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    const sessionId = req.params.id;
+    
+    if (!mongoose.Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid session ID'
+      });
+    }
+
+    // ✅ findById ব্যবহার করুন
+    const session = await SessionLog.findById(sessionId);
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        id: session._id,
+        userId: session.userId,
+        userName: session.userName,
+        userEmail: session.userEmail,
+        userRole: session.userRole,
+        loginAt: session.loginAt,
+        logoutAt: session.logoutAt,
+        
+        // ✅ Attendance data
+        clockIn: session.clockIn,
+        clockOut: session.clockOut,
+        totalHours: session.totalHours || 0,
+        
+        // ✅ Formatted
+        formattedClockIn: session.clockIn ? 
+          session.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+          'Not clocked in',
+        formattedClockOut: session.clockOut ? 
+          session.clockOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
+          'Not clocked out',
+        
+        duration: session.durationMinutes || 0,
+        formattedDuration: session.formattedDuration || '0m',
+        ip: session.ip,
+        device: session.device,
+        status: session.sessionStatus,
+        activities: session.activities || [],
+        autoLogout: session.autoLogout,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        
+        // ✅ Status flags
+        isClockedIn: !!session.clockIn && !session.clockOut,
+        isClockedOut: !!session.clockOut
+      }
+    });
+  } catch (error) {
+    console.error('❌ getSessionById error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch session',
+      error: error.message
+    });
+  }
+};
+
+// ==================== GET SESSION STATISTICS WITH ATTENDANCE ====================
+exports.getSessionAttendanceStats = async (req, res) => {
+  try {
+    const userId = validateUserId(req.user);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const stats = await SessionLog.aggregate([
+      {
+        $match: {
+          userId: userId,
+          loginAt: { $gte: thirtyDaysAgo },
+          $or: [
+            { clockIn: { $exists: true } },
+            { clockOut: { $exists: true } }
+          ]
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSessions: { $sum: 1 },
+          totalDuration: { $sum: '$durationMinutes' },
+          totalHoursWorked: { $sum: '$totalHours' },
+          daysClockedIn: { 
+            $sum: { 
+              $cond: [{ $ne: ['$clockIn', null] }, 1, 0] 
+            } 
+          },
+          daysClockedOut: { 
+            $sum: { 
+              $cond: [{ $ne: ['$clockOut', null] }, 1, 0] 
+            } 
+          },
+          avgHoursPerDay: { $avg: '$totalHours' }
+        }
+      }
+    ]);
+
+    const result = stats[0] || {
+      totalSessions: 0,
+      totalDuration: 0,
+      totalHoursWorked: 0,
+      daysClockedIn: 0,
+      daysClockedOut: 0,
+      avgHoursPerDay: 0
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalSessions: result.totalSessions,
+        totalDurationHours: (result.totalDuration / 60).toFixed(2),
+        totalHoursWorked: result.totalHoursWorked.toFixed(2),
+        daysClockedIn: result.daysClockedIn,
+        daysClockedOut: result.daysClockedOut,
+        avgHoursPerDay: result.avgHoursPerDay.toFixed(2),
+        attendanceRate: result.totalSessions > 0 ? 
+          ((result.daysClockedIn / result.totalSessions) * 100).toFixed(2) + '%' : '0%',
+        period: 'Last 30 days'
+      }
+    });
+  } catch (error) {
+    console.error('❌ getSessionAttendanceStats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch session statistics'
+    });
+  }
+};
+// ==================== ADMIN – DELETE SESSION BY ID ====================
+exports.deleteSessionById = async (req, res) => {
+  try {
+    // Check if admin or superadmin
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    const sessionId = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid session ID'
+      });
+    }
+
+    const deletedSession = await SessionLog.findByIdAndDelete(sessionId);
+
+    if (!deletedSession) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found or already deleted'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Session deleted successfully',
+      data: deletedSession
+    });
+  } catch (error) {
+    console.error('❌ deleteSessionById error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete session',
+      error: error.message
+    });
+  }
+};
+// controllers/sessionController.js - আপডেটেড
+
+// ==================== USER – CLOCK IN ====================
+exports.clockIn = async (req, res) => {
+  try {
+    const userId = validateUserId(req.user);
+    const now = new Date();
+    
+    // Check if already clocked in for today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    todayStart.setDate(todayStart.getDate() - 1); // 24 hours ago
+    
+    const existingClockIn = await SessionLog.findOne({
+      userId,
+      clockIn: { $gte: todayStart },
+      clockOut: null
+    });
+
+    if (existingClockIn) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already clocked in today',
+        data: {
+          sessionId: existingClockIn._id,
+          clockIn: existingClockIn.clockIn,
+          formattedClockIn: existingClockIn.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      });
+    }
+
+    // Create new session with clock-in
+    const session = await SessionLog.create({
+      userId,
+      userName: `${req.user.firstName} ${req.user.lastName}`,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      userDepartment: req.user.department,
+      loginAt: now,
+      sessionStatus: 'active',
+      isActive: true,
+      
+      // Attendance data
+      clockIn: now,
+      
+      // Device info from headers
+      ip: req.ip || req.headers['x-forwarded-for'] || 'Unknown',
+      device: req.headers['user-agent'] || 'Unknown',
+      browser: getBrowserInfo(req.headers['user-agent']),
+      os: getOSInfo(req.headers['user-agent']),
+      
+      activities: [{
+        action: 'clock_in',
+        timestamp: now,
+        details: 'User clocked in for work'
+      }]
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Successfully clocked in',
+      data: {
+        sessionId: session._id,
+        clockIn: session.clockIn,
+        formattedClockIn: session.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        loginAt: session.loginAt
+      }
+    });
+  } catch (error) {
+    console.error('❌ clockIn error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Failed to clock in',
@@ -63,63 +640,67 @@ exports.clockIn = async (req, res) => {
   }
 };
 
-// ==================== USER - CLOCK OUT ====================
+// ==================== USER – CLOCK OUT ====================
 exports.clockOut = async (req, res) => {
   try {
-    const userId = req.user._id;
-    const { timestamp, location, device } = req.body;
-
-    const session = await SessionLog.findOne({
+    const userId = validateUserId(req.user);
+    const now = new Date();
+    
+    // Find active session with clock-in
+    const activeSession = await SessionLog.findOne({
       userId,
-      logoutAt: null,
+      clockIn: { $ne: null },
+      clockOut: null,
       sessionStatus: 'active'
-    });
+    }).sort({ loginAt: -1 });
 
-    if (!session || !session.clockIn) {
-      return res.status(400).json({
+    if (!activeSession) {
+      return res.status(404).json({
         success: false,
-        message: 'No active session or clock in found'
+        message: 'No active clock-in session found'
       });
     }
 
-    const now = timestamp ? new Date(timestamp) : new Date();
-    
-    session.clockOut = now;
-    session.logoutAt = now;
-    session.sessionStatus = 'logged_out';
-    
     // Calculate total hours
-    if (session.clockIn) {
-      const diffMs = session.clockOut - session.clockIn;
-      session.totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2));
-    }
+    const clockInTime = new Date(activeSession.clockIn);
+    const totalHours = (now - clockInTime) / (1000 * 60 * 60);
+    const durationMinutes = (now - clockInTime) / (1000 * 60);
 
+    // Update session
+    activeSession.clockOut = now;
+    activeSession.totalHours = totalHours;
+    activeSession.durationMinutes = durationMinutes;
+    activeSession.formattedDuration = formatDuration(durationMinutes);
+    activeSession.logoutAt = now;
+    activeSession.sessionStatus = 'completed';
+    activeSession.isActive = false;
+    
     // Add activity
-    session.activities.push({
-      action: 'Clock Out',
-      details: { 
-        location: location || 'Office',
-        device: device || req.headers['user-agent'],
-        ip: req.ip,
-        totalHours: session.totalHours
-      }
+    activeSession.activities.push({
+      action: 'clock_out',
+      timestamp: now,
+      details: 'User clocked out from work',
+      duration: totalHours.toFixed(2) + ' hours'
     });
 
-    await session.save();
+    await activeSession.save();
 
     res.status(200).json({
       success: true,
-      message: 'Clocked out successfully',
+      message: 'Successfully clocked out',
       data: {
-        sessionId: session._id,
-        clockIn: session.clockIn,
-        clockOut: session.clockOut,
-        totalHours: session.totalHours,
-        formattedClockOut: session.clockOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        sessionId: activeSession._id,
+        clockIn: activeSession.clockIn,
+        clockOut: activeSession.clockOut,
+        totalHours: activeSession.totalHours,
+        durationMinutes: activeSession.durationMinutes,
+        formattedClockIn: activeSession.clockIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedClockOut: activeSession.clockOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedTotalHours: `${activeSession.totalHours.toFixed(2)} hours`
       }
     });
   } catch (error) {
-    console.error('❌ clockOut error:', error);
+    console.error('❌ clockOut error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Failed to clock out',
@@ -128,76 +709,102 @@ exports.clockOut = async (req, res) => {
   }
 };
 
-// ==================== ADMIN - GET STATISTICS ====================
+// ==================== ADMIN – GET ADMIN STATISTICS ====================
 exports.getAdminStatistics = async (req, res) => {
   try {
-    // Get today's date range
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Check if admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
 
+    const now = new Date();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Get overall statistics
     const stats = await SessionLog.aggregate([
       {
-        $facet: {
-          // Total sessions
-          totalSessions: [
-            { $group: { _id: null, count: { $sum: 1 } } }
-          ],
-          // Active sessions today
-          activeSessions: [
-            { 
-              $match: { 
-                sessionStatus: 'active',
-                loginAt: { $gte: today, $lt: tomorrow }
-              } 
-            },
-            { $group: { _id: null, count: { $sum: 1 } } }
-          ],
-          // Today's sessions
-          todaySessions: [
-            { 
-              $match: { 
-                loginAt: { $gte: today, $lt: tomorrow }
-              } 
-            },
-            { $group: { _id: null, count: { $sum: 1 } } }
-          ],
-          // Average duration
-          avgDuration: [
-            { $match: { logoutAt: { $ne: null } } },
-            {
-              $group: {
-                _id: null,
-                avgMinutes: { $avg: '$durationMinutes' }
-              }
-            }
-          ],
-          // Device distribution
-          deviceStats: [
-            { $group: { _id: '$device', count: { $sum: 1 } } },
-            { $sort: { count: -1 } },
-            { $limit: 5 }
-          ]
+        $match: { loginAt: { $gte: thirtyDaysAgo } }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSessions: { $sum: 1 },
+          activeSessions: {
+            $sum: { $cond: [{ $eq: ['$sessionStatus', 'active'] }, 1, 0] }
+          },
+          totalHoursWorked: { $sum: '$totalHours' },
+          totalUsers: { $addToSet: '$userId' },
+          daysClockedIn: { 
+            $sum: { $cond: [{ $ne: ['$clockIn', null] }, 1, 0] }
+          },
+          daysClockedOut: { 
+            $sum: { $cond: [{ $ne: ['$clockOut', null] }, 1, 0] }
+          }
         }
       }
     ]);
 
-    const result = {
-      totalSessions: stats[0]?.totalSessions[0]?.count || 0,
-      activeSessions: stats[0]?.activeSessions[0]?.count || 0,
-      todaySessions: stats[0]?.todaySessions[0]?.count || 0,
-      avgDuration: stats[0]?.avgDuration[0]?.avgMinutes 
-        ? `${Math.round(stats[0].avgDuration[0].avgMinutes / 60)}h ${Math.round(stats[0].avgDuration[0].avgMinutes % 60)}m`
-        : '0h 0m',
-      topDevices: stats[0]?.deviceStats || [],
-      attendanceRate: '85%' // You can calculate this based on your logic
+    // Get daily stats for last 7 days
+    const dailyStats = await SessionLog.aggregate([
+      {
+        $match: { loginAt: { $gte: sevenDaysAgo } }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$loginAt' } },
+          sessions: { $sum: 1 },
+          clockIns: { $sum: { $cond: [{ $ne: ['$clockIn', null] }, 1, 0] } },
+          clockOuts: { $sum: { $cond: [{ $ne: ['$clockOut', null] }, 1, 0] } },
+          totalHours: { $sum: '$totalHours' }
+        }
+      },
+      { $sort: { '_id': 1 } }
+    ]);
+
+    const result = stats[0] || {
+      totalSessions: 0,
+      activeSessions: 0,
+      totalHoursWorked: 0,
+      totalUsers: [],
+      daysClockedIn: 0,
+      daysClockedOut: 0
     };
 
     res.status(200).json({
       success: true,
-      message: 'Admin statistics fetched successfully',
-      data: result
+      data: {
+        overview: {
+          totalSessions: result.totalSessions,
+          activeSessions: result.activeSessions,
+          totalHoursWorked: result.totalHoursWorked.toFixed(2),
+          uniqueUsers: result.totalUsers.length,
+          daysClockedIn: result.daysClockedIn,
+          daysClockedOut: result.daysClockedOut,
+          attendanceRate: result.totalSessions > 0 ?
+            ((result.daysClockedIn / result.totalSessions) * 100).toFixed(2) + '%' : '0%'
+        },
+        dailyStats: dailyStats.map(day => ({
+          date: day._id,
+          sessions: day.sessions,
+          clockIns: day.clockIns,
+          clockOuts: day.clockOuts,
+          totalHours: day.totalHours.toFixed(2)
+        })),
+        period: {
+          start: thirtyDaysAgo.toISOString(),
+          end: now.toISOString()
+        }
+      }
     });
   } catch (error) {
     console.error('❌ getAdminStatistics error:', error);
@@ -209,44 +816,59 @@ exports.getAdminStatistics = async (req, res) => {
   }
 };
 
-// ==================== ANALYTICS - DAILY ACTIVITY ====================
+// ==================== ANALYTICS – DAILY ANALYTICS ====================
 exports.getDailyAnalytics = async (req, res) => {
   try {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
 
-    const dailyStats = await SessionLog.aggregate([
+    const days = parseInt(req.query.days) || 30;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const analytics = await SessionLog.aggregate([
       {
         $match: {
-          loginAt: { $gte: sevenDaysAgo }
+          loginAt: { $gte: startDate }
         }
       },
       {
         $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$loginAt" }
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$loginAt' } },
+          totalSessions: { $sum: 1 },
+          activeSessions: {
+            $sum: { $cond: [{ $eq: ['$sessionStatus', 'active'] }, 1, 0] }
           },
-          sessions: { $sum: 1 },
-          activeUsers: { $addToSet: "$userId" },
-          totalHours: { $sum: "$totalHours" }
+          clockIns: { $sum: { $cond: [{ $ne: ['$clockIn', null] }, 1, 0] } },
+          clockOuts: { $sum: { $cond: [{ $ne: ['$clockOut', null] }, 1, 0] } },
+          totalHours: { $sum: '$totalHours' },
+          avgDuration: { $avg: '$durationMinutes' },
+          uniqueUsers: { $addToSet: '$userId' }
         }
       },
-      {
-        $project: {
-          date: "$_id",
-          sessions: 1,
-          activeUsers: { $size: "$activeUsers" },
-          totalHours: { $round: ["$totalHours", 2] },
-          _id: 0
-        }
-      },
-      { $sort: { date: 1 } }
+      { $sort: { '_id': 1 } }
     ]);
 
     res.status(200).json({
       success: true,
-      message: 'Daily analytics fetched',
-      data: dailyStats
+      data: analytics.map(day => ({
+        date: day._id,
+        totalSessions: day.totalSessions,
+        activeSessions: day.activeSessions,
+        clockIns: day.clockIns,
+        clockOuts: day.clockOuts,
+        totalHours: day.totalHours.toFixed(2),
+        avgDuration: (day.avgDuration || 0).toFixed(2),
+        uniqueUsers: day.uniqueUsers.length
+      })),
+      period: {
+        days,
+        startDate: startDate.toISOString()
+      }
     });
   } catch (error) {
     console.error('❌ getDailyAnalytics error:', error);
@@ -258,36 +880,82 @@ exports.getDailyAnalytics = async (req, res) => {
   }
 };
 
-// ==================== ANALYTICS - DEVICE DISTRIBUTION ====================
+// ==================== ANALYTICS – DEVICE ANALYTICS ====================
 exports.getDeviceAnalytics = async (req, res) => {
   try {
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    const days = parseInt(req.query.days) || 30;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
     const deviceStats = await SessionLog.aggregate([
       {
-        $group: {
-          _id: "$device",
-          count: { $sum: 1 }
+        $match: {
+          loginAt: { $gte: startDate }
         }
       },
+      {
+        $group: {
+          _id: {
+            device: '$device',
+            browser: '$browser',
+            os: '$os'
+          },
+          count: { $sum: 1 },
+          totalHours: { $sum: '$totalHours' },
+          avgDuration: { $avg: '$durationMinutes' },
+          clockIns: { $sum: { $cond: [{ $ne: ['$clockIn', null] }, 1, 0] } }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 50 }
+    ]);
+
+    const browserStats = await SessionLog.aggregate([
       {
         $match: {
-          _id: { $ne: null }
+          loginAt: { $gte: startDate },
+          browser: { $ne: null }
         }
       },
       {
-        $sort: { count: -1 }
+        $group: {
+          _id: '$browser',
+          count: { $sum: 1 },
+          percentage: { $avg: 1 }
+        }
       },
-      {
-        $limit: 10
-      }
+      { $sort: { count: -1 } }
     ]);
 
     res.status(200).json({
       success: true,
-      message: 'Device analytics fetched',
-      data: deviceStats.map(stat => ({
-        device: stat._id || 'Unknown',
-        count: stat.count
-      }))
+      data: {
+        deviceStats: deviceStats.map(stat => ({
+          device: stat._id.device || 'Unknown',
+          browser: stat._id.browser || 'Unknown',
+          os: stat._id.os || 'Unknown',
+          count: stat.count,
+          totalHours: stat.totalHours.toFixed(2),
+          avgDuration: (stat.avgDuration || 0).toFixed(2),
+          clockIns: stat.clockIns
+        })),
+        browserStats: browserStats.map(stat => ({
+          browser: stat._id,
+          count: stat.count,
+          percentage: ((stat.count / browserStats.reduce((a, b) => a + b.count, 0)) * 100).toFixed(2) + '%'
+        })),
+        period: {
+          days,
+          startDate: startDate.toISOString()
+        }
+      }
     });
   } catch (error) {
     console.error('❌ getDeviceAnalytics error:', error);
@@ -299,50 +967,80 @@ exports.getDeviceAnalytics = async (req, res) => {
   }
 };
 
-// ==================== ANALYTICS - TRENDS ====================
+// ==================== ANALYTICS – TREND ANALYTICS ====================
 exports.getTrendAnalytics = async (req, res) => {
   try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
 
-    const trendStats = await SessionLog.aggregate([
+    const months = parseInt(req.query.months) || 6;
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - months);
+
+    const monthlyTrends = await SessionLog.aggregate([
       {
         $match: {
-          loginAt: { $gte: thirtyDaysAgo }
+          loginAt: { $gte: startDate }
         }
       },
       {
         $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$loginAt" }
-          },
-          sessions: { $sum: 1 },
-          totalHours: { $sum: "$totalHours" },
-          uniqueUsers: { $addToSet: "$userId" }
+          _id: { $dateToString: { format: '%Y-%m', date: '$loginAt' } },
+          totalSessions: { $sum: 1 },
+          clockIns: { $sum: { $cond: [{ $ne: ['$clockIn', null] }, 1, 0] } },
+          clockOuts: { $sum: { $cond: [{ $ne: ['$clockOut', null] }, 1, 0] } },
+          totalHours: { $sum: '$totalHours' },
+          uniqueUsers: { $addToSet: '$userId' },
+          avgHoursPerUser: { $avg: '$totalHours' }
+        }
+      },
+      { $sort: { '_id': 1 } }
+    ]);
+
+    const hourlyTrends = await SessionLog.aggregate([
+      {
+        $match: {
+          loginAt: { $gte: startDate },
+          clockIn: { $ne: null }
         }
       },
       {
-        $project: {
-          date: "$_id",
-          sessions: 1,
-          totalHours: { $round: ["$totalHours", 2] },
-          uniqueUsers: { $size: "$uniqueUsers" },
-          avgHoursPerSession: {
-            $cond: [
-              { $eq: ["$sessions", 0] },
-              0,
-              { $round: [{ $divide: ["$totalHours", "$sessions"] }, 2] }
-            ]
-          }
+        $group: {
+          _id: { $hour: '$clockIn' },
+          count: { $sum: 1 },
+          avgHours: { $avg: '$totalHours' }
         }
       },
-      { $sort: { date: 1 } }
+      { $sort: { '_id': 1 } }
     ]);
 
     res.status(200).json({
       success: true,
-      message: 'Trend analytics fetched',
-      data: trendStats
+      data: {
+        monthlyTrends: monthlyTrends.map(month => ({
+          month: month._id,
+          totalSessions: month.totalSessions,
+          clockIns: month.clockIns,
+          clockOuts: month.clockOuts,
+          totalHours: month.totalHours.toFixed(2),
+          uniqueUsers: month.uniqueUsers.length,
+          avgHoursPerUser: (month.avgHoursPerUser || 0).toFixed(2)
+        })),
+        hourlyTrends: hourlyTrends.map(hour => ({
+          hour: hour._id,
+          label: `${hour._id}:00 - ${hour._id + 1}:00`,
+          count: hour.count,
+          avgHours: (hour.avgHours || 0).toFixed(2)
+        })),
+        period: {
+          months,
+          startDate: startDate.toISOString()
+        }
+      }
     });
   } catch (error) {
     console.error('❌ getTrendAnalytics error:', error);
@@ -354,54 +1052,32 @@ exports.getTrendAnalytics = async (req, res) => {
   }
 };
 
-// ==================== EXPORT - MY SESSIONS ====================
+// ==================== EXPORT – USER SESSIONS ====================
 exports.exportMySessions = async (req, res) => {
   try {
-    const userId = req.user._id;
-    const { startDate, endDate, format = 'csv' } = req.query;
-
-    const matchCondition = { userId };
+    const userId = validateUserId(req.user);
+    
+    const { startDate, endDate } = req.query;
+    const filter = { userId };
     
     if (startDate && endDate) {
-      matchCondition.loginAt = {
+      filter.loginAt = {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
       };
     }
 
-    const sessions = await SessionLog.find(matchCondition)
+    const sessions = await SessionLog.find(filter)
       .sort({ loginAt: -1 })
-      .lean();
-
-    if (format === 'csv') {
-      // CSV export logic
-      const csvData = sessions.map(session => ({
-        Date: session.loginAt.toISOString().split('T')[0],
-        'Clock In': session.clockIn ? session.clockIn.toLocaleTimeString() : 'N/A',
-        'Clock Out': session.clockOut ? session.clockOut.toLocaleTimeString() : 'N/A',
-        'Total Hours': session.totalHours || '0.00',
-        'Session Duration': session.formattedDuration || '0m',
-        Device: session.device || 'N/A',
-        IP: session.ip || 'N/A',
-        Status: session.sessionStatus || 'N/A'
-      }));
-
-      // Convert to CSV string
-      const csvString = [
-        Object.keys(csvData[0] || {}).join(','),
-        ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
-      ].join('\n');
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=my_sessions_export.csv');
-      return res.send(csvString);
-    }
+      .select('-activities -__v');
 
     res.status(200).json({
       success: true,
-      message: 'Sessions export ready',
+      message: `Exported ${sessions.length} sessions`,
       data: sessions,
-      count: sessions.length
+      format: 'JSON',
+      total: sessions.length,
+      exportDate: new Date()
     });
   } catch (error) {
     console.error('❌ exportMySessions error:', error);
@@ -413,61 +1089,71 @@ exports.exportMySessions = async (req, res) => {
   }
 };
 
-// ==================== EXPORT - ALL SESSIONS (ADMIN) ====================
+// ==================== EXPORT – ALL SESSIONS (ADMIN) ====================
 exports.exportAllSessions = async (req, res) => {
   try {
-    const { startDate, endDate, userId, format = 'csv' } = req.query;
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
 
-    const matchCondition = {};
+    const { startDate, endDate, userId, format = 'json' } = req.query;
+    const filter = {};
+    
+    if (userId) {
+      filter.userId = new mongoose.Types.ObjectId(userId);
+    }
     
     if (startDate && endDate) {
-      matchCondition.loginAt = {
+      filter.loginAt = {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
       };
     }
-    
-    if (userId) {
-      matchCondition.userId = userId;
-    }
 
-    const sessions = await SessionLog.find(matchCondition)
-      .populate('userId', 'firstName lastName email employeeId')
+    const sessions = await SessionLog.find(filter)
       .sort({ loginAt: -1 })
-      .lean();
+      .select('-activities -__v')
+      .populate('userId', 'firstName lastName email role department');
 
     if (format === 'csv') {
-      // CSV export logic for admin
+      // CSV export logic (simplified)
       const csvData = sessions.map(session => ({
-        Date: session.loginAt.toISOString().split('T')[0],
-        'Employee ID': session.userId?.employeeId || 'N/A',
-        'Employee Name': `${session.userId?.firstName || ''} ${session.userId?.lastName || ''}`.trim() || 'N/A',
-        'Email': session.userId?.email || 'N/A',
-        'Clock In': session.clockIn ? session.clockIn.toLocaleTimeString() : 'N/A',
-        'Clock Out': session.clockOut ? session.clockOut.toLocaleTimeString() : 'N/A',
-        'Total Hours': session.totalHours || '0.00',
-        'Session Duration': session.formattedDuration || '0m',
-        Device: session.device || 'N/A',
-        IP: session.ip || 'N/A',
-        Status: session.sessionStatus || 'N/A'
+        SessionID: session._id,
+        UserID: session.userId?._id,
+        UserName: session.userName,
+        UserEmail: session.userEmail,
+        LoginAt: session.loginAt,
+        LogoutAt: session.logoutAt,
+        ClockIn: session.clockIn,
+        ClockOut: session.clockOut,
+        TotalHours: session.totalHours || 0,
+        Duration: session.durationMinutes || 0,
+        IP: session.ip,
+        Device: session.device,
+        Status: session.sessionStatus,
+        CreatedAt: session.createdAt
       }));
 
-      const csvString = [
-        Object.keys(csvData[0] || {}).join(','),
-        ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
-      ].join('\n');
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=all_sessions_export.csv');
-      return res.send(csvString);
+      res.status(200).json({
+        success: true,
+        message: `Exported ${sessions.length} sessions as CSV`,
+        data: csvData,
+        format: 'CSV',
+        total: sessions.length
+      });
+    } else {
+      res.status(200).json({
+        success: true,
+        message: `Exported ${sessions.length} sessions`,
+        data: sessions,
+        format: 'JSON',
+        total: sessions.length,
+        exportDate: new Date()
+      });
     }
-
-    res.status(200).json({
-      success: true,
-      message: 'All sessions export ready',
-      data: sessions,
-      count: sessions.length
-    });
   } catch (error) {
     console.error('❌ exportAllSessions error:', error);
     res.status(500).json({
@@ -476,4 +1162,41 @@ exports.exportAllSessions = async (req, res) => {
       error: error.message
     });
   }
+};
+
+// ==================== HELPER FUNCTIONS ====================
+const getBrowserInfo = (userAgent) => {
+  if (!userAgent) return 'Unknown';
+  
+  if (userAgent.includes('Chrome')) return 'Chrome';
+  if (userAgent.includes('Firefox')) return 'Firefox';
+  if (userAgent.includes('Safari')) return 'Safari';
+  if (userAgent.includes('Edge')) return 'Edge';
+  if (userAgent.includes('Opera')) return 'Opera';
+  
+  return 'Unknown';
+};
+
+const getOSInfo = (userAgent) => {
+  if (!userAgent) return 'Unknown';
+  
+  if (userAgent.includes('Windows')) return 'Windows';
+  if (userAgent.includes('Mac')) return 'MacOS';
+  if (userAgent.includes('Linux')) return 'Linux';
+  if (userAgent.includes('Android')) return 'Android';
+  if (userAgent.includes('iOS')) return 'iOS';
+  
+  return 'Unknown';
+};
+
+const formatDuration = (minutes) => {
+  if (!minutes) return '0m';
+  
+  const hours = Math.floor(minutes / 60);
+  const mins = Math.floor(minutes % 60);
+  
+  if (hours > 0) {
+    return `${hours}h ${mins}m`;
+  }
+  return `${mins}m`;
 };
