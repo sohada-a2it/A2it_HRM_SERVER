@@ -184,31 +184,7 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
     console.error('Password comparison error:', error);
     return false;
   }
-};
-
-// 🔹 **Alternative: Direct password check method (if matchPassword doesn't work)**
-userSchema.methods.checkPassword = async function (password) {
-  try {
-    console.log('🔐 Checking password:');
-    console.log('- Input password:', password);
-    console.log('- Stored password hash:', this.password?.substring(0, 30) + '...');
-    
-    const result = await bcrypt.compare(password, this.password);
-    console.log('- Bcrypt compare result:', result);
-    
-    return result;
-  } catch (error) {
-    console.error('❌ Password check error:', error);
-    
-    // Fallback: If bcrypt fails, try direct comparison for plain text passwords
-    if (this.password && !this.password.startsWith('$2')) {
-      console.log('⚠️ Falling back to direct comparison');
-      return password === this.password;
-    }
-    
-    return false;
-  }
-};
+}; 
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
