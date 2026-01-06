@@ -175,7 +175,7 @@ router.get('/admin/export', adminOnly, sessionController.exportAllSessions);
 router.get('/weekly-off', protect, OfficeSchedule.getWeeklyOff);
 
 // Admin routes
-router.put('/weekly-off', protect, adminOnly, OfficeSchedule.updateWeeklyOff);
+router.put('/updateWeekly-off', protect, adminOnly, OfficeSchedule.updateWeeklyOff);
 router.put('/override', protect, adminOnly, OfficeSchedule.createOrUpdateOverride);
 router.get('/override/history', protect, adminOnly, OfficeSchedule.getOverrideHistory);
 router.delete('/override/:id', protect, adminOnly, OfficeSchedule.deleteOverride);
