@@ -3,8 +3,8 @@ const User = require('../models/UsersModel');
 const Attendance = require('../models/AttendanceModel');
 const Leave = require('../models/LeaveModel');
 const SalaryRule = require('../models/SalaryRuleModel');
-const OfficeSchedule = require('../models/OfficeSchedule');
-const OfficeScheduleOverride = require('../models/OfficeScheduleOverride');
+const OfficeSchedule = require('../models/OfficeScheduleModel');
+const OfficeScheduleOverride = require('../models/TemporaryOfficeSchedule');
 
 // ==================== HELPER FUNCTIONS ====================
 
