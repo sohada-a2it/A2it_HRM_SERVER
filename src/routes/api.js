@@ -158,7 +158,7 @@ router.post('/clock-out', protect, sessionController.clockOut);
 router.get('/export', protect, sessionController.exportMySessions);
 
 // ==================== ADMIN ROUTES ====================
-router.get('/admin/all', protect, adminOnly, sessionController.getAllSessions);
+router.get('/admin/allSession', protect, adminOnly, sessionController.getAllSessions);
 router.get('/admin/session/:id', protect, adminOnly, sessionController.getSessionById);
 router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
 router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById);
