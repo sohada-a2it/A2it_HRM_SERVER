@@ -149,24 +149,25 @@ router.get('/user/my-logs', protect, auditController.getMyAuditLogs);
 // ==================== USER ROUTES ====================
 router.get('/my-sessions', protect, sessionController.getMySessions);
 router.get('/my-current-session', protect, sessionController.getMyCurrentSession);
-router.get('/my-session-state', protect, sessionController.getMyCurrentSession); // Same as above
+router.get('/my-session-state', protect, sessionController.getMyCurrentSession);
 router.get('/stats/attendance', protect, sessionController.getSessionAttendanceStats);
 router.get('/stats', protect, sessionController.getSessionStatistics);
-router.post('/sessions/clock-in', protect, sessionController.clockIn);
-router.post('/sessions/clock-out', protect, sessionController.clockOut);
-router.get('/my-session-stats', protect, sessionController.getMySessionStats); 
+router.get('/my-session-stats', protect, sessionController.getMySessionStats);
+router.post('/clock-in', protect, sessionController.clockIn);
+router.post('/clock-out', protect, sessionController.clockOut);
+router.get('/export', protect, sessionController.exportMySessions);
 
 // ==================== ADMIN ROUTES ====================
-router.get('/admin/all-sessions', adminOnly, sessionController.getAllSessions);
-router.get('/admin/session/:id', adminOnly, sessionController.getSessionById);
-router.get('/admin/statistics', adminOnly, sessionController.getAdminStatistics);
-router.delete('/admin/session/:id', adminOnly, sessionController.deleteSessionById);
+router.get('/admin/all', protect, adminOnly, sessionController.getAllSessions);
+router.get('/admin/session/:id', protect, adminOnly, sessionController.getSessionById);
+router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
+router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById);
+router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions);
 
 // ==================== ANALYTICS ROUTES ====================
-router.get('/analytics/daily', adminOnly, sessionController.getDailyAnalytics);
-router.get('/analytics/devices', adminOnly, sessionController.getDeviceAnalytics);
-router.get('/analytics/trends', adminOnly, sessionController.getTrendAnalytics);
-
+router.get('/analytics/daily', protect, adminOnly, sessionController.getDailyAnalytics);
+router.get('/analytics/devices', protect, adminOnly, sessionController.getDeviceAnalytics);
+router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics);
 // ==================== EXPORT ROUTES ====================
 router.get('/export', sessionController.exportMySessions);
 router.get('/admin/export', adminOnly, sessionController.exportAllSessions);
