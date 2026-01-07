@@ -26,13 +26,16 @@ router.get("/admin/getAdminProfile", protect, adminOnly, userController.getAdmin
 router.post("/admin/updateAdminProfile", protect, adminOnly, userController.updateAdminProfile); 
 router.get("/admin/getAll-user", protect, adminOnly, userController.getAllUsers); 
 router.put("/admin/update-user/:id", protect, adminOnly, userController.adminUpdateUser); 
-router.delete("/admin/user-delete/:id", protect, adminOnly, userController.deleteUser); 
-router.post('/admin/request-otp', protect, adminOnly, authController.AdminRequestOtp);
-router.post('/admin/reset-password', protect, adminOnly, authController.AdminResetPassword );  
+router.delete("/admin/user-delete/:id", protect, adminOnly, userController.deleteUser);   
 router.get('/my-sessions', protect, userController.getAllSessions);
 router.delete('/terminate-session/:id', protect, userController.terminateSession);
 router.post('/logout-all', protect, userController.logoutAllSessions);
 
+// =================== OTP Routes ====================
+router.post('/admin/request-otp', authController.AdminRequestOtp);
+router.post('/admin/verify-otp', authController.AdminVerifyOtp);
+router.post('/admin/reset-password', authController.AdminResetPassword);
+router.get('/admin/cleanup-otps', authController.CleanupExpiredOtps);
 
 // Admin only routes
 router.get('/all-sessions', protect, adminOnly, userController.getAllSessions);
