@@ -147,12 +147,12 @@ router.get('/user/my-logs', protect, auditController.getMyAuditLogs);
 
 // ==================== SessionLog Routes==================== 
 // ==================== USER ROUTES ====================
-router.get('/my-sessions', protect, sessionController.getMySessions);
+router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
 router.get('/my-current-session', protect, sessionController.getMyCurrentSession);
 router.get('/my-session-state', protect, sessionController.getMyCurrentSession);
-router.get('/stats/attendance', protect, sessionController.getSessionAttendanceStats);
+router.get('/sessions/stats/attendance', protect, sessionController.getSessionAttendanceStats);
 router.get('/stats', protect, sessionController.getSessionStatistics);
-router.get('/my-session-stats', protect, sessionController.getMySessionStats);
+router.get(' /sessions/statistics', protect, sessionController.getMySessionStats);
 router.post('/clock-in', protect, sessionController.clockIn);
 router.post('/clock-out', protect, sessionController.clockOut);
 router.get('/export', protect, sessionController.exportMySessions);
