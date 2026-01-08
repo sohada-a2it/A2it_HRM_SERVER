@@ -31,7 +31,7 @@ router.get('/my-sessions', protect, userController.getAllSessions);
 router.delete('/terminate-session/:id', protect, userController.terminateSession);
 router.post('/logout-all', protect, userController.logoutAllSessions); 
 // Admin get user by ID
-router.get('/profileDetails/:id', protect, adminOnly, userController.getUserById);
+router.get('/profile/:id', protect, adminOnly, userController.getUserById);
 
 // Admin search users
 router.get('/admin/users/search', protect, adminOnly, userController.searchUsers);
