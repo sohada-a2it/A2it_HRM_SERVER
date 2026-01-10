@@ -66,6 +66,113 @@ router.delete(
   profileController.removeProfilePicture
 );
 
+// routes/admin.js
+router.post('/send-welcome-email', protect, adminOnly, async (req, res) => {
+  try {
+    const { 
+      to, 
+      subject, 
+      userName, 
+      userEmail, 
+      password, 
+      role, 
+      department,
+      joiningDate,
+      salary,
+      loginUrl 
+    } = req.body;
+
+    // Email content তৈরি করুন
+    const emailContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .credentials { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border: 2px dashed #667eea; }
+          .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Welcome to Attendance System!</h1>
+          </div>
+          <div class="content">
+            <h2>Hello ${userName},</h2>
+            <p>Your account has been successfully created in our Attendance Management System.</p>
+            
+            <div class="credentials">
+              <h3>Your Login Credentials:</h3>
+              <p><strong>Email:</strong> ${userEmail}</p>
+              <p><strong>Password:</strong> ${password}</p>
+              <p><strong>Login URL:</strong> <a href="${loginUrl}">${loginUrl}</a></p>
+            </div>
+            
+            <h3>Account Details:</h3>
+            <ul>
+              <li><strong>Role:</strong> ${role}</li>
+              <li><strong>Department:</strong> ${department}</li>
+              <li><strong>Joining Date:</strong> ${joiningDate}</li>
+              <li><strong>Salary:</strong> ৳${salary}/month</li>
+            </ul>
+            
+            <p><strong>Important Security Note:</strong></p>
+            <ul>
+              <li>Keep your password confidential</li>
+              <li>Login and change your password immediately</li>
+              <li>Do not share your credentials with anyone</li>
+            </ul>
+            
+            <p>If you have any questions, please contact your system administrator.</p>
+            
+            <p>Best regards,<br>
+            Attendance System Team</p>
+          </div>
+          <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Email পাঠানোর লজিক (Nodemailer বা অন্য service ব্যবহার করুন)
+    const transporter = nodemailer.createTransport({
+      service: 'gmail', // অথবা আপনার SMTP settings
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: to,
+      subject: subject || 'Welcome to Attendance System - Your Account Credentials',
+      html: emailContent
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Welcome email sent successfully',
+      data: { to: to }
+    });
+  } catch (error) {
+    console.error('Error sending welcome email:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to send welcome email',
+      error: error.message
+    });
+  }
+});
+
 // ===================== EMPLOYEE ROUTES (Require authentication) ===================== 
 router.get('/today', protect, attendanceController.getTodayStatus); 
 router.post('/clock-in', protect, attendanceController.clockIn); 
