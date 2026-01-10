@@ -1,23 +1,26 @@
 // 📁 utility/SendEmailUtility.js
 const nodemailer = require('nodemailer');
 
-// ✅ Function declaration
 async function SendEmailUtility(EmailTo, EmailSubject, EmailText) {
     console.log('📧 SendEmailUtility called');
     
     try {
-        // Hostinger SMTP configuration
+        // ✅ SECURE: Use environment variables
         const transporter = nodemailer.createTransport({
             host: 'smtp.hostinger.com',
             port: 587,
             secure: false,
             auth: {
-                user: 'admin@attendance-system.a2itltd.com',
-                pass: 'w|&fG;1cO'
+                user: process.env.EMAIL_HOST_USER || 'admin@attendance-system.a2itltd.com',
+                pass: process.env.EMAIL_HOST_PASSWORD // Get from environment
             },
             tls: {
                 rejectUnauthorized: false
-            }
+            },
+            // Add timeout settings to prevent hanging
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 10000
         });
 
         const mailOptions = {
@@ -39,5 +42,4 @@ async function SendEmailUtility(EmailTo, EmailSubject, EmailText) {
     }
 }
 
-// ✅ Export the function
 module.exports = SendEmailUtility;
