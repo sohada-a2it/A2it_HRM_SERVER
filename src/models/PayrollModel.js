@@ -493,5 +493,5 @@ payrollSchema.statics.getPayrollStats = async function(month, year) {
   };
 };
 
-const Payroll = mongoose.model('Payroll', payrollSchema);
-module.exports = Payroll;
+// models/PayrollModel.js এ
+module.exports = mongoose.model('Payroll', payrollSchema);
