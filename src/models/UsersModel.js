@@ -172,9 +172,44 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+
+    // Shift Management
     shiftTiming: {
-      start: { type: String, default: '09:00' },
-      end: { type: String, default: '18:00' }
+      defaultShift: {
+        start: { type: String, default: '09:00' },
+        end: { type: String, default: '18:00' }
+      },
+      assignedShift: {
+        start: { type: String, default: '' },
+        end: { type: String, default: '' },
+        assignedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          default: null
+        },
+        assignedAt: { type: Date, default: null },
+        effectiveDate: { type: Date, default: null },
+        isActive: { type: Boolean, default: false }
+      },
+      shiftHistory: [{
+        start: String,
+        end: String,
+        assignedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        assignedAt: Date,
+        effectiveDate: Date,
+        endedAt: Date,
+        reason: String
+      }]
+    },
+
+    // Shift Preferences
+    preferredShift: {
+      type: String,
+      enum: ['morning', 'evening', 'night', 'flexible'],
+      default: 'morning'
     },
 
     // Login Stats

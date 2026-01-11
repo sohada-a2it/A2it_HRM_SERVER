@@ -261,7 +261,84 @@ router.get('/admin/employee-attendance', protect, adminOnly, attendanceControlle
 router.get('/admin/employee-shift-timing', protect, adminOnly, attendanceController.getEmployeeShiftTiming); 
 router.get('/admin/export', protect, adminOnly, attendanceController.exportAttendanceData);
 
+// API Route to submit attendance
+router.post('/attendance/check-in', async (req, res) => {
+  try {
+    const { employeeId, checkInTime } = req.body;
+    
+    const checkInDate = new Date(checkInTime);
+    const hours = checkInDate.getHours();
+    const minutes = checkInDate.getMinutes();
+    
+    // Define 9:30 AM cutoff
+    const CUTOFF_HOUR = 9;
+    const CUTOFF_MINUTE = 30;
+    
+    let status = 'Present';
+    let isLate = false;
+    let lateDayCount = 0;
+    
+    // Check if late
+    if (hours > CUTOFF_HOUR || (hours === CUTOFF_HOUR && minutes > CUTOFF_MINUTE)) {
+      status = 'Late';
+      isLate = true;
+      lateDayCount = 1;
+      
+      // Calculate how many minutes late
+      const lateMinutes = ((hours - CUTOFF_HOUR) * 60) + (minutes - CUTOFF_MINUTE);
+      console.log(`Employee ${employeeId} is ${lateMinutes} minutes late`);
+    }
+    
+    const attendance = new Attendance({
+      employee: employeeId,
+      date: new Date().toISOString().split('T')[0],
+      checkIn: checkInTime,
+      status,
+      isLate,
+      lateMinutes: isLate ? lateMinutes : 0,
+      lateDayCount
+    });
+    
+    await attendance.save();
+    
+    res.status(201).json({
+      success: true,
+      message: `Attendance recorded: ${status}`,
+      data: attendance
+    });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
+// All routes require authentication 
+
+// ================= ADMIN ROUTES =================
+// Get all employee shifts
+router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEmployeeShifts);
+
+// Assign shift to employee
+router.post('/admin/assign-shift/:employeeId', protect, adminOnly, userController.assignShiftToEmployee);
+
+// Reset employee shift to default
+router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetEmployeeShift);
+
+// Update default shift timing
+router.put('/admin/default-shift', protect, adminOnly, userController.updateDefaultShift);
+
+// Get employee shift history
+router.get('/admin/shift-history/:employeeId', protect, adminOnly, userController.getEmployeeShiftHistory);
+
+// Bulk assign shifts
+router.post('/admin/bulk-assign-shifts',protect, adminOnly, userController.bulkAssignShifts);
+
+// Get shift statistics
+router.get('/admin/shift-statistics', protect, adminOnly, userController.getShiftStatistics);
+
+// ================= EMPLOYEE ROUTES =================
+// Get my shift timing
+router.get('/my-shift',protect, userController.getMyShift);
 // =================== Leave Routes ==================== 
 // Employee routes
 router.get('/my-leaves', protect, leaveController.getMyLeaves);
@@ -309,6 +386,8 @@ router.post('/action/:id', protect, payrollController.employeeActionOnPayroll);
 router.post('/calculate', protect, adminOnly, payrollController.calculatePayrollFromAttendance);
 router.post('/auto-generate', protect, adminOnly, payrollController.autoGeneratePayroll);
 router.post('/bulk-auto-generate', protect, adminOnly, payrollController.bulkAutoGeneratePayroll);
+
+
 
 // =================== SalaryRule Routes ====================
 // All users can view active rules
