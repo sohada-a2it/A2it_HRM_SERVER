@@ -106,7 +106,7 @@ exports.getAllLeaves = async (req, res) => {
       
       if (leaveObj.employee) {
         leaveObj.employeeName = `${leaveObj.employee.firstName} ${leaveObj.employee.lastName}`;
-        leaveObj.employeeId = leaveObj.employee.employeeId;
+        leaveObj.employee = leaveObj.employee.employeeId;
         leaveObj.department = leaveObj.employee.department;
         leaveObj.profilePicture = leaveObj.employee.profilePicture;
       }
@@ -257,13 +257,17 @@ exports.getMyLeaves = async (req, res) => {
 };
 
 // ===================== Request Leave =====================
+// ===================== Request Leave =====================
 exports.requestLeave = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const userId = req.user._id;
-    const { leaveType, payStatus, startDate, endDate, reason } = req.body;
+    const userRole = req.user.role;
+    const { leaveType, payStatus, startDate, endDate, reason, employeeId, autoApprove } = req.body;
+
+    console.log("📥 Request leave data:", { userId, userRole, body: req.body });
 
     // Validate required fields
     if (!leaveType || !payStatus || !startDate || !endDate || !reason) {
@@ -275,13 +279,39 @@ exports.requestLeave = async (req, res) => {
       });
     }
 
+    // Determine target employee
+    let targetEmployeeId = userId;
+    let targetUser = req.user;
+
+    // If admin is creating leave for another employee
+    if (userRole === 'admin' && employeeId) {
+      console.log("👨‍💼 Admin creating leave for employee:", employeeId);
+      
+      // Find the employee by ID
+      const employee = await User.findById(employeeId).session(session);
+      if (!employee) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({
+          status: "fail",
+          message: "Employee not found"
+        });
+      }
+      
+      targetEmployeeId = employee._id;
+      targetUser = employee;
+    }
+
+    console.log("🎯 Target employee ID:", targetEmployeeId);
+
     // Validate dates
     const start = new Date(startDate);
     const end = new Date(endDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    if (start < today) {
+    // Only employees need to follow the "no past dates" rule
+    if (userRole !== 'admin' && start < today) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({
@@ -301,7 +331,7 @@ exports.requestLeave = async (req, res) => {
 
     // Check if there's already a pending leave for overlapping dates
     const existingLeave = await Leave.findOne({
-      employee: userId,
+      employee: targetEmployeeId,
       status: 'Pending',
       $or: [
         { startDate: { $lte: end, $gte: start } },
@@ -318,7 +348,7 @@ exports.requestLeave = async (req, res) => {
       session.endSession();
       return res.status(400).json({
         status: "fail",
-        message: "You already have a pending leave request for overlapping dates"
+        message: "This employee already has a pending leave request for overlapping dates"
       });
     }
 
@@ -326,56 +356,126 @@ exports.requestLeave = async (req, res) => {
     const diffTime = Math.abs(end - start);
     const totalDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
 
-    // Check leave balance (you need to implement this based on your leave policy)
-    // For now, we'll skip this check
+    // Determine status
+    let status = 'Pending';
+    let approvedBy = null;
+    let approvedAt = null;
+
+    // If admin is creating with auto-approve
+    if (userRole === 'admin' && autoApprove) {
+      status = 'Approved';
+      approvedBy = userId;
+      approvedAt = new Date();
+    }
+
+    console.log("📝 Creating leave with:", {
+      employee: targetEmployeeId,
+      status,
+      approvedBy
+    });
 
     // Create leave request
     const leave = await Leave.create([{
-      employee: userId,
+      employee: targetEmployeeId,
       leaveType,
       payStatus,
       startDate: start,
       endDate: end,
       totalDays,
       reason,
-      status: 'Pending',
-      requestedAt: new Date()
+      status: status,
+      requestedAt: new Date(),
+      approvedBy: approvedBy,
+      approvedAt: approvedAt,
+      // If admin is creating, mark as admin created
+      createdBy: userRole === 'admin' ? userId : null
     }], { session });
+
+    // If auto-approved, mark attendance
+    if (status === 'Approved') {
+      const currentDate = new Date(start);
+      while (currentDate <= end) {
+        const dateOnly = new Date(currentDate);
+        dateOnly.setHours(0, 0, 0, 0);
+
+        let attendance = await Attendance.findOne({
+          employee: targetEmployeeId,
+          date: dateOnly
+        }).session(session);
+
+        if (!attendance) {
+          attendance = new Attendance({
+            employee: targetEmployeeId,
+            date: dateOnly,
+            status: 'Leave',
+            autoMarked: true,
+            leaveId: leave[0]._id
+          });
+        } else {
+          attendance.status = 'Leave';
+          attendance.autoMarked = true;
+          attendance.leaveId = leave[0]._id;
+        }
+
+        await attendance.save({ session });
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    }
 
     await addSessionActivity({
       userId,
-      action: "Requested Leave",
+      action: userRole === 'admin' ? "Admin Created Leave" : "Requested Leave",
       target: leave[0]._id.toString(),
       details: {
+        forEmployee: targetEmployeeId.toString(),
         leaveType,
         payStatus,
         startDate: start,
         endDate: end,
         totalDays,
-        reason
+        reason,
+        status: status
       }
     });
 
     await session.commitTransaction();
     session.endSession();
 
+    console.log("✅ Leave created successfully:", leave[0]._id);
+
     // Populate employee data for response
     const populatedLeave = await Leave.findById(leave[0]._id)
       .populate({
         path: 'employee',
         select: 'firstName lastName email employeeId department profilePicture'
+      })
+      .populate({
+        path: 'approvedBy',
+        select: 'firstName lastName'
       });
 
     const leaveObj = populatedLeave.toObject();
-    leaveObj.employeeName = `${req.user.firstName} ${req.user.lastName}`;
-    leaveObj.employeeId = req.user.employeeId;
-    leaveObj.department = req.user.department;
-    leaveObj.profilePicture = req.user.profilePicture;
+    leaveObj.employeeName = `${targetUser.firstName} ${targetUser.lastName}`;
+    leaveObj.employeeId = targetUser.employeeId;
+    leaveObj.department = targetUser.department;
+    leaveObj.profilePicture = targetUser.profilePicture;
     leaveObj.totalDays = totalDays;
+    
+    if (populatedLeave.approvedBy) {
+      leaveObj.approvedByName = `${populatedLeave.approvedBy.firstName} ${populatedLeave.approvedBy.lastName}`;
+    }
+
+    console.log("📤 Sending response with leaveObj:", {
+      employeeName: leaveObj.employeeName,
+      employeeId: leaveObj.employeeId,
+      department: leaveObj.department
+    });
 
     res.status(201).json({
       status: "success",
-      message: "Leave request submitted successfully",
+      message: status === 'Approved' 
+        ? "Leave request created and approved successfully" 
+        : "Leave request submitted successfully",
       data: leaveObj
     });
 
