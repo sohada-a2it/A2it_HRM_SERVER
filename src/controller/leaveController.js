@@ -455,10 +455,10 @@ exports.requestLeave = async (req, res) => {
       });
 
     const leaveObj = populatedLeave.toObject();
-    leaveObj.employeeName = `${targetUser.firstName} ${targetUser.lastName}`;
-    leaveObj.employeeId = targetUser.employeeId;
-    leaveObj.department = targetUser.department;
-    leaveObj.profilePicture = targetUser.profilePicture;
+    leaveObj.employeeName = `${req.user.firstName} ${req.user.lastName}`;
+    leaveObj.employeeId = req.user.employeeId;
+    leaveObj.department = req.user.department;
+    leaveObj.profilePicture = req.user.profilePicture;
     leaveObj.totalDays = totalDays;
     
     if (populatedLeave.approvedBy) {
