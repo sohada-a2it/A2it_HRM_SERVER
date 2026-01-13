@@ -386,7 +386,8 @@ router.post('/action/:id', protect, payrollController.employeeActionOnPayroll);
 router.post('/calculate', protect, adminOnly, payrollController.calculatePayrollFromAttendance);
 router.post('/auto-generate', protect, adminOnly, payrollController.autoGeneratePayroll);
 router.post('/bulk-auto-generate', protect, adminOnly, payrollController.bulkAutoGeneratePayroll);
-
+// routes.js-এ
+router.post('/payroll/create-with-data', protect, adminOnly, payrollController.createPayrollWithData);
 
 
 // =================== SalaryRule Routes ====================
