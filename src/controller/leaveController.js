@@ -472,7 +472,7 @@ exports.updateLeave = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
     const userRole = req.user.role;
-    const { leaveType, payStatus, startDate, endDate, reason } = req.body;
+    const { leaveType, payStatus, startDate, endDate, reason, status, autoApprove } = req.body;
 
     const leave = await Leave.findById(id).session(session);
 
@@ -495,8 +495,8 @@ exports.updateLeave = async (req, res) => {
       });
     }
 
-    // Can only update pending leaves
-    if (leave.status !== 'Pending') {
+    // Admin can update any leave, employee can only update pending leaves
+    if (userRole !== 'admin' && leave.status !== 'Pending') {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({
@@ -512,7 +512,8 @@ exports.updateLeave = async (req, res) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      if (start < today) {
+      // Only employees need to follow the "no past dates" rule
+      if (userRole !== 'admin' && start < today) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({
@@ -542,6 +543,89 @@ exports.updateLeave = async (req, res) => {
     if (payStatus) leave.payStatus = payStatus;
     if (reason) leave.reason = reason;
 
+    // Store old status for attendance updates
+    const oldStatus = leave.status;
+
+    // Admin can update status
+    if (userRole === 'admin' && status) {
+      leave.status = status;
+      
+      // If admin is approving the leave
+      if (status === 'Approved' && oldStatus !== 'Approved') {
+        leave.approvedBy = userId;
+        leave.approvedAt = new Date();
+        
+        // Mark attendance for leave days as "Leave"
+        const startDate = new Date(leave.startDate);
+        const endDate = new Date(leave.endDate);
+        const employeeId = leave.employee;
+
+        const currentDate = new Date(startDate);
+        while (currentDate <= endDate) {
+          const dateOnly = new Date(currentDate);
+          dateOnly.setHours(0, 0, 0, 0);
+
+          let attendance = await Attendance.findOne({
+            employee: employeeId,
+            date: dateOnly
+          }).session(session);
+
+          if (!attendance) {
+            attendance = new Attendance({
+              employee: employeeId,
+              date: dateOnly,
+              status: 'Leave',
+              autoMarked: true,
+              leaveId: leave._id
+            });
+          } else {
+            attendance.status = 'Leave';
+            attendance.autoMarked = true;
+            attendance.leaveId = leave._id;
+          }
+
+          await attendance.save({ session });
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+      }
+      
+      // If changing from approved to another status, update attendance
+      if (oldStatus === 'Approved' && status !== 'Approved') {
+        await Attendance.updateMany(
+          {
+            employee: leave.employee,
+            leaveId: leave._id
+          },
+          {
+            $set: {
+              status: 'Absent',
+              autoMarked: false,
+              leaveId: null
+            }
+          },
+          { session }
+        );
+        
+        // Clear approval info if moving away from approved
+        leave.approvedBy = null;
+        leave.approvedAt = null;
+      }
+
+      // If rejecting, set rejection info
+      if (status === 'Rejected' && oldStatus !== 'Rejected') {
+        leave.rejectedBy = userId;
+        leave.rejectedAt = new Date();
+        // You might want to add rejectionReason parameter
+      }
+      
+      // If moving from rejected to another status, clear rejection info
+      if (oldStatus === 'Rejected' && status !== 'Rejected') {
+        leave.rejectedBy = null;
+        leave.rejectedAt = null;
+        leave.rejectionReason = null;
+      }
+    }
+
     await leave.save({ session });
 
     await addSessionActivity({
@@ -554,7 +638,11 @@ exports.updateLeave = async (req, res) => {
         startDate: leave.startDate,
         endDate: leave.endDate,
         totalDays: leave.totalDays,
-        reason: leave.reason
+        reason: leave.reason,
+        ...(userRole === 'admin' && status && { 
+          oldStatus: oldStatus,
+          newStatus: status 
+        })
       }
     });
 
@@ -566,6 +654,14 @@ exports.updateLeave = async (req, res) => {
       .populate({
         path: 'employee',
         select: 'firstName lastName email employeeId department profilePicture'
+      })
+      .populate({
+        path: 'approvedBy',
+        select: 'firstName lastName'
+      })
+      .populate({
+        path: 'rejectedBy',
+        select: 'firstName lastName'
       });
 
     const leaveObj = populatedLeave.toObject();
@@ -573,10 +669,22 @@ exports.updateLeave = async (req, res) => {
     leaveObj.employeeId = populatedLeave.employee.employeeId;
     leaveObj.department = populatedLeave.employee.department;
     leaveObj.profilePicture = populatedLeave.employee.profilePicture;
+    
+    if (populatedLeave.approvedBy) {
+      leaveObj.approvedByName = `${populatedLeave.approvedBy.firstName} ${populatedLeave.approvedBy.lastName}`;
+    }
+    
+    if (populatedLeave.rejectedBy) {
+      leaveObj.rejectedByName = `${populatedLeave.rejectedBy.firstName} ${populatedLeave.rejectedBy.lastName}`;
+    }
 
     res.status(200).json({
       status: "success",
-      message: "Leave updated successfully",
+      message: userRole === 'admin' && status === 'Approved' && oldStatus !== 'Approved'
+        ? "Leave updated and approved successfully" 
+        : userRole === 'admin' && status === 'Rejected' && oldStatus !== 'Rejected'
+        ? "Leave updated and rejected successfully"
+        : "Leave updated successfully",
       data: leaveObj
     });
 
