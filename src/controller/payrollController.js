@@ -299,14 +299,14 @@ exports.createPayroll = async (req, res) => {
       periodEnd,
       status = 'Pending',
       
-      // ✅ Accept frontend data
+      // ✅ Accept frontend data (either partial or full)
       earnings,
       deductions,
       summary,
       attendance,
-      netSalary,
-      basicPay,
-      monthlySalary
+      netSalary,       // Individual field
+      basicPay,        // Individual field
+      monthlySalary    // Individual field
     } = req.body;
 
     // Validate required fields
@@ -326,38 +326,74 @@ exports.createPayroll = async (req, res) => {
       });
     }
 
-    // ✅ Check if frontend sent calculated data
-    const useFrontendData = earnings && deductions && summary;
+    // ✅ Check if frontend sent sufficient data for auto-calculation
+    // We need either the full structured data OR the individual calculated values
+    const hasFullFrontendData = earnings && deductions && summary;
+    const hasSimpleFrontendData = netSalary !== undefined && basicPay !== undefined && monthlySalary !== undefined;
     
     let salaryCalculation;
-    if (useFrontendData) {
+    if (hasFullFrontendData || hasSimpleFrontendData) {
       // Use frontend provided data
-      salaryCalculation = {
-        monthlyBasic: monthlySalary || 30000,
-        basicPay: basicPay || 0,
-        netPayable: netSalary || 0,
-        presentDays: attendance?.presentDays || 23,
-        totalWorkingDays: attendance?.totalWorkingDays || 23,
-        lateDays: attendance?.lateDays || 0,
-        leaveDays: attendance?.leaveDays || 0,
-        overtime: {
-          hours: 0,
-          amount: earnings?.overtime || 0,
-          rate: 0
-        },
-        bonusAmount: earnings?.bonus || 0,
-        lateDeduction: deductions?.lateDeduction || 0,
-        leaveDeduction: deductions?.absentDeduction || 0,
-        attendancePercentage: Math.round(((attendance?.presentDays || 23) / (attendance?.totalWorkingDays || 23)) * 100),
-        rulesApplied: {
-          ruleName: "Frontend Provided Calculation",
-          calculationMethod: "Frontend Auto-calculation",
-          salaryRuleId: "frontend"
-        },
-        dailyRate: Math.round((monthlySalary || 30000) / 23),
-        hourlyRate: Math.round((monthlySalary || 30000) / 23 / 8),
-        calculatedDate: new Date()
-      };
+      const presentDays = attendance?.presentDays || 23;
+      const totalWorkingDays = attendance?.totalWorkingDays || 23;
+      
+      if (hasFullFrontendData) {
+        // Use complete frontend data structure
+        salaryCalculation = {
+          monthlyBasic: monthlySalary || earnings?.basicPay || 30000,
+          basicPay: basicPay || earnings?.basicPay || 0,
+          netPayable: netSalary || summary?.netPayable || 0,
+          presentDays: presentDays,
+          totalWorkingDays: totalWorkingDays,
+          lateDays: attendance?.lateDays || deductions?.lateDeduction > 0 ? 1 : 0,
+          leaveDays: attendance?.leaveDays || deductions?.absentDeduction > 0 ? 1 : 0,
+          overtime: {
+            hours: attendance?.overtimeHours || 0,
+            amount: earnings?.overtimeAmount || earnings?.overtime || 0,
+            rate: 0
+          },
+          bonusAmount: earnings?.bonus || 0,
+          lateDeduction: deductions?.lateDeduction || 0,
+          leaveDeduction: deductions?.absentDeduction || 0,
+          attendancePercentage: Math.round((presentDays / totalWorkingDays) * 100),
+          rulesApplied: {
+            ruleName: "Frontend Provided Calculation",
+            calculationMethod: "Frontend Auto-calculation",
+            salaryRuleId: "frontend"
+          },
+          dailyRate: Math.round((monthlySalary || earnings?.basicPay || 30000) / totalWorkingDays),
+          hourlyRate: Math.round((monthlySalary || earnings?.basicPay || 30000) / totalWorkingDays / 8),
+          calculatedDate: new Date()
+        };
+      } else {
+        // Use simple frontend data (just the calculated values)
+        salaryCalculation = {
+          monthlyBasic: monthlySalary || 30000,
+          basicPay: basicPay || 0,
+          netPayable: netSalary || 0,
+          presentDays: presentDays,
+          totalWorkingDays: totalWorkingDays,
+          lateDays: 0,
+          leaveDays: 0,
+          overtime: {
+            hours: 0,
+            amount: 0,
+            rate: 0
+          },
+          bonusAmount: 0,
+          lateDeduction: 0,
+          leaveDeduction: 0,
+          attendancePercentage: Math.round((presentDays / totalWorkingDays) * 100),
+          rulesApplied: {
+            ruleName: "Frontend Provided Calculation",
+            calculationMethod: "Frontend Auto-calculation",
+            salaryRuleId: "frontend"
+          },
+          dailyRate: Math.round((monthlySalary || 30000) / totalWorkingDays),
+          hourlyRate: Math.round((monthlySalary || 30000) / totalWorkingDays / 8),
+          calculatedDate: new Date()
+        };
+      }
     } else {
       // Use backend calculation
       salaryCalculation = await calculateSalary(employee, periodStart, periodEnd);
@@ -387,7 +423,8 @@ exports.createPayroll = async (req, res) => {
       attendanceData: {
         totalWorkingDays: salaryCalculation.totalWorkingDays,
         presentDays: salaryCalculation.presentDays,
-        absentDays: salaryCalculation.absentDays || 0,
+        absentDays: salaryCalculation.absentDays || 
+                   (salaryCalculation.totalWorkingDays - salaryCalculation.presentDays - (salaryCalculation.leaveDays || 0)),
         halfDays: salaryCalculation.halfDays || 0,
         lateDays: salaryCalculation.lateDays,
         leaveDays: salaryCalculation.leaveDays,
@@ -416,7 +453,9 @@ exports.createPayroll = async (req, res) => {
         bonus: salaryCalculation.bonusAmount,
         incentives: 0,
         otherAdditions: 0,
-        totalEarnings: salaryCalculation.basicPay + salaryCalculation.overtime.amount + salaryCalculation.bonusAmount
+        totalEarnings: salaryCalculation.basicPay + 
+                      salaryCalculation.overtime.amount + 
+                      salaryCalculation.bonusAmount
       },
       
       // Deductions - Use frontend data if available
@@ -429,13 +468,19 @@ exports.createPayroll = async (req, res) => {
         taxDeduction: 0,
         providentFund: 0,
         otherDeductions: 0,
-        totalDeductions: salaryCalculation.lateDeduction + salaryCalculation.leaveDeduction
+        totalDeductions: salaryCalculation.lateDeduction + 
+                        salaryCalculation.leaveDeduction
       },
       
-      // Summary - Use frontend data if available
+      // Summary - Create from available data
       summary: summary || {
-        grossEarnings: salaryCalculation.basicPay + salaryCalculation.overtime.amount + salaryCalculation.bonusAmount,
-        totalDeductions: salaryCalculation.lateDeduction + salaryCalculation.leaveDeduction,
+        grossEarnings: (earnings?.totalEarnings) || 
+                      (salaryCalculation.basicPay + 
+                       salaryCalculation.overtime.amount + 
+                       salaryCalculation.bonusAmount),
+        totalDeductions: (deductions?.totalDeductions) || 
+                        (salaryCalculation.lateDeduction + 
+                         salaryCalculation.leaveDeduction),
         netPayable: salaryCalculation.netPayable,
         inWords: numberToWords(salaryCalculation.netPayable)
       },
@@ -444,15 +489,17 @@ exports.createPayroll = async (req, res) => {
       
       // Calculation Details
       calculation: {
-        salaryRule: salaryCalculation.rulesApplied.salaryRuleId,
-        ruleApplied: salaryCalculation.rulesApplied.ruleName,
-        calculationMethod: useFrontendData ? "Frontend Auto-calculation" : salaryCalculation.rulesApplied.calculationMethod,
+        salaryRule: salaryCalculation.rulesApplied?.salaryRuleId || "frontend",
+        ruleApplied: salaryCalculation.rulesApplied?.ruleName || "Frontend Provided",
+        calculationMethod: (hasFullFrontendData || hasSimpleFrontendData) ? 
+                          "Frontend Auto-calculation" : 
+                          salaryCalculation.rulesApplied?.calculationMethod || "Backend Calculation",
         dailyRate: salaryCalculation.dailyRate,
         hourlyRate: salaryCalculation.hourlyRate,
         overtimeRate: salaryCalculation.overtime.rate,
         calculationDate: salaryCalculation.calculatedDate,
         calculatedBy: req.user?._id,
-        dataSource: useFrontendData ? "frontend" : "backend"
+        dataSource: (hasFullFrontendData || hasSimpleFrontendData) ? "frontend" : "backend"
       },
       
       // Metadata
@@ -461,11 +508,11 @@ exports.createPayroll = async (req, res) => {
         generatedDate: new Date(),
         isLocked: false,
         version: 1,
-        frontendProvided: useFrontendData
+        frontendProvided: hasFullFrontendData || hasSimpleFrontendData
       },
       
-      notes: useFrontendData 
-        ? `Created with frontend auto-calculation (23 days month)` 
+      notes: (hasFullFrontendData || hasSimpleFrontendData) 
+        ? `Created with frontend auto-calculation (${salaryCalculation.totalWorkingDays} days month)` 
         : `Created with backend auto calculation based on attendance data`
     });
 
@@ -474,7 +521,7 @@ exports.createPayroll = async (req, res) => {
     res.status(201).json({
       status: "success",
       message: "Payroll created successfully",
-      dataSource: useFrontendData ? "frontend" : "backend",
+      dataSource: (hasFullFrontendData || hasSimpleFrontendData) ? "frontend" : "backend",
       data: payroll
     });
 
