@@ -14,6 +14,7 @@ const OfficeSchedule = require('../controller/officeScheduleController');
 const profileController = require('../controller/profileController');  
 const reportController = require('../controller/reportController');  
 const OfficeRentController = require('../controller/officeController');  
+const billController = require('../controller/utilityBillsController');  
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -468,4 +469,20 @@ router.post('/createOffice-rents', protect, OfficeRentController.createOfficeRen
 router.get('/office-rents/:id', protect, OfficeRentController.getOfficeRentById); 
 router.put('/updateOffice-rents/:id', protect, OfficeRentController.updateOfficeRent); 
 router.delete('/deleteOffice-rents/:id', protect, OfficeRentController.deleteOfficeRent);
+
+// =================== Office Rent Routes ====================  
+router.get('/bills', protect, billController.getAllBills);   
+router.get('/bills/:id', protect, billController.getBillById); 
+router.post('/newBills', protect, billController.addBills); 
+router.put('/newBills/:id', protect, billController.updateBill); 
+router.delete('/deleteBills/:id', protect, billController.deleteBill); 
+router.get('/bills/types/all', protect, billController.getBillTypes); 
+router.get('/bills/stats/summary', protect, billController.getStats); 
+router.get('/bills/group/by-month', protect, billController.getBillsByMonth); 
+router.get('/bills/month/:year/:month', protect, billController.getBillsByMonthYear); 
+router.put('/bills/update/month-bulk', protect, billController.updateMonthBills); 
+router.delete('/bills/month/:year/:month', protect, billController.deleteMonthBills); 
+router.get('/db/fix-index', protect, billController.fixIndex);
+router.get('/db/remove-duplicate-index', protect, billController.removeDuplicateIndex);
+
 module.exports = router;  
