@@ -466,6 +466,6 @@ router.get('/stats/total', protect, OfficeRentController.getOfficeRentStats);
 router.get('/stats/yearly/:year', protect, OfficeRentController.getYearlySummary); 
 router.post('/createOffice-rents', protect, OfficeRentController.createOfficeRent); 
 router.get('/office-rents/:id', protect, OfficeRentController.getOfficeRentById); 
-router.put('/updateOffice-rents', protect, OfficeRentController.updateOfficeRent); 
+router.put('/updateOffice-rents/:id', protect, OfficeRentController.updateOfficeRent); 
 router.delete('/deleteOffice-rents/:id', protect, OfficeRentController.deleteOfficeRent);
 module.exports = router;  
