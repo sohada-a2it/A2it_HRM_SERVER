@@ -1,4 +1,5 @@
 // Office Rent Schema
+const mongoose = require("mongoose");
 const officeRentSchema = new mongoose.Schema({
   date: {
     type: Date,
