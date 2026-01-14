@@ -13,12 +13,13 @@ const salaryRuleController = require('../controller/salaryRuleController');
 const OfficeSchedule = require('../controller/officeScheduleController');  
 const profileController = require('../controller/profileController');  
 const reportController = require('../controller/reportController');  
+const OfficeRentController = require('../controller/officeController');  
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
 // =================== Login Routes ====================
-router.post("/admin/login", userController.adminLogin);  
-router.post("/users/userLogin", userController.userLogin);  
+// router.post("/admin/login", userController.adminLogin);  
+// router.post("/users/userLogin", userController.userLogin);  
 router.post("/unified-login", userController.unifiedLogin);  
 
 // =================== Admin Control Routes ====================
@@ -456,4 +457,15 @@ router.get('/reports/departments', protect, adminOnly, reportController.getDepar
 router.post('/reports/attendance', protect, adminOnly, reportController.exportAttendanceReport);
 router.post('/reports/payroll', protect, adminOnly, reportController.exportPayrollReport);
 router.post('/reports/employee-summary', protect, adminOnly, reportController.exportEmployeeSummaryReport);
+
+
+// =================== Office Rent Routes ==================== 
+router.get('/office-rents', protect, OfficeRentController.getAllOfficeRents); 
+router.get('/monthly/:year/:month', protect, OfficeRentController.getOfficeRentsByMonth); 
+router.get('/stats/total', protect, OfficeRentController.getOfficeRentStats); 
+router.get('/stats/yearly/:year', protect, OfficeRentController.getYearlySummary); 
+router.post('/createOffice-rents', protect, OfficeRentController.createOfficeRent); 
+router.get('/office-rents/:id', protect, OfficeRentController.getOfficeRentById); 
+router.put('/updateOffice-rents', protect, updateOfficeRent); 
+router.delete('/deleteOffice-rents/:id', protect, deleteOfficeRent);
 module.exports = router;  
