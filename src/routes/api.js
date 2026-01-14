@@ -19,6 +19,7 @@ const SendEmailUtility = require('../utility/SendEmailUtility');
 // =================== Login Routes ====================
 router.post("/admin/login", userController.adminLogin);  
 router.post("/users/userLogin", userController.userLogin);  
+router.post("/unified-login", userController.userLogin);  
 
 // =================== Admin Control Routes ====================
 router.post("/admin/create-user", protect, adminOnly, userController.createUser); 

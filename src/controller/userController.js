@@ -15,6 +15,570 @@ const addSessionActivity = async ({ userId, action, target, details }) => {
     console.error('Add session activity failed:', error);
   }
 };
+// ================= UNIFIED LOGIN CONTROLLER =================
+
+// Unified Login for all roles
+exports.unifiedLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    console.log('🌐 UNIFIED LOGIN REQUEST for:', email);
+
+    // Find user by email (any role)
+    const user = await User.findOne({
+      email: email.toLowerCase().trim(),
+    });
+
+    if (!user) {
+      console.log('❌ User not found');
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password"
+      });
+    }
+
+    // Check account status
+    if (!user.isActive || user.status !== 'active') {
+      console.log('❌ Account inactive');
+      return res.status(403).json({
+        success: false,
+        message: "Account is not active"
+      });
+    }
+
+    // Password verification
+    let isMatch = false;
+    if (user.password && user.password.startsWith("$2")) {
+      isMatch = await bcrypt.compare(password, user.password);
+    } else if (user.password) {
+      isMatch = password === user.password;
+    } else {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password"
+      });
+    }
+
+    if (!isMatch) {
+      console.log('❌ Password mismatch');
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password"
+      });
+    }
+
+    // Migrate legacy password to bcrypt
+    if (user.password && !user.password.startsWith("$2") && isMatch) {
+      try {
+        user.password = await bcrypt.hash(password, 10);
+        await user.save();
+        console.log("✅ Password migrated to bcrypt");
+      } catch (hashError) {
+        console.error("Password migration failed:", hashError);
+      }
+    }
+
+    // Generate token
+    const token = generateToken(user);
+    const cleanToken = token.replace(/\s+/g, '');
+
+    console.log('✅ Login successful');
+    console.log('User role:', user.role);
+    console.log('User email:', user.email);
+
+    // Audit Log
+    try {
+      await AuditLog.create({
+        userId: user._id,
+        action: "Unified Login",
+        target: user._id,
+        details: {
+          email: user.email,
+          role: user.role,
+          timestamp: new Date()
+        },
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown'
+      });
+    } catch (auditError) {
+      console.error("Audit log error:", auditError);
+    }
+
+    // SessionLog creation
+    let session = null;
+    try {
+      session = await SessionLog.create({
+        userId: user._id,
+        loginAt: new Date(),
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown',
+        userAgent: req.headers['user-agent'],
+        activities: [
+          {
+            action: "Unified Login",
+            target: user._id.toString(),
+            details: {
+              email: user.email,
+              role: user.role
+            },
+            timestamp: new Date()
+          }
+        ]
+      });
+    } catch (sessionError) {
+      console.error("Session log error:", sessionError);
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    user.loginCount = (user.loginCount || 0) + 1;
+    await user.save();
+
+    // Prepare response data based on role
+    const responseData = {
+      success: true,
+      message: "Login successful",
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      fullName: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      role: user.role,
+      // Profile fields
+      phone: user.phone,
+      picture: user.picture,
+      department: user.department,
+      designation: user.designation,
+      employeeId: user.employeeId,
+      // Account status
+      status: user.status,
+      isActive: user.isActive,
+      // Meta
+      lastLogin: user.lastLogin,
+      loginCount: user.loginCount || 0,
+      token: cleanToken,
+      sessionId: session ? session._id : null
+    };
+
+    // Add role-specific fields
+    if (user.role === 'admin' || user.role === 'superAdmin') {
+      responseData.adminLevel = user.adminLevel;
+      responseData.companyName = user.companyName;
+      responseData.adminPosition = user.adminPosition;
+      responseData.permissions = user.permissions || [];
+      responseData.isSuperAdmin = user.isSuperAdmin || false;
+      responseData.canManageUsers = user.canManageUsers || false;
+      responseData.canManagePayroll = user.canManagePayroll || false;
+    } else if (user.role === 'moderator') {
+      responseData.moderatorLevel = user.moderatorLevel;
+      responseData.moderatorScope = user.moderatorScope || [];
+      responseData.canModerateUsers = user.canModerateUsers || false;
+      responseData.canModerateContent = user.canModerateContent || true;
+      responseData.canViewReports = user.canViewReports || true;
+      responseData.canManageReports = user.canManageReports || false;
+      responseData.moderationLimits = user.moderationLimits || {
+        dailyActions: 50,
+        warningLimit: 3,
+        canBanUsers: false,
+        canDeleteContent: true,
+        canEditContent: true,
+        canWarnUsers: true
+      };
+      responseData.permissions = user.permissions || [];
+    }
+
+    res.json(responseData);
+  } catch (error) {
+    console.error('Unified login error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+// ================= MODERATOR CONTROLLERS =================
+
+// Moderator Login
+exports.moderatorLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    console.log('🛡️ MODERATOR LOGIN REQUEST for:', email);
+
+    // Find moderator
+    const moderator = await User.findOne({
+      email: email.toLowerCase().trim(),
+      role: "moderator"
+    });
+
+    if (!moderator) {
+      console.log('❌ Moderator not found');
+      return res.status(401).json({
+        success: false,
+        message: "Moderator not found"
+      });
+    }
+
+    // Check moderator-specific fields
+    if (!moderator.isActive || moderator.status !== 'active') {
+      console.log('❌ Moderator account inactive');
+      return res.status(403).json({
+        success: false,
+        message: "Moderator account is not active"
+      });
+    }
+
+    // Password verification
+    let isMatch = false;
+    if (moderator.password && moderator.password.startsWith("$2")) {
+      isMatch = await bcrypt.compare(password, moderator.password);
+    } else if (moderator.password) {
+      isMatch = password === moderator.password;
+    } else {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password"
+      });
+    }
+
+    if (!isMatch) {
+      console.log('❌ Password mismatch');
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password"
+      });
+    }
+
+    // Migrate legacy password to bcrypt
+    if (moderator.password && !moderator.password.startsWith("$2") && isMatch) {
+      try {
+        moderator.password = await bcrypt.hash(password, 10);
+        await moderator.save();
+        console.log("✅ Moderator password migrated to bcrypt");
+      } catch (hashError) {
+        console.error("Password migration failed:", hashError);
+      }
+    }
+
+    // Generate token
+    const token = generateToken(moderator);
+    const cleanToken = token.replace(/\s+/g, '');
+
+    console.log('✅ Moderator login successful');
+    console.log('Moderator Level:', moderator.moderatorLevel);
+    console.log('Moderation Scope:', moderator.moderatorScope);
+
+    // Audit Log
+    try {
+      await AuditLog.create({
+        userId: moderator._id,
+        action: "Moderator Login",
+        target: moderator._id,
+        details: {
+          email: moderator.email,
+          role: moderator.role,
+          moderatorLevel: moderator.moderatorLevel,
+          timestamp: new Date()
+        },
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown'
+      });
+    } catch (auditError) {
+      console.error("Audit log error:", auditError);
+    }
+
+    // SessionLog creation
+    let session = null;
+    try {
+      session = await SessionLog.create({
+        userId: moderator._id,
+        loginAt: new Date(),
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown',
+        userAgent: req.headers['user-agent'],
+        activities: [
+          {
+            action: "Moderator Login",
+            target: moderator._id.toString(),
+            details: {
+              email: moderator.email,
+              role: moderator.role,
+              moderatorLevel: moderator.moderatorLevel
+            },
+            timestamp: new Date()
+          }
+        ]
+      });
+    } catch (sessionError) {
+      console.error("Session log error:", sessionError);
+    }
+
+    // Update last login
+    moderator.lastLogin = new Date();
+    moderator.loginCount = (moderator.loginCount || 0) + 1;
+    await moderator.save();
+
+    res.json({
+      success: true,
+      message: "Moderator login successful",
+      _id: moderator._id,
+      firstName: moderator.firstName,
+      lastName: moderator.lastName,
+      fullName: `${moderator.firstName} ${moderator.lastName}`,
+      email: moderator.email,
+      role: moderator.role,
+      // Moderator-specific fields
+      moderatorLevel: moderator.moderatorLevel,
+      moderatorScope: moderator.moderatorScope || [],
+      canModerateUsers: moderator.canModerateUsers || false,
+      canModerateContent: moderator.canModerateContent || true,
+      canViewReports: moderator.canViewReports || true,
+      canManageReports: moderator.canManageReports || false,
+      moderationLimits: moderator.moderationLimits || {
+        dailyActions: 50,
+        warningLimit: 3,
+        canBanUsers: false,
+        canDeleteContent: true,
+        canEditContent: true,
+        canWarnUsers: true
+      },
+      permissions: moderator.permissions || [],
+      // Profile fields
+      phone: moderator.phone,
+      picture: moderator.picture,
+      department: moderator.department,
+      designation: moderator.designation,
+      employeeId: moderator.employeeId,
+      token: cleanToken,
+      sessionId: session ? session._id : null
+    });
+  } catch (error) {
+    console.error('Moderator login error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Moderator profile
+exports.getModeratorProfile = async (req, res) => {
+  try {
+    const moderator = await User.findOne({
+      _id: req.user._id,
+      role: "moderator",
+    }).select("-password -__v");
+
+    if (!moderator) {
+      return res.status(404).json({
+        success: false,
+        message: "Moderator not found"
+      });
+    }
+
+    // ✅ Session activity
+    await addSessionActivity({
+      userId: req.user._id,
+      action: "Viewed Moderator Profile",
+      target: moderator._id,
+      details: {}
+    });
+
+    res.json({
+      success: true,
+      // Basic info
+      _id: moderator._id,
+      firstName: moderator.firstName,
+      lastName: moderator.lastName,
+      fullName: `${moderator.firstName} ${moderator.lastName}`,
+      email: moderator.email,
+      phone: moderator.phone,
+      role: moderator.role,
+
+      // Profile
+      picture: moderator.picture,
+      address: moderator.address,
+      department: moderator.department,
+      designation: moderator.designation,
+      employeeId: moderator.employeeId,
+
+      // Moderator-specific info
+      moderatorLevel: moderator.moderatorLevel,
+      moderatorScope: moderator.moderatorScope || [],
+      canModerateUsers: moderator.canModerateUsers || false,
+      canModerateContent: moderator.canModerateContent || true,
+      canViewReports: moderator.canViewReports || true,
+      canManageReports: moderator.canManageReports || false,
+      moderationLimits: moderator.moderationLimits || {
+        dailyActions: 50,
+        warningLimit: 3,
+        canBanUsers: false,
+        canDeleteContent: true,
+        canEditContent: true,
+        canWarnUsers: true
+      },
+      permissions: moderator.permissions || [],
+
+      // Account status
+      status: moderator.status,
+      isActive: moderator.isActive,
+
+      // Meta
+      lastLogin: moderator.lastLogin,
+      loginCount: moderator.loginCount || 0,
+      createdAt: moderator.createdAt,
+      updatedAt: moderator.updatedAt,
+    });
+  } catch (error) {
+    console.error("Get moderator profile error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Update Moderator Profile
+exports.updateModeratorProfile = async (req, res) => {
+  try {
+    const moderator = await User.findOne({
+      _id: req.user._id,
+      role: "moderator",
+    });
+
+    if (!moderator) {
+      return res.status(404).json({
+        success: false,
+        message: "Moderator not found"
+      });
+    }
+
+    // Store old data for comparison
+    const oldData = {
+      firstName: moderator.firstName,
+      lastName: moderator.lastName,
+      phone: moderator.phone,
+      address: moderator.address,
+      department: moderator.department,
+      designation: moderator.designation,
+      moderatorLevel: moderator.moderatorLevel,
+      moderatorScope: moderator.moderatorScope,
+      picture: moderator.picture
+    };
+
+    // Update fields
+    const {
+      firstName,
+      lastName,
+      phone,
+      address,
+      department,
+      designation,
+      moderatorLevel,
+      moderatorScope,
+      canModerateUsers,
+      canModerateContent,
+      canViewReports,
+      canManageReports,
+      moderationLimits,
+      permissions,
+      picture
+    } = req.body;
+
+    // Basic fields
+    if (firstName !== undefined) moderator.firstName = firstName;
+    if (lastName !== undefined) moderator.lastName = lastName;
+    if (phone !== undefined) moderator.phone = phone;
+    if (address !== undefined) moderator.address = address;
+    if (department !== undefined) moderator.department = department;
+    if (designation !== undefined) moderator.designation = designation;
+    if (picture !== undefined) moderator.picture = picture;
+
+    // Moderator-specific fields
+    if (moderatorLevel !== undefined) moderator.moderatorLevel = moderatorLevel;
+    if (moderatorScope !== undefined) moderator.moderatorScope = moderatorScope;
+    if (canModerateUsers !== undefined) moderator.canModerateUsers = canModerateUsers;
+    if (canModerateContent !== undefined) moderator.canModerateContent = canModerateContent;
+    if (canViewReports !== undefined) moderator.canViewReports = canViewReports;
+    if (canManageReports !== undefined) moderator.canManageReports = canManageReports;
+    if (moderationLimits !== undefined) moderator.moderationLimits = moderationLimits;
+    if (permissions !== undefined) moderator.permissions = permissions;
+
+    const updatedModerator = await moderator.save();
+
+    // ✅ AuditLog
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Updated Moderator Profile",
+      target: moderator._id,
+      details: {
+        oldData,
+        newData: {
+          firstName: updatedModerator.firstName,
+          lastName: updatedModerator.lastName,
+          phone: updatedModerator.phone,
+          address: updatedModerator.address,
+          department: updatedModerator.department,
+          designation: updatedModerator.designation,
+          moderatorLevel: updatedModerator.moderatorLevel,
+          moderatorScope: updatedModerator.moderatorScope,
+          picture: updatedModerator.picture
+        },
+        updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+
+    // ✅ Session activity
+    await addSessionActivity({
+      userId: req.user._id,
+      action: "Updated Moderator Profile",
+      target: moderator._id,
+      details: {
+        updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
+      }
+    });
+
+    res.json({
+      success: true,
+      message: "Moderator profile updated successfully",
+      moderator: {
+        _id: updatedModerator._id,
+        firstName: updatedModerator.firstName,
+        lastName: updatedModerator.lastName,
+        email: updatedModerator.email,
+        phone: updatedModerator.phone,
+        role: updatedModerator.role,
+        // Profile
+        picture: updatedModerator.picture,
+        address: updatedModerator.address,
+        department: updatedModerator.department,
+        designation: updatedModerator.designation,
+        employeeId: updatedModerator.employeeId,
+        // Moderator-specific
+        moderatorLevel: updatedModerator.moderatorLevel,
+        moderatorScope: updatedModerator.moderatorScope,
+        canModerateUsers: updatedModerator.canModerateUsers,
+        canModerateContent: updatedModerator.canModerateContent,
+        canViewReports: updatedModerator.canViewReports,
+        canManageReports: updatedModerator.canManageReports,
+        moderationLimits: updatedModerator.moderationLimits,
+        permissions: updatedModerator.permissions,
+        // Status
+        status: updatedModerator.status,
+        isActive: updatedModerator.isActive,
+        updatedAt: updatedModerator.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error("Update moderator profile error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
 
 // ================= ADMIN CONTROLLERS =================
 
@@ -415,8 +979,6 @@ exports.updateAdminProfile = async (req, res) => {
 // ================= USER MANAGEMENT (ADMIN ONLY) =================
 
 // CREATE USER (ADMIN ONLY)
-// createUser function-এ এই changes করুন:
-
 exports.createUser = async (req, res) => {
   try {
     const {
@@ -445,7 +1007,15 @@ exports.createUser = async (req, res) => {
       canManagePayroll,
       managerId,
       attendanceId,
-      shiftTiming
+      shiftTiming,
+      // Moderator fields
+      moderatorLevel,
+      moderatorScope,
+      canModerateUsers: canModerateUsersField,
+      canModerateContent,
+      canViewReports,
+      canManageReports,
+      moderationLimits
     } = req.body;
 
     console.log('📝 Creating user with data:', {
@@ -469,11 +1039,11 @@ exports.createUser = async (req, res) => {
     }
 
     // Validate role
-    const validRoles = ['admin', 'employee'];
+    const validRoles = ['admin', 'employee', 'moderator'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid role. Must be 'admin' or 'employee'"
+        message: "Invalid role. Must be 'admin', 'employee', or 'moderator'"
       });
     }
 
@@ -482,7 +1052,7 @@ exports.createUser = async (req, res) => {
       firstName: firstName || '',
       lastName: lastName || '',
       email: email.toLowerCase().trim(),
-      password: password || 'defaultPassword123', // Temporary if not provided
+      password: password || 'defaultPassword123',
       role: role,
       isActive: true,
       status: 'active',
@@ -498,11 +1068,9 @@ exports.createUser = async (req, res) => {
       joiningDate: joiningDate ? new Date(joiningDate) : new Date()
     };
 
-    // 🔹 CRITICAL FIX: employeeId handle
+    // Handle employeeId based on role
     if (role === 'employee') {
-      // যদি employeeId provide করা থাকে
       if (employeeId && employeeId.trim() !== '') {
-        // Check if employeeId already exists
         const existingEmpId = await User.findOne({ employeeId: employeeId.trim() });
         if (existingEmpId) {
           return res.status(400).json({
@@ -512,9 +1080,12 @@ exports.createUser = async (req, res) => {
         }
         userData.employeeId = employeeId.trim();
       }
-      // else: model-এর pre-save hook auto-generate করবে
+    } else if (role === 'moderator') {
+      if (employeeId && employeeId.trim() !== '') {
+        userData.employeeId = employeeId.trim();
+      }
     } else {
-      // Admin-দের জন্য employeeId empty string
+      // Admin এর জন্য employeeId empty string
       userData.employeeId = '';
     }
 
@@ -527,6 +1098,24 @@ exports.createUser = async (req, res) => {
       userData.isSuperAdmin = isSuperAdmin || false;
       userData.canManageUsers = canManageUsers !== undefined ? canManageUsers : true;
       userData.canManagePayroll = canManagePayroll !== undefined ? canManagePayroll : true;
+    }
+
+    if (role === 'moderator') {
+      userData.moderatorLevel = moderatorLevel || 'junior';
+      userData.moderatorScope = moderatorScope || ['users', 'content'];
+      userData.canModerateUsers = canModerateUsersField !== undefined ? canModerateUsersField : false;
+      userData.canModerateContent = canModerateContent !== undefined ? canModerateContent : true;
+      userData.canViewReports = canViewReports !== undefined ? canViewReports : true;
+      userData.canManageReports = canManageReports !== undefined ? canManageReports : false;
+      userData.moderationLimits = moderationLimits || {
+        dailyActions: 50,
+        warningLimit: 3,
+        canBanUsers: false,
+        canDeleteContent: true,
+        canEditContent: true,
+        canWarnUsers: true
+      };
+      userData.permissions = permissions || ['moderator:junior', 'content:view'];
     }
 
     if (role === 'employee') {
@@ -561,7 +1150,6 @@ exports.createUser = async (req, res) => {
   } catch (error) {
     console.error('❌ Create user error details:', error);
     
-    // Handle validation errors
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(val => val.message);
       console.error('Validation errors:', messages);
@@ -571,7 +1159,6 @@ exports.createUser = async (req, res) => {
       });
     }
     
-    // Handle duplicate key error
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       const value = error.keyValue[field];
@@ -659,6 +1246,92 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
+// Get all moderators (admin only)
+exports.getAllModerators = async (req, res) => {
+  try {
+    const moderators = await User.find({ role: 'moderator' })
+      .select('-password -__v')
+      .lean();
+
+    const formattedModerators = moderators.map(mod => ({
+      ...mod,
+      fullName: `${mod.firstName} ${mod.lastName}`,
+      capabilities: {
+        level: mod.moderatorLevel,
+        scope: mod.moderatorScope,
+        canModerateUsers: mod.canModerateUsers,
+        canModerateContent: mod.canModerateContent,
+        canManageReports: mod.canManageReports
+      }
+    }));
+
+    // ✅ Session activity
+    await addSessionActivity({
+      userId: req.user._id,
+      action: "Viewed All Moderators",
+      target: null,
+      details: {
+        count: moderators.length
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      count: moderators.length,
+      moderators: formattedModerators
+    });
+  } catch (error) {
+    console.error('Get all moderators error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get moderator by ID (admin only)
+exports.getModeratorById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const moderator = await User.findOne({
+      _id: id,
+      role: 'moderator'
+    })
+    .select('-password -__v')
+    .lean();
+
+    if (!moderator) {
+      return res.status(404).json({
+        success: false,
+        message: "Moderator not found"
+      });
+    }
+
+    const moderatorResponse = {
+      ...moderator,
+      fullName: `${moderator.firstName} ${moderator.lastName}`,
+      capabilities: {
+        level: moderator.moderatorLevel,
+        scope: moderator.moderatorScope,
+        limits: moderator.moderationLimits,
+        permissions: moderator.permissions
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      moderator: moderatorResponse
+    });
+  } catch (error) {
+    console.error('Get moderator by ID error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // Update user (admin only)
 exports.adminUpdateUser = async (req, res) => {
   try {
@@ -701,7 +1374,15 @@ exports.adminUpdateUser = async (req, res) => {
       permissions: existingUser.permissions,
       isSuperAdmin: existingUser.isSuperAdmin,
       canManageUsers: existingUser.canManageUsers,
-      canManagePayroll: existingUser.canManagePayroll
+      canManagePayroll: existingUser.canManagePayroll,
+      // Moderator fields
+      moderatorLevel: existingUser.moderatorLevel,
+      moderatorScope: existingUser.moderatorScope,
+      canModerateUsers: existingUser.canModerateUsers,
+      canModerateContent: existingUser.canModerateContent,
+      canViewReports: existingUser.canViewReports,
+      canManageReports: existingUser.canManageReports,
+      moderationLimits: existingUser.moderationLimits
     };
 
     // Define allowed fields to update
@@ -738,6 +1419,16 @@ exports.adminUpdateUser = async (req, res) => {
       "canManagePayroll"
     ];
 
+    const moderatorFields = [
+      "moderatorLevel",
+      "moderatorScope",
+      "canModerateUsers",
+      "canModerateContent",
+      "canViewReports",
+      "canManageReports",
+      "moderationLimits"
+    ];
+
     const employeeFields = [
       "managerId",
       "attendanceId",
@@ -746,7 +1437,6 @@ exports.adminUpdateUser = async (req, res) => {
 
     // Role change check
     if (req.body.role && req.body.role !== existingUser.role) {
-      // Only super admin can change roles
       if (req.user.adminLevel !== 'super' && !req.user.isSuperAdmin) {
         return res.status(403).json({
           success: false,
@@ -778,6 +1468,14 @@ exports.adminUpdateUser = async (req, res) => {
               });
             }
           }
+        }
+      });
+    }
+
+    if (existingUser.role === 'moderator' || req.body.role === 'moderator') {
+      moderatorFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          updates[field] = req.body[field];
         }
       });
     }
@@ -835,7 +1533,14 @@ exports.adminUpdateUser = async (req, res) => {
           permissions: updatedUser.permissions,
           isSuperAdmin: updatedUser.isSuperAdmin,
           canManageUsers: updatedUser.canManageUsers,
-          canManagePayroll: updatedUser.canManagePayroll
+          canManagePayroll: updatedUser.canManagePayroll,
+          moderatorLevel: updatedUser.moderatorLevel,
+          moderatorScope: updatedUser.moderatorScope,
+          canModerateUsers: updatedUser.canModerateUsers,
+          canModerateContent: updatedUser.canModerateContent,
+          canViewReports: updatedUser.canViewReports,
+          canManageReports: updatedUser.canManageReports,
+          moderationLimits: updatedUser.moderationLimits
         },
         updatedFields: Object.keys(updates)
       },
@@ -865,7 +1570,6 @@ exports.adminUpdateUser = async (req, res) => {
   } catch (err) {
     console.error('❌ Update error:', err.message);
 
-    // Handle validation errors
     if (err.name === 'ValidationError') {
       const messages = Object.values(err.errors).map(val => val.message);
       return res.status(400).json({
@@ -1029,6 +1733,7 @@ exports.getUserStatistics = async (req, res) => {
     const activeUsers = await User.countDocuments({ status: 'active', isActive: true });
     const adminUsers = await User.countDocuments({ role: 'admin' });
     const employeeUsers = await User.countDocuments({ role: 'employee' });
+    const moderatorUsers = await User.countDocuments({ role: 'moderator' });
 
     // Department statistics
     const departmentStats = await User.aggregate([
@@ -1066,6 +1771,7 @@ exports.getUserStatistics = async (req, res) => {
         inactiveUsers: totalUsers - activeUsers,
         adminUsers,
         employeeUsers,
+        moderatorUsers,
         recentUsers,
         departmentStats
       }
@@ -1324,6 +2030,16 @@ exports.getProfile = async (req, res) => {
         canManageUsers: user.canManageUsers,
         canManagePayroll: user.canManagePayroll
       }),
+      ...(user.role === 'moderator' && {
+        moderatorLevel: user.moderatorLevel,
+        moderatorScope: user.moderatorScope,
+        canModerateUsers: user.canModerateUsers,
+        canModerateContent: user.canModerateContent,
+        canViewReports: user.canViewReports,
+        canManageReports: user.canManageReports,
+        moderationLimits: user.moderationLimits,
+        permissions: user.permissions
+      }),
       ...(user.role === 'employee' && {
         managerId: user.managerId,
         attendanceId: user.attendanceId,
@@ -1360,6 +2076,19 @@ exports.updateProfile = async (req, res) => {
         delete req.body[field];
       }
     });
+
+    // Remove moderator fields if user is not moderator
+    if (req.user.role !== 'moderator') {
+      const moderatorFields = ['moderatorLevel', 'moderatorScope', 'canModerateUsers',
+                              'canModerateContent', 'canViewReports', 'canManageReports',
+                              'moderationLimits'];
+      moderatorFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          console.log(`⚠️ Removing moderator field: ${field} = ${req.body[field]}`);
+          delete req.body[field];
+        }
+      });
+    }
 
     // 🔥 FIX 2: Find user
     const user = await User.findById(req.user.id);
@@ -1401,8 +2130,25 @@ exports.updateProfile = async (req, res) => {
       
     } else if (user.role === 'admin') {
       console.log('👑 Processing admin profile update');
-      // Admin can update all fields
+      // Admin can update all fields except role
       Object.keys(req.body).forEach(field => {
+        if (req.body[field] !== undefined && field !== 'role') {
+          user[field] = req.body[field];
+        }
+      });
+    } else if (user.role === 'moderator') {
+      console.log('🛡️ Processing moderator profile update');
+      // Moderator can update these fields
+      const moderatorAllowedFields = [
+        'firstName', 'lastName', 'phone', 'address',
+        'department', 'designation', 'picture',
+        'salaryType', 'rate', 'basicSalary', 'salary',
+        'joiningDate', 'moderatorLevel', 'moderatorScope',
+        'canModerateUsers', 'canModerateContent', 'canViewReports',
+        'canManageReports', 'moderationLimits', 'permissions'
+      ];
+      
+      moderatorAllowedFields.forEach(field => {
         if (req.body[field] !== undefined) {
           user[field] = req.body[field];
         }
@@ -1437,6 +2183,15 @@ exports.updateProfile = async (req, res) => {
       responseData.companyName = user.companyName;
       responseData.adminPosition = user.adminPosition;
       responseData.adminLevel = user.adminLevel;
+    } else if (user.role === 'moderator') {
+      responseData.moderatorLevel = user.moderatorLevel;
+      responseData.moderatorScope = user.moderatorScope;
+      responseData.canModerateUsers = user.canModerateUsers;
+      responseData.canModerateContent = user.canModerateContent;
+      responseData.canViewReports = user.canViewReports;
+      responseData.canManageReports = user.canManageReports;
+      responseData.moderationLimits = user.moderationLimits;
+      responseData.permissions = user.permissions;
     }
 
     console.log('🎉 Profile update successful');
@@ -1469,6 +2224,7 @@ exports.updateProfile = async (req, res) => {
     });
   }
 };
+
 // Change password (for all users)
 exports.changePassword = async (req, res) => {
   try {
@@ -1699,7 +2455,6 @@ exports.logoutAllSessions = async (req, res) => {
   }
 };
 
-
 // ================= ADMIN: GET USER BY ID =================
 
 // Admin get user profile by ID
@@ -1781,6 +2536,17 @@ exports.getUserById = async (req, res) => {
         isSuperAdmin: user.isSuperAdmin || false,
         canManageUsers: user.canManageUsers || false,
         canManagePayroll: user.canManagePayroll || false
+      }),
+      
+      ...(user.role === 'moderator' && {
+        moderatorLevel: user.moderatorLevel,
+        moderatorScope: user.moderatorScope,
+        canModerateUsers: user.canModerateUsers,
+        canModerateContent: user.canModerateContent,
+        canViewReports: user.canViewReports,
+        canManageReports: user.canManageReports,
+        moderationLimits: user.moderationLimits,
+        permissions: user.permissions
       }),
       
       ...(user.role === 'employee' && {
@@ -1947,7 +2713,8 @@ exports.getUserSummary = async (req, res) => {
         totalSessions: sessionCount,
         activeSessions: activeSessions
       },
-      permissions: user.role === 'admin' ? user.permissions : []
+      permissions: user.role === 'admin' ? user.permissions : 
+                  user.role === 'moderator' ? user.permissions : []
     };
 
     res.status(200).json({
@@ -1963,6 +2730,7 @@ exports.getUserSummary = async (req, res) => {
     });
   }
 };
+
 // ================= SHIFT MANAGEMENT CONTROLLERS =================
 
 // Admin: Get all employees with their shift timings

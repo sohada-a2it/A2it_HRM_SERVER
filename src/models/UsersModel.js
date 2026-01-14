@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    // ============ COMMON FIELDS (Employee & Admin) ============
+    // ============ COMMON FIELDS (Employee, Admin & Moderator) ============
     // Personal Info
     firstName: { 
       type: String, 
@@ -32,7 +32,7 @@ const userSchema = new mongoose.Schema(
     // Role & Status
     role: { 
       type: String, 
-      enum: ["superAdmin", "admin", "employee"],  
+      enum: ["superAdmin", "admin", "employee", "moderator"],  
       default: "employee",
       required: true
     },
@@ -98,38 +98,34 @@ const userSchema = new mongoose.Schema(
       ref: 'SalaryRule',
       default: null
     },
-      // Salary Information
-  salary: {
-    type: Number,
-    default: 0
-  },
-  
-  salaryStructure: {
-    basicSalary: { type: Number, default: 0 },
-    houseRent: { type: Number, default: 0 },
-    medicalAllowance: { type: Number, default: 0 },
-    conveyance: { type: Number, default: 0 },
-    otherAllowances: { type: Number, default: 0 },
-    grossSalary: { type: Number, default: 0 },
-    providentFund: { type: Number, default: 0 },
-    tax: { type: Number, default: 0 }
-  },
-  
-  // Payment Details
-  bankDetails: {
-    bankName: { type: String, default: '' },
-    accountNumber: { type: String, default: '' },
-    accountHolderName: { type: String, default: '' },
-    branchName: { type: String, default: '' },
-    routingNumber: { type: String, default: '' }
-  },
-  
-  // Contract Details
-  contractType: {
-    type: String,
-    enum: ['Permanent', 'Contractual', 'Probation', 'Part-time', 'Intern'],
-    default: 'Permanent'
-  },
+
+    // Salary Information
+    salaryStructure: {
+      basicSalary: { type: Number, default: 0 },
+      houseRent: { type: Number, default: 0 },
+      medicalAllowance: { type: Number, default: 0 },
+      conveyance: { type: Number, default: 0 },
+      otherAllowances: { type: Number, default: 0 },
+      grossSalary: { type: Number, default: 0 },
+      providentFund: { type: Number, default: 0 },
+      tax: { type: Number, default: 0 }
+    },
+    
+    // Payment Details
+    bankDetails: {
+      bankName: { type: String, default: '' },
+      accountNumber: { type: String, default: '' },
+      accountHolderName: { type: String, default: '' },
+      branchName: { type: String, default: '' },
+      routingNumber: { type: String, default: '' }
+    },
+    
+    // Contract Details
+    contractType: {
+      type: String,
+      enum: ['Permanent', 'Contractual', 'Probation', 'Part-time', 'Intern'],
+      default: 'Permanent'
+    },
 
     // ============ ADMIN-SPECIFIC FIELDS ============
     companyName: {
@@ -145,10 +141,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: 'Administrator'
     },
-    permissions: {
-      type: [String],
-      default: []
-    },
     isSuperAdmin: {
       type: Boolean,
       default: false
@@ -160,6 +152,47 @@ const userSchema = new mongoose.Schema(
     canManagePayroll: {
       type: Boolean,
       default: false
+    },
+
+    // ============ MODERATOR-SPECIFIC FIELDS ============
+    moderatorLevel: {
+      type: String,
+      enum: ['senior', 'junior', 'trainee'],
+      default: 'junior'
+    },
+    moderatorScope: {
+      type: [String], // ['users', 'content', 'reports', 'comments', 'posts']
+      default: ['users', 'content']
+    },
+    canModerateUsers: {
+      type: Boolean,
+      default: false
+    },
+    canModerateContent: {
+      type: Boolean,
+      default: true
+    },
+    canViewReports: {
+      type: Boolean,
+      default: true
+    },
+    canManageReports: {
+      type: Boolean,
+      default: false
+    },
+    moderationLimits: {
+      dailyActions: { type: Number, default: 50 },
+      warningLimit: { type: Number, default: 3 },
+      canBanUsers: { type: Boolean, default: false },
+      canDeleteContent: { type: Boolean, default: true },
+      canEditContent: { type: Boolean, default: true },
+      canWarnUsers: { type: Boolean, default: true }
+    },
+
+    // Common permission field for all roles
+    permissions: {
+      type: [String],
+      default: []
     },
 
     // ============ EMPLOYEE-SPECIFIC FIELDS ============
@@ -290,6 +323,13 @@ userSchema.pre('save', function(next) {
     this.employeeId = `EMP-${timestamp}${random}`;
   }
 
+  // Generate moderatorId for moderators
+  if (this.role === 'moderator' && (!this.employeeId || this.employeeId === '')) {
+    const timestamp = Date.now().toString().slice(-6);
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    this.employeeId = `MOD-${timestamp}${random}`;
+  }
+
   // Admin users - set empty employeeId
   if (this.role === 'admin' && (!this.employeeId || this.employeeId === '')) {
     this.employeeId = '';
@@ -312,9 +352,81 @@ userSchema.pre('save', function(next) {
       this.canManagePayroll = true;
       this.permissions = [...this.permissions, 'user:delete', 'admin:all'];
     }
+
+    // Clear moderator-specific fields for admin
+    this.moderatorLevel = undefined;
+    this.moderatorScope = undefined;
+    this.canModerateUsers = undefined;
+    this.canModerateContent = undefined;
+    this.canViewReports = undefined;
+    this.canManageReports = undefined;
+    this.moderationLimits = undefined;
   }
 
-  // Clear admin-specific fields for employees
+  // Set default values for moderator
+  if (this.role === 'moderator') {
+    // Set default moderator level
+    if (!this.moderatorLevel) this.moderatorLevel = 'junior';
+    
+    // Set default moderator scope
+    if (!this.moderatorScope || this.moderatorScope.length === 0) {
+      this.moderatorScope = ['users', 'content'];
+    }
+    
+    // Set permission-based flags
+    if (this.moderatorScope.includes('users')) {
+      this.canModerateUsers = true;
+    }
+    if (this.moderatorScope.includes('reports')) {
+      this.canViewReports = true;
+      this.canManageReports = true;
+    }
+    
+    // Set moderation limits based on level
+    if (!this.moderationLimits) {
+      this.moderationLimits = {};
+    }
+    
+    switch(this.moderatorLevel) {
+      case 'senior':
+        this.moderationLimits.dailyActions = 200;
+        this.moderationLimits.warningLimit = 5;
+        this.moderationLimits.canBanUsers = true;
+        this.moderationLimits.canDeleteContent = true;
+        this.moderationLimits.canEditContent = true;
+        this.moderationLimits.canWarnUsers = true;
+        this.permissions = [...this.permissions, 'moderator:senior', 'reports:manage', 'users:ban', 'content:delete'];
+        break;
+      case 'junior':
+        this.moderationLimits.dailyActions = 100;
+        this.moderationLimits.warningLimit = 3;
+        this.moderationLimits.canBanUsers = false;
+        this.moderationLimits.canDeleteContent = true;
+        this.moderationLimits.canEditContent = true;
+        this.moderationLimits.canWarnUsers = true;
+        this.permissions = [...this.permissions, 'moderator:junior', 'content:delete', 'users:warn'];
+        break;
+      case 'trainee':
+        this.moderationLimits.dailyActions = 30;
+        this.moderationLimits.warningLimit = 1;
+        this.moderationLimits.canBanUsers = false;
+        this.moderationLimits.canDeleteContent = false;
+        this.moderationLimits.canEditContent = false;
+        this.moderationLimits.canWarnUsers = true;
+        this.permissions = [...this.permissions, 'moderator:trainee', 'content:view', 'reports:view'];
+        break;
+    }
+
+    // Clear admin-specific fields for moderator
+    this.adminLevel = undefined;
+    this.adminPosition = undefined;
+    this.companyName = undefined;
+    this.isSuperAdmin = undefined;
+    this.canManageUsers = undefined;
+    this.canManagePayroll = undefined;
+  }
+
+  // Clear both admin and moderator fields for employees
   if (this.role === 'employee') {
     this.adminLevel = undefined;
     this.adminPosition = undefined;
@@ -322,6 +434,13 @@ userSchema.pre('save', function(next) {
     this.isSuperAdmin = undefined;
     this.canManageUsers = undefined;
     this.canManagePayroll = undefined;
+    this.moderatorLevel = undefined;
+    this.moderatorScope = undefined;
+    this.canModerateUsers = undefined;
+    this.canModerateContent = undefined;
+    this.canViewReports = undefined;
+    this.canManageReports = undefined;
+    this.moderationLimits = undefined;
     this.permissions = [];
   }
 
@@ -345,22 +464,171 @@ userSchema.methods.isEmployee = function() {
   return this.role === 'employee';
 };
 
+userSchema.methods.isModerator = function() {
+  return this.role === 'moderator';
+};
+
+userSchema.methods.isSuperAdminUser = function() {
+  return this.isSuperAdmin || this.adminLevel === 'super' || this.role === 'superAdmin';
+};
+
 // Method to check permissions
 userSchema.methods.hasPermission = function(permission) {
-  if (this.role !== 'admin') return false;
-  if (this.isSuperAdmin || this.adminLevel === 'super') return true;
+  if (this.isSuperAdminUser()) return true;
   return this.permissions && this.permissions.includes(permission);
+};
+
+// Method to check moderator scope
+userSchema.methods.canModerate = function(scope) {
+  if (!this.isModerator()) return false;
+  return this.moderatorScope && this.moderatorScope.includes(scope);
+};
+
+// Method to check if moderator can perform action
+userSchema.methods.canPerformModeration = function(actionType) {
+  if (!this.isModerator()) return false;
+  
+  if (!this.moderationLimits) return false;
+  
+  switch(actionType) {
+    case 'ban_user':
+      return this.moderationLimits.canBanUsers || false;
+    case 'delete_content':
+      return this.moderationLimits.canDeleteContent || false;
+    case 'edit_content':
+      return this.moderationLimits.canEditContent || false;
+    case 'warn_user':
+      return this.moderationLimits.canWarnUsers || false;
+    case 'manage_reports':
+      return this.canManageReports || false;
+    case 'view_reports':
+      return this.canViewReports || false;
+    default:
+      return false;
+  }
+};
+
+// Method to get moderator capabilities
+userSchema.methods.getModerationCapabilities = function() {
+  if (!this.isModerator()) return null;
+  
+  return {
+    level: this.moderatorLevel,
+    scope: this.moderatorScope,
+    limits: this.moderationLimits,
+    permissions: this.permissions,
+    canModerateUsers: this.canModerateUsers,
+    canModerateContent: this.canModerateContent,
+    canViewReports: this.canViewReports,
+    canManageReports: this.canManageReports
+  };
+};
+
+// Method to check if user can manage other users
+userSchema.methods.canManageOtherUsers = function() {
+  if (this.isSuperAdminUser()) return true;
+  
+  if (this.role === 'admin') {
+    return this.canManageUsers || this.adminLevel === 'super';
+  }
+  
+  if (this.role === 'moderator') {
+    return this.canModerateUsers || false;
+  }
+  
+  return false;
+};
+
+// Method to check if user can manage payroll
+userSchema.methods.canManagePayrollSystem = function() {
+  if (this.isSuperAdminUser()) return true;
+  
+  if (this.role === 'admin') {
+    return this.canManagePayroll || this.adminLevel === 'super';
+  }
+  
+  return false;
+};
+
+// Method to get user's role details
+userSchema.methods.getRoleDetails = function() {
+  const details = {
+    role: this.role,
+    isAdmin: this.isAdmin(),
+    isEmployee: this.isEmployee(),
+    isModerator: this.isModerator(),
+    isSuperAdmin: this.isSuperAdminUser()
+  };
+  
+  if (this.isAdmin()) {
+    details.adminLevel = this.adminLevel;
+    details.adminPosition = this.adminPosition;
+    details.companyName = this.companyName;
+    details.canManageUsers = this.canManageUsers;
+    details.canManagePayroll = this.canManagePayroll;
+  }
+  
+  if (this.isModerator()) {
+    details.moderatorLevel = this.moderatorLevel;
+    details.moderatorScope = this.moderatorScope;
+    details.moderationLimits = this.moderationLimits;
+  }
+  
+  return details;
 };
 
 // Static method to get user by email
 userSchema.statics.findByEmail = function(email) {
-  return this.findOne({ email: email.toLowerCase().trim() });
+  return this.findOne({ email: email.toLowerCase().trim(), isDeleted: false });
 };
 
 // Static method to check if email exists
 userSchema.statics.emailExists = async function(email) {
-  const user = await this.findOne({ email: email.toLowerCase().trim() });
+  const user = await this.findOne({ 
+    email: email.toLowerCase().trim(), 
+    isDeleted: false 
+  });
   return !!user;
+};
+
+// Static method to get all admins
+userSchema.statics.getAllAdmins = function() {
+  return this.find({ 
+    role: 'admin', 
+    isDeleted: false 
+  }).select('-password -__v');
+};
+
+// Static method to get all moderators
+userSchema.statics.getAllModerators = function() {
+  return this.find({ 
+    role: 'moderator', 
+    isDeleted: false 
+  }).select('-password -__v');
+};
+
+// Static method to get all employees
+userSchema.statics.getAllEmployees = function() {
+  return this.find({ 
+    role: 'employee', 
+    isDeleted: false 
+  }).select('-password -__v');
+};
+
+// Static method to find by employeeId
+userSchema.statics.findByEmployeeId = function(employeeId) {
+  return this.findOne({ 
+    employeeId: employeeId, 
+    isDeleted: false 
+  });
+};
+
+// Static method to get users by department
+userSchema.statics.getByDepartment = function(department) {
+  return this.find({ 
+    department: department, 
+    isDeleted: false 
+  }).select('-password -__v');
 };
 
 module.exports = mongoose.model("User", userSchema);
