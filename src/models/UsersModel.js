@@ -1,6 +1,112 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 
+// ============ SEQUENCE SCHEMA (প্রথমে declare করুন) ============
+const sequenceSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true
+  },
+  value: {
+    type: Number,
+    required: true,
+    default: 0
+  },
+  prefix: {
+    type: String,
+    default: ''
+  },
+  lastGenerated: {
+    type: Date,
+    default: Date.now
+  },
+  description: {
+    type: String,
+    default: ''
+  }
+}, { 
+  timestamps: true 
+});
+
+// Sequence static methods
+sequenceSchema.statics.getNextSequence = async function(name, prefix = '') {
+  try {
+    const sequence = await this.findOneAndUpdate(
+      { name },
+      { 
+        $inc: { value: 1 },
+        $set: { lastGenerated: new Date() }
+      },
+      { 
+        new: true, 
+        upsert: true,
+        setDefaultsOnInsert: true 
+      }
+    );
+    
+    return {
+      value: sequence.value,
+      formattedValue: String(sequence.value).padStart(4, '0'),
+      fullId: prefix ? `${prefix}-${String(sequence.value).padStart(4, '0')}` : String(sequence.value).padStart(4, '0')
+    };
+  } catch (error) {
+    console.error('❌ Sequence generation error:', error);
+    throw error;
+  }
+};
+
+// Initialize default sequences
+sequenceSchema.statics.initializeDefaultSequences = async function() {
+  try {
+    const defaultSequences = [
+      { 
+        name: 'employeeSequence', 
+        prefix: 'EMP', 
+        value: 0, 
+        description: 'For employee ID generation' 
+      },
+      { 
+        name: 'adminSequence', 
+        prefix: 'ADM', 
+        value: 0, 
+        description: 'For admin ID generation' 
+      },
+      { 
+        name: 'superAdminSequence', 
+        prefix: 'SUP', 
+        value: 0, 
+        description: 'For super admin ID generation' 
+      },
+      { 
+        name: 'moderatorSequence', 
+        prefix: 'MOD', 
+        value: 0, 
+        description: 'For moderator ID generation' 
+      }
+    ];
+
+    for (const seq of defaultSequences) {
+      await this.findOneAndUpdate(
+        { name: seq.name },
+        seq,
+        { upsert: true, setDefaultsOnInsert: true }
+      );
+    }
+    
+    console.log('✅ Default sequences initialized');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to initialize sequences:', error);
+    return false;
+  }
+};
+
+// ✅ Sequence Model তৈরি করুন (User এর আগে)
+const Sequence = mongoose.models.Sequence || mongoose.model("Sequence", sequenceSchema);
+
+// ============ USER SCHEMA ============
 const userSchema = new mongoose.Schema(
   {
     // ============ COMMON FIELDS (Employee, Admin & Moderator) ============
@@ -292,153 +398,16 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// ============ SEQUENCE SCHEMA (User model-এর ভিতরেই) ============
-const sequenceSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true
-  },
-  value: {
-    type: Number,
-    required: true,
-    default: 0
-  },
-  prefix: {
-    type: String,
-    default: ''
-  },
-  lastGenerated: {
-    type: Date,
-    default: Date.now
-  },
-  description: {
-    type: String,
-    default: ''
-  }
-}, { 
-  timestamps: true 
-});
-
-// Sequence static methods
-sequenceSchema.statics.getNextSequence = async function(name, prefix = '') {
-  try {
-    const sequence = await this.findOneAndUpdate(
-      { name },
-      { 
-        $inc: { value: 1 },
-        $set: { lastGenerated: new Date() }
-      },
-      { 
-        new: true, 
-        upsert: true,
-        setDefaultsOnInsert: true 
-      }
-    );
-    
-    return {
-      value: sequence.value,
-      formattedValue: String(sequence.value).padStart(4, '0'),
-      fullId: prefix ? `${prefix}-${String(sequence.value).padStart(4, '0')}` : String(sequence.value).padStart(4, '0')
-    };
-  } catch (error) {
-    console.error('❌ Sequence generation error:', error);
-    throw error;
-  }
-};
-
-// Initialize default sequences
-sequenceSchema.statics.initializeDefaultSequences = async function() {
-  try {
-    const defaultSequences = [
-      { 
-        name: 'employeeSequence', 
-        prefix: 'EMP', 
-        value: 0, 
-        description: 'For employee ID generation' 
-      },
-      { 
-        name: 'adminSequence', 
-        prefix: 'ADM', 
-        value: 0, 
-        description: 'For admin ID generation' 
-      },
-      { 
-        name: 'superAdminSequence', 
-        prefix: 'SUP', 
-        value: 0, 
-        description: 'For super admin ID generation' 
-      },
-      { 
-        name: 'moderatorSequence', 
-        prefix: 'MOD', 
-        value: 0, 
-        description: 'For moderator ID generation' 
-      }
-    ];
-
-    for (const seq of defaultSequences) {
-      await this.findOneAndUpdate(
-        { name: seq.name },
-        seq,
-        { upsert: true, setDefaultsOnInsert: true }
-      );
-    }
-    
-    console.log('✅ Default sequences initialized');
-    return true;
-  } catch (error) {
-    console.error('❌ Failed to initialize sequences:', error);
-    return false;
-  }
-}; 
-
-// ✅ **সঠিক Password Hashing (একবারই রাখুন)**
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ✅ **সঠিক Password Comparison Method (একবারই রাখুন)**
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  try {
-    console.log('🔐 matchPassword called:');
-    console.log('- Entered password:', enteredPassword);
-    console.log('- Stored hash exists:', !!this.password);
-    console.log('- Hash starts with $2:', this.password?.startsWith('$2'));
-    
-    if (!this.password) {
-      console.log('❌ No password stored for user');
-      return false;
-    }
-    
-    const result = await bcrypt.compare(enteredPassword, this.password);
-    console.log('- bcrypt.compare result:', result);
-    return result;
-    
-  } catch (error) {
-    console.error('❌ matchPassword error:', error);
-    return false;
-  }
-};
-
-// Virtual for full name
-userSchema.virtual('fullName').get(function() {
-  return `${this.firstName} ${this.lastName}`.trim();
-});
-
-// Pre-save middleware to handle role-based logic and ID generation
+// ============ PRE-SAVE MIDDLEWARE (একটি মাত্র) ============
 userSchema.pre('save', async function(next) {
   try {
-    // Only generate ID if it's empty and user is not deleted
+    // 1. Password hashing
+    if (this.isModified("password") && this.password) {
+      const salt = await bcrypt.genSalt(10);
+      this.password = await bcrypt.hash(this.password, salt);
+    }
+
+    // 2. ID generation logic
     if ((!this.employeeId || this.employeeId === '') && !this.isDeleted) {
       const rolePrefixes = {
         'employee': { name: 'employeeSequence', prefix: 'EMP' },
@@ -449,7 +418,6 @@ userSchema.pre('save', async function(next) {
 
       const roleConfig = rolePrefixes[this.role] || rolePrefixes['employee'];
       
-      // Generate sequence-based ID
       const sequenceResult = await Sequence.getNextSequence(
         roleConfig.name, 
         roleConfig.prefix
@@ -457,7 +425,6 @@ userSchema.pre('save', async function(next) {
       
       this.employeeId = sequenceResult.fullId;
       
-      // Set attendanceId for employees
       if (this.role === 'employee') {
         this.attendanceId = this.employeeId;
       }
@@ -689,6 +656,28 @@ userSchema.pre('save', async function(next) {
   }
 });
 
+// ============ VIRTUAL FIELDS ============
+userSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`.trim();
+});
+
+// ============ METHODS ============
+// ✅ **সঠিক Password Comparison Method**
+userSchema.methods.matchPassword = async function (enteredPassword) {
+  try {
+    if (!this.password) {
+      console.log('❌ No password stored for user');
+      return false;
+    }
+    
+    const result = await bcrypt.compare(enteredPassword, this.password);
+    return result;
+  } catch (error) {
+    console.error('❌ matchPassword error:', error);
+    return false;
+  }
+};
+
 // Method to check role
 userSchema.methods.isAdmin = function() {
   return this.role === 'admin';
@@ -833,6 +822,7 @@ userSchema.methods.getRoleDetails = function() {
   return details;
 };
 
+// ============ STATIC METHODS ============
 // Static method to get user by email
 userSchema.statics.findByEmail = function(email) {
   return this.findOne({ email: email.toLowerCase().trim(), isDeleted: false });
@@ -908,12 +898,9 @@ userSchema.statics.generateUserId = async function(role) {
 // Static method to initialize sequences (call once at app startup)
 userSchema.statics.initializeSequences = async function() {
   return await Sequence.initializeDefaultSequences();
-}; 
+};
 
-const User =
-  mongoose.models.User || mongoose.model("User", userSchema);
-
-const Sequence =
-  mongoose.models.Sequence || mongoose.model("Sequence", sequenceSchema);
+// ============ EXPORT ============
+const User = mongoose.models.User || mongoose.model("User", userSchema);
 
 export { User, Sequence };
