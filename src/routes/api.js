@@ -16,6 +16,7 @@ const reportController = require('../controller/reportController');
 const OfficeRentController = require('../controller/officeController');  
 const billController = require('../controller/utilityBillsController');  
 const officeSupplyController = require('../controller/officeSupplyController');  
+const foodCostController = require('../controller/foodCostController');  
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -318,42 +319,25 @@ router.post('/attendance/check-in', async (req, res) => {
 
 // All routes require authentication 
 
-// ================= ADMIN ROUTES =================
-// Get all employee shifts
-router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEmployeeShifts);
-
-// Assign shift to employee
-router.post('/admin/assign-shift/:employeeId', protect, adminOnly, userController.assignShiftToEmployee);
-
-// Reset employee shift to default
-router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetEmployeeShift);
-
-// Update default shift timing
-router.put('/admin/default-shift', protect, adminOnly, userController.updateDefaultShift);
-
-// Get employee shift history
-router.get('/admin/shift-history/:employeeId', protect, adminOnly, userController.getEmployeeShiftHistory);
-
-// Bulk assign shifts
-router.post('/admin/bulk-assign-shifts',protect, adminOnly, userController.bulkAssignShifts);
-
-// Get shift statistics
-router.get('/admin/shift-statistics', protect, adminOnly, userController.getShiftStatistics);
-
-// ================= EMPLOYEE ROUTES =================
-// Get my shift timing
+// ================= Shift ROUTES ================= 
+router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEmployeeShifts); 
+router.post('/admin/assign-shift/:employeeId', protect, adminOnly, userController.assignShiftToEmployee); 
+router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetEmployeeShift); 
+router.put('/admin/default-shift', protect, adminOnly, userController.updateDefaultShift); 
+router.get('/admin/shift-history/:employeeId', protect, adminOnly, userController.getEmployeeShiftHistory); 
+router.post('/admin/bulk-assign-shifts',protect, adminOnly, userController.bulkAssignShifts); 
+router.get('/admin/shift-statistics', protect, adminOnly, userController.getShiftStatistics);  
 router.get('/my-shift',protect, userController.getMyShift);
-// =================== Leave Routes ==================== 
-// Employee routes
+
+
+// =================== Leave Routes ====================  
 router.get('/my-leaves', protect, leaveController.getMyLeaves);
 router.get('/balance', protect, leaveController.getLeaveBalance);
 router.get('/stats', protect, leaveController.getLeaveStats);
 router.post('/request', protect, leaveController.requestLeave);
 router.get('/getLeave/:id', protect, leaveController.getLeaveById);
 router.put('/updateLeave/:id', protect, leaveController.updateLeave);
-router.delete('/deleteLeave/:id', protect, leaveController.deleteLeave);
-
-// Admin routes
+router.delete('/deleteLeave/:id', protect, leaveController.deleteLeave); 
 router.get('/admin/all', protect, adminOnly, leaveController.getAllLeaves);
 router.get('/admin/departments', protect, adminOnly, leaveController.getDepartments);
 router.put('/admin/approve/:id', protect, adminOnly, leaveController.approveLeave);
@@ -363,13 +347,10 @@ router.post('/admin/bulk-reject', protect, adminOnly, leaveController.bulkReject
 router.post('/admin/bulk-delete', protect, adminOnly, leaveController.bulkDeleteLeaves);
 router.get('/admin/export', protect, adminOnly, leaveController.exportLeaves);
 
-// =====================Holiday Routes===================== 
-// Public routes (both admin and employee can view)
+// =====================Holiday Routes=====================  
 router.get('/holiday', protect, holidayController.getHolidays);
 router.get('/stats', protect, holidayController.getHolidayStats);
-router.get('/export', protect, holidayController.exportHolidays);
-
-// Admin only routes
+router.get('/export', protect, holidayController.exportHolidays); 
 router.get('/getHoliday/:id', protect, adminOnly, holidayController.getHolidayById);
 router.post('/addHoliday', protect, adminOnly, holidayController.addHoliday);
 router.put('/updateHoliday/:id', protect, adminOnly, holidayController.updateHoliday);
@@ -384,21 +365,15 @@ router.put('/payrollUpdate/:id/status', protect, adminOnly, payrollController.up
 router.delete('/payrollDelete/:id', protect, adminOnly, payrollController.deletePayroll);
 router.post('/generate/monthly', protect, adminOnly, payrollController.generateMonthlyPayroll);
 router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrolls);
-router.post('/action/:id', protect, payrollController.employeeActionOnPayroll);
-
-// New auto-calculation routes
+router.post('/action/:id', protect, payrollController.employeeActionOnPayroll); 
 router.post('/calculate', protect, adminOnly, payrollController.calculatePayrollFromAttendance);
 router.post('/auto-generate', protect, adminOnly, payrollController.autoGeneratePayroll);
-router.post('/bulk-auto-generate', protect, adminOnly, payrollController.bulkAutoGeneratePayroll);
-// routes.js-এ
+router.post('/bulk-auto-generate', protect, adminOnly, payrollController.bulkAutoGeneratePayroll); 
 router.post('/payroll/create-with-data', protect, adminOnly, payrollController.createPayrollWithData);
 
 
-// =================== SalaryRule Routes ====================
-// All users can view active rules
-router.get('/active', protect, salaryRuleController.getActiveSalaryRules);
-
-// Admin routes
+// =================== SalaryRule Routes ==================== 
+router.get('/active', protect, salaryRuleController.getActiveSalaryRules); 
 router.get('/getSalaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);
 router.get('/getSalaryRule/:id', protect, adminOnly, salaryRuleController.getSalaryRuleById);
 router.post('/createSalaryRule', protect, adminOnly, salaryRuleController.createSalaryRule);
@@ -413,8 +388,7 @@ router.get('/admin/auditSearch', protect, adminOnly, auditController.searchAudit
 router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);  
 router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
 
-// ==================== SessionLog Routes==================== 
-// ==================== USER ROUTES ====================
+// ==================== SessionLog Routes====================  
 router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
 router.get('/my-current-session', protect, sessionController.getMyCurrentSession);
 router.get('/my-session-state', protect, sessionController.getMyCurrentSession);
@@ -423,30 +397,21 @@ router.get('/stats', protect, sessionController.getSessionStatistics);
 router.get(' /sessions/statistics', protect, sessionController.getMySessionStats);
 router.post('/clock-in', protect, sessionController.clockIn);
 router.post('/clock-out', protect, sessionController.clockOut);
-router.get('/export', protect, sessionController.exportMySessions);
-
-// ==================== ADMIN ROUTES ====================
+router.get('/export', protect, sessionController.exportMySessions); 
 router.get('/allSession', protect, adminOnly, sessionController.getAllSessions);
 router.get('/admin/session/:id', protect, adminOnly, sessionController.getSessionById);
 router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
 router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById);
-router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions);
-
-// ==================== ANALYTICS ROUTES ====================
+router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions); 
 router.get('/analytics/daily', protect, adminOnly, sessionController.getDailyAnalytics);
 router.get('/analytics/devices', protect, adminOnly, sessionController.getDeviceAnalytics);
-router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics);
-// ==================== EXPORT ROUTES ====================
+router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics); 
 router.get('/export', sessionController.exportMySessions);
 router.get('/admin/export', adminOnly, sessionController.exportAllSessions);
 
 
-
-// =================== WeaklyOff Routes ====================
-// Public routes
-router.get('/weekly-off', protect, OfficeSchedule.getWeeklyOff);
-
-// Admin routes
+// =================== WeaklyOff Routes ==================== 
+router.get('/weekly-off', protect, OfficeSchedule.getWeeklyOff); 
 router.put('/updateWeekly-off', protect, adminOnly, OfficeSchedule.updateWeeklyOff);
 router.put('/override', protect, adminOnly, OfficeSchedule.createOrUpdateOverride);
 router.get('/override/history', protect, adminOnly, OfficeSchedule.getOverrideHistory);
@@ -493,4 +458,15 @@ router.put('/office-supplies/:id', protect, officeSupplyController.updateSupply)
 router.delete('/office-supplies/:id', protect, officeSupplyController.deleteSupply); 
 router.get('/office-supplies/stats', protect, officeSupplyController.getStats); 
 router.post('/office-supplies/migrate-note', protect, officeSupplyController.migrateNoteField);
+
+
+// =============== Food Cost ROUTES ===============  
+router.get('/food-costs', protect, foodCostController.getAllFoodCosts); 
+router.get('/food-costs/:id', protect, foodCostController.getFoodCostById); 
+router.post('/add-food-costs/', protect, foodCostController.createFoodCost); 
+router.put('/update-food-costs/:id', protect, foodCostController.updateFoodCost); 
+router.delete('/delete-food-costs/:id', protect, foodCostController.deleteFoodCost); 
+router.get('/food-costs/month/:year/:month',protect, foodCostController.getFoodCostsByMonth); 
+router.get('/food-costs/stats', protect, foodCostController.getFoodCostStats); 
+router.get('/food-costs/check-date', protect, foodCostController.checkDateExists);
 module.exports = router;  
