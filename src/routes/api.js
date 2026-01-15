@@ -15,6 +15,7 @@ const profileController = require('../controller/profileController');
 const reportController = require('../controller/reportController');  
 const OfficeRentController = require('../controller/officeController');  
 const billController = require('../controller/utilityBillsController');  
+const officeSupplyController = require('../controller/officeSupplyController');  
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -485,4 +486,11 @@ router.delete('/bills/month/:year/:month', protect, billController.deleteMonthBi
 router.get('/db/fix-index', protect, billController.fixIndex);
 router.get('/db/remove-duplicate-index', protect, billController.removeDuplicateIndex);
 
+// =============== OFFICE SUPPLY ROUTES =============== 
+router.get('/office-supplies',protect, officeSupplyController.getAllSupplies); 
+router.post('/addOffice-supplies', protect, officeSupplyController.addSupplies); 
+router.put('/office-supplies/:id', protect, officeSupplyController.updateSupply); 
+router.delete('/office-supplies/:id', protect, officeSupplyController.deleteSupply); 
+router.get('/office-supplies/stats', protect, officeSupplyController.getStats); 
+router.post('/office-supplies/migrate-note', protect, officeSupplyController.migrateNoteField);
 module.exports = router;  
