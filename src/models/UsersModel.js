@@ -1,5 +1,5 @@
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
@@ -392,10 +392,7 @@ sequenceSchema.statics.initializeDefaultSequences = async function() {
     console.error('❌ Failed to initialize sequences:', error);
     return false;
   }
-};
-
-// Create Sequence model
-const Sequence = mongoose.model("Sequence", sequenceSchema);
+}; 
 
 // ✅ **সঠিক Password Hashing (একবারই রাখুন)**
 userSchema.pre("save", async function (next) {
@@ -911,10 +908,12 @@ userSchema.statics.generateUserId = async function(role) {
 // Static method to initialize sequences (call once at app startup)
 userSchema.statics.initializeSequences = async function() {
   return await Sequence.initializeDefaultSequences();
-};
+}; 
 
-// Create User model
-const User = mongoose.model("User", userSchema);
+const User =
+  mongoose.models.User || mongoose.model("User", userSchema);
 
-// Export both models
-module.exports = { User, Sequence };
+const Sequence =
+  mongoose.models.Sequence || mongoose.model("Sequence", sequenceSchema);
+
+export { User, Sequence };
