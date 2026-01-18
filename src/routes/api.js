@@ -19,6 +19,7 @@ const officeSupplyController = require('../controller/officeSupplyController');
 const foodCostController = require('../controller/foodCostController');  
 const softwareSubscriptionController = require('../controller/softwareSubscriptionController');
 const transportExpenseController = require('../controller/transportController');
+const miscellaneousExpense = require('../controller/miscellaneousController');
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -491,5 +492,11 @@ router.get('/transport-expenses/stats',protect, transportExpenseController.getTr
 router.put('/update-transport-expenses/:id',protect, transportExpenseController.updateTransportExpense); 
 router.delete('/delete-transport-expenses/:id',protect, transportExpenseController.deleteTransportExpense);
 
+// =============== Miscellaneous Cost ROUTES ===============  
+router.get('/miscellaneous',protect, miscellaneousExpense.getExtraExpenses); 
+router.post('/create-miscellaneous',protect, miscellaneousExpense.addExtraExpenses); 
+router.put('/update-miscellaneous/:id',protect, miscellaneousExpense.updateExtraExpense); 
+router.delete('/delete-miscellaneous/:id',protect, miscellaneousExpense.deleteExtraExpense); 
+router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseStats);
 
 module.exports = router;  

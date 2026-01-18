@@ -148,7 +148,7 @@ const calculateWorkingDays = async (employeeId, month, year) => {
   }
 };
 
-// Main payroll calculation function
+// Main payroll calculation function 
 const calculatePayroll = async (employeeId, monthlySalary, month, year, manualInputs = {}) => {
   try {
     // 1. Get employee details
@@ -159,16 +159,16 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
       throw new Error('Employee not found');
     }
     
-    // 2. Calculate working days
+    // 2. Calculate working days (শুধু ডিডাকশনের জন্য)
     const workDays = await calculateWorkingDays(employeeId, month, year);
     
-    // 3. Calculate rates - 23 days basis
+    // 3. Calculate rates - 23 days basis (শুধু ডিডাকশনের জন্য)
     const dailyRate = Math.round(monthlySalary / 23);
     const hourlyRate = Math.round(dailyRate / 8);
     const overtimeRate = Math.round(hourlyRate * 1.5);
     
-    // 4. Calculate basic pay - actual working days
-    const basicPay = Math.round(dailyRate * workDays.presentDays);
+    // 4. Basic pay = Monthly salary (উপস্থিতির ভিত্তিতে না)
+    const basicPay = monthlySalary;
     
     // 5. Calculate deductions
     // Late deduction: প্রতি 3 বার লেট = 1 দিনের বেতন কাটা
@@ -236,19 +236,19 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
         startDate: new Date(year, month - 1, 1),
         endDate: new Date(year, month, 0),
         fixedWorkingDays: 23,
-        calculationBasis: '23 days fixed (holidays and weekly offs not deducted)'
+        calculationBasis: 'Basic pay = Monthly salary (fixed), deductions based on attendance'
       },
       rates: {
         monthlySalary,
-        dailyRate,
+        dailyRate, // শুধু ডিডাকশনের জন্য
         hourlyRate,
         overtimeRate,
-        calculationBasis: 'Monthly salary ÷ 23 days'
+        calculationBasis: 'Daily rate for deduction only (Monthly salary ÷ 23 days)'
       },
       attendance: workDays,
       calculations: {
         basicPay,
-        basicPayFormula: `Daily Rate (${dailyRate}) × Present Days (${workDays.presentDays})`,
+        basicPayFormula: `Basic pay = Monthly salary (fixed, not prorated)`,
         overtime: {
           amount: totalOvertime,
           isManual: true,
@@ -289,7 +289,7 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
           earnings: totalEarnings,
           deductions: totalDeductions,
           netPayable: netPayable,
-          ruleApplied: 'Net payable minimum 0, deductions maximum monthly salary'
+          ruleApplied: 'Basic pay = Monthly salary, deductions based on attendance'
         }
       },
       manualInputs: {
@@ -300,7 +300,7 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
       notes: {
         holidayNote: `${workDays.holidays} holidays in month (not deducted)`,
         weeklyOffNote: `${workDays.weeklyOffs} weekly off days in month (not deducted)`,
-        calculationNote: workDays.calculationNote,
+        calculationNote: 'Basic pay equals monthly salary. Only deductions based on attendance.',
         deductionNote: deductionsCapped 
           ? `Note: Deductions capped at monthly salary (${formatCurrency(monthlySalary)}). Excess: ${formatCurrency(cappedAmount)} not deducted.`
           : ''
@@ -508,13 +508,13 @@ exports.createPayroll = async (req, res) => {
       },
       
       summary: {
-        grossEarnings: calculation.calculations.totals.earnings,
-        totalDeductions: calculation.calculations.totals.deductions,
-        netPayable: calculation.calculations.totals.netPayable,
-        payableDays: calculation.attendance.presentDays,
-        deductionCapApplied: calculation.calculations.deductions.isCapped,
-        rulesApplied: calculation.calculations.totals.ruleApplied
-      },
+      grossEarnings: calculation.calculations.totals.earnings,
+      totalDeductions: calculation.calculations.totals.deductions,
+      netPayable: calculation.calculations.totals.netPayable,
+      payableDays: calculation.attendance.presentDays,
+      deductionCapApplied: calculation.calculations.deductions.isCapped,
+      rulesApplied: calculation.calculations.totals.ruleApplied
+    },
       
       monthInfo: {
         totalHolidays: calculation.attendance.holidays || 0,
@@ -581,6 +581,7 @@ exports.createPayroll = async (req, res) => {
       message: error.message
     });
   }
+  notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (Basic pay = Monthly salary + deductions based on attendance)`
 };
 
 // 3. Get All Payrolls
