@@ -1,4 +1,4 @@
-const SoftwareSubscription = require('../models/softwareSubscription');
+const SoftwareSubscription = require('../models/softwareSubscriptionModel');
 const mongoose = require('mongoose');
  
 exports.getAllSubscriptions = async (req, res) => {
