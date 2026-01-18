@@ -18,6 +18,7 @@ const billController = require('../controller/utilityBillsController');
 const officeSupplyController = require('../controller/officeSupplyController');  
 const foodCostController = require('../controller/foodCostController');  
 const softwareSubscriptionController = require('../controller/softwareSubscriptionController');
+const transportExpenseController = require('../controller/transportController');
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -371,12 +372,7 @@ router.get('/payroll/stats/monthly', protect, adminOnly, payrollController.getPa
 router.get('/payroll/export/monthly', protect, adminOnly, payrollController.exportPayrolls); 
 router.put('/payroll/:id/manual-inputs', protect, adminOnly, payrollController.updateManualInputs); 
 router.get('/payroll/overtime/manual-only', protect, adminOnly, payrollController.getPayrollWithManualOvertime); 
-router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll); 
-router.post('/payroll/calculate-preview', protect, adminOnly, payrollController.calculatePayroll); // Alternative
-router.post('/payroll/create-with-data', protect, adminOnly, payrollController.createPayroll); // Alternative
-router.post('/payroll/auto-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); // Alternative name
-router.post('/payroll/bulk-auto-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); // Alternative name
-router.post('/payroll/generate/monthly', protect, adminOnly, payrollController.bulkGeneratePayrolls); // Alternative name 
+router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll);  
 router.get('/my-payrolls', protect, payrollController.getEmployeePayrolls); // For current logged in employee 
 
 
@@ -486,4 +482,14 @@ router.put('/update-software-subscriptions/:id',protect, adminOnly, softwareSubs
 router.delete('/delete-software-subscriptions/:id',protect,adminOnly, softwareSubscriptionController.deleteSubscription); 
 router.get('/software-subscriptions-stats',protect, adminOnly, softwareSubscriptionController.getSubscriptionStats); 
 router.post('/software-subscription-migrate-duration',protect,adminOnly, softwareSubscriptionController.migrateDuration); 
+
+
+// =============== Tranport Cost ROUTES ===============  
+router.get('/transport-expenses',protect, transportExpenseController.getTransportExpenses); 
+router.post('/create-transport-expenses',protect, transportExpenseController.addTransportExpenses); 
+router.get('/transport-expenses/stats',protect, transportExpenseController.getTransportExpenseStats); 
+router.put('/update-transport-expenses/:id',protect, transportExpenseController.updateTransportExpense); 
+router.delete('/delete-transport-expenses/:id',protect, transportExpenseController.deleteTransportExpense);
+
+
 module.exports = router;  
