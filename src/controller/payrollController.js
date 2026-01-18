@@ -6,7 +6,15 @@ const Holiday = require('../models/HolidayModel');
 const OfficeSchedule = require('../models/OfficeScheduleModel');
 
 // ========== HELPER FUNCTIONS ==========
-
+// Helper function for currency formatting
+const formatCurrency = (amount) => {
+  return new Intl.NumberFormat('en-BD', {
+    style: 'currency',
+    currency: 'BDT',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount || 0).replace('BDT', '৳');
+};
 // Calculate working days - হলিডে এবং অফডে অটো লোড হবে, কিন্তু ২৩ দিন হিসাবেই গণ্য হবে
 const calculateWorkingDays = async (employeeId, month, year) => {
   try {
@@ -151,15 +159,15 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
       throw new Error('Employee not found');
     }
     
-    // 2. Calculate working days (এখন হলিডে/অফডে অটো লোড হবে)
+    // 2. Calculate working days
     const workDays = await calculateWorkingDays(employeeId, month, year);
     
-    // 3. Calculate rates - এখন 23 দিনের ভিত্তিতে
-    const dailyRate = Math.round(monthlySalary / 23); // সর্বদা 23 দিয়ে ভাগ
+    // 3. Calculate rates - 23 days basis
+    const dailyRate = Math.round(monthlySalary / 23);
     const hourlyRate = Math.round(dailyRate / 8);
     const overtimeRate = Math.round(hourlyRate * 1.5);
     
-    // 4. Calculate basic pay - প্রকৃত কর্মদিবসের ভিত্তিতে
+    // 4. Calculate basic pay - actual working days
     const basicPay = Math.round(dailyRate * workDays.presentDays);
     
     // 5. Calculate deductions
@@ -180,7 +188,21 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
     const leaveDeduction = workDays.leaveDays * dailyRate;
     const halfDayDeduction = Math.round(workDays.halfDays * dailyRate);
     
-    const totalDeductions = lateDeduction + absentDeduction + leaveDeduction + halfDayDeduction;
+    // OPTION A: Total deductions cannot exceed monthly salary
+    const calculatedDeductions = lateDeduction + absentDeduction + leaveDeduction + halfDayDeduction;
+    const totalDeductions = Math.min(calculatedDeductions, monthlySalary);
+    
+    // Calculate deduction percentages
+    const deductionBreakdown = {
+      late: { amount: lateDeduction, percentage: calculatedDeductions > 0 ? (lateDeduction / calculatedDeductions * 100) : 0 },
+      absent: { amount: absentDeduction, percentage: calculatedDeductions > 0 ? (absentDeduction / calculatedDeductions * 100) : 0 },
+      leave: { amount: leaveDeduction, percentage: calculatedDeductions > 0 ? (leaveDeduction / calculatedDeductions * 100) : 0 },
+      halfDay: { amount: halfDayDeduction, percentage: calculatedDeductions > 0 ? (halfDayDeduction / calculatedDeductions * 100) : 0 }
+    };
+    
+    // Check if deductions were capped
+    const deductionsCapped = calculatedDeductions > monthlySalary;
+    const cappedAmount = calculatedDeductions - monthlySalary;
     
     // 6. Process manual inputs
     const manualOvertime = manualInputs.overtime || 0;
@@ -193,7 +215,9 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
     const totalAllowance = manualAllowance;
     
     const totalEarnings = basicPay + totalOvertime + totalBonus + totalAllowance;
-    const netPayable = totalEarnings - totalDeductions;
+    
+    // OPTION A: Net payable minimum 0
+    const netPayable = Math.max(0, totalEarnings - totalDeductions);
     
     // 8. Prepare result
     return {
@@ -254,12 +278,18 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
             days: workDays.halfDays,
             formula: `Half Days (${workDays.halfDays}) × Daily Rate (${dailyRate})`
           },
-          total: totalDeductions
+          calculatedTotal: calculatedDeductions, // Before capping
+          actualTotal: totalDeductions, // After capping
+          isCapped: deductionsCapped,
+          cappedAmount: deductionsCapped ? cappedAmount : 0,
+          breakdown: deductionBreakdown,
+          capRule: 'Total deductions cannot exceed monthly salary'
         },
         totals: {
           earnings: totalEarnings,
           deductions: totalDeductions,
-          netPayable: netPayable
+          netPayable: netPayable,
+          ruleApplied: 'Net payable minimum 0, deductions maximum monthly salary'
         }
       },
       manualInputs: {
@@ -270,7 +300,10 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
       notes: {
         holidayNote: `${workDays.holidays} holidays in month (not deducted)`,
         weeklyOffNote: `${workDays.weeklyOffs} weekly off days in month (not deducted)`,
-        calculationNote: workDays.calculationNote
+        calculationNote: workDays.calculationNote,
+        deductionNote: deductionsCapped 
+          ? `Note: Deductions capped at monthly salary (${formatCurrency(monthlySalary)}). Excess: ${formatCurrency(cappedAmount)} not deducted.`
+          : ''
       }
     };
     
@@ -354,7 +387,7 @@ exports.createPayroll = async (req, res) => {
       });
     }
     
-    // Calculate payroll
+    // Calculate payroll with OPTION A
     const calculation = await calculatePayroll(
       employeeId,
       parseInt(monthlySalary),
@@ -362,6 +395,16 @@ exports.createPayroll = async (req, res) => {
       parseInt(year),
       { overtime, bonus, allowance }
     );
+    
+    // Check if net payable is 0
+    if (calculation.calculations.totals.netPayable === 0) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Net payable amount is 0. Cannot create payroll.',
+        data: calculation,
+        warning: 'Deductions equal or exceed earnings. Salary would be 0.'
+      });
+    }
     
     // Create payroll document
     const payroll = new Payroll({
@@ -384,7 +427,10 @@ exports.createPayroll = async (req, res) => {
         hourlyRate: calculation.rates.hourlyRate,
         overtimeRate: calculation.rates.overtimeRate,
         currency: 'BDT',
-        calculationBasis: calculation.rates.calculationBasis
+        calculationBasis: calculation.rates.calculationBasis,
+        deductionCap: calculation.calculations.deductions.isCapped 
+          ? `Capped at ${formatCurrency(calculation.rates.monthlySalary)}`
+          : 'No cap applied'
       },
       
       attendance: {
@@ -404,7 +450,6 @@ exports.createPayroll = async (req, res) => {
       earnings: {
         basicPay: calculation.calculations.basicPay,
         
-        // Overtime শুধুমাত্র manual
         overtime: {
           amount: calculation.calculations.overtime.amount,
           hours: 0,
@@ -450,20 +495,27 @@ exports.createPayroll = async (req, res) => {
           leaveRule: "1 day leave = 1 day salary deduction",
           halfDayRule: "1 half day = 0.5 day salary deduction",
           holidayRule: "Holidays are not deducted",
-          weeklyOffRule: "Weekly offs are not deducted"
+          weeklyOffRule: "Weekly offs are not deducted",
+          capRule: "Total deductions cannot exceed monthly salary",
+          netPayableRule: "Net payable minimum 0"
         },
         
-        total: calculation.calculations.deductions.total
+        total: calculation.calculations.deductions.actualTotal,
+        calculatedTotal: calculation.calculations.deductions.calculatedTotal,
+        isCapped: calculation.calculations.deductions.isCapped,
+        cappedAmount: calculation.calculations.deductions.cappedAmount,
+        deductionBreakdown: calculation.calculations.deductions.breakdown
       },
       
       summary: {
         grossEarnings: calculation.calculations.totals.earnings,
-        totalDeductions: calculation.calculations.deductions.total,
+        totalDeductions: calculation.calculations.totals.deductions,
         netPayable: calculation.calculations.totals.netPayable,
-        payableDays: calculation.attendance.presentDays
+        payableDays: calculation.attendance.presentDays,
+        deductionCapApplied: calculation.calculations.deductions.isCapped,
+        rulesApplied: calculation.calculations.totals.ruleApplied
       },
       
-      // Month Info
       monthInfo: {
         totalHolidays: calculation.attendance.holidays || 0,
         totalWeeklyOffs: calculation.attendance.weeklyOffs || 0,
@@ -474,7 +526,8 @@ exports.createPayroll = async (req, res) => {
       calculationNotes: {
         holidayNote: calculation.notes?.holidayNote || '',
         weeklyOffNote: calculation.notes?.weeklyOffNote || '',
-        calculationNote: calculation.notes?.calculationNote || '23 days fixed calculation basis'
+        calculationNote: calculation.notes?.calculationNote || '23 days fixed calculation basis',
+        deductionNote: calculation.notes?.deductionNote || ''
       },
       
       manualInputs: {
@@ -491,28 +544,34 @@ exports.createPayroll = async (req, res) => {
         calculatedDate: new Date(),
         calculatedBy: req.user._id,
         dataSources: ['attendance', 'leaves', 'holidays', 'office_schedule', 'manual_input'],
-        calculationNotes: 'Auto-calculated with 23 days fixed basis'
+        calculationNotes: 'Auto-calculated with 23 days fixed basis + Deduction Cap'
       },
       
       metadata: {
         isAutoGenerated: true,
         hasManualInputs: overtime > 0 || bonus > 0 || allowance > 0,
         deductionRulesApplied: true,
+        deductionCapApplied: calculation.calculations.deductions.isCapped,
         attendanceBased: true,
         fixed23Days: true,
-        version: '3.0'
+        version: '3.1', // Updated version for Option A
+        safetyRules: ['Deduction cap = monthly salary', 'Net payable minimum 0']
       },
       
       createdBy: req.user._id,
-      notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (23 days fixed)`
+      notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (23 days fixed + Deduction Cap)`
     });
     
     await payroll.save();
     
     res.status(201).json({
       status: 'success',
-      message: 'Payroll created successfully',
-      data: payroll
+      message: 'Payroll created successfully with safety rules',
+      data: payroll,
+      warnings: calculation.calculations.deductions.isCapped ? [
+        'Deductions capped at monthly salary',
+        `Excess deduction not applied: ${formatCurrency(calculation.calculations.deductions.cappedAmount)}`
+      ] : []
     });
     
   } catch (error) {
