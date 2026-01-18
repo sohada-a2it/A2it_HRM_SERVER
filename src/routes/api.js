@@ -473,10 +473,10 @@ router.get('/food-costs/check-date', protect, foodCostController.checkDateExists
 
  
 // =============== FSoftware Subscription ROUTES ===============   
-router.get('/software-subscriptions',adminOnly, softwareSubscriptionController.getAllSubscriptions); 
-router.post('/add-software-subscriptions',adminOnly, softwareSubscriptionController.createSubscriptions); 
-router.put('/update-software-subscriptions/:id', adminOnly, softwareSubscriptionController.updateSubscription); 
-router.delete('/delete-software-subscriptions/:id',adminOnly, softwareSubscriptionController.deleteSubscription); 
-router.get('/software-subscriptions-stats', adminOnly, softwareSubscriptionController.getSubscriptionStats); 
-router.post('/software-subscription-migrate-duration',adminOnly, softwareSubscriptionController.migrateDuration); 
+router.get('/software-subscriptions',protect,adminOnly, softwareSubscriptionController.getAllSubscriptions); 
+router.post('/add-software-subscriptions',protect,adminOnly, softwareSubscriptionController.createSubscriptions); 
+router.put('/update-software-subscriptions/:id',protect, adminOnly, softwareSubscriptionController.updateSubscription); 
+router.delete('/delete-software-subscriptions/:id',protect,adminOnly, softwareSubscriptionController.deleteSubscription); 
+router.get('/software-subscriptions-stats',protect, adminOnly, softwareSubscriptionController.getSubscriptionStats); 
+router.post('/software-subscription-migrate-duration',protect,adminOnly, softwareSubscriptionController.migrateDuration); 
 module.exports = router;  
