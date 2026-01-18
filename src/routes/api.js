@@ -358,19 +358,26 @@ router.put('/updateHoliday/:id', protect, adminOnly, holidayController.updateHol
 router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);
 router.post('/import', protect, adminOnly, holidayController.importHolidays);
 
-  // ====================Payroll Routes(Admin Only) ==================== 
-router.get('/payrollAll', protect, adminOnly, payrollController.getAllPayrolls);
-router.get('/payrollAll/:id', protect, payrollController.getPayrollById);
-router.post('/payrollCreate', protect, adminOnly, payrollController.createPayroll);
-router.put('/payrollUpdate/:id/status', protect, adminOnly, payrollController.updatePayrollStatus);
-router.delete('/payrollDelete/:id', protect, adminOnly, payrollController.deletePayroll);
-router.post('/generate/monthly', protect, adminOnly, payrollController.generateMonthlyPayroll);
-router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrolls);
-router.post('/action/:id', protect, payrollController.employeeActionOnPayroll); 
-router.post('/calculate', protect, adminOnly, payrollController.calculatePayrollFromAttendance);
-router.post('/auto-generate', protect, adminOnly, payrollController.autoGeneratePayroll);
-router.post('/bulk-auto-generate', protect, adminOnly, payrollController.bulkAutoGeneratePayroll); 
-router.post('/payroll/create-with-data', protect, adminOnly, payrollController.createPayrollWithData);
+  // ====================Payroll Routes(Admin Only) ====================  
+router.post('/payroll/calculate', protect, adminOnly, payrollController.calculatePayroll); 
+router.post('/payroll/create', protect, adminOnly, payrollController.createPayroll); 
+router.get('/payroll/all', protect, adminOnly, payrollController.getAllPayrolls); 
+router.get('/payroll/:id', protect, payrollController.getPayrollById); 
+router.put('/update-payroll/:id/status', protect, adminOnly, payrollController.updatePayrollStatus); 
+router.delete('/delete-payroll/:id', protect, adminOnly, payrollController.deletePayroll); 
+router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrolls); 
+router.post('/payroll/bulk-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); 
+router.get('/payroll/stats/monthly', protect, adminOnly, payrollController.getPayrollStats); 
+router.get('/payroll/export/monthly', protect, adminOnly, payrollController.exportPayrolls); 
+router.put('/payroll/:id/manual-inputs', protect, adminOnly, payrollController.updateManualInputs); 
+router.get('/payroll/overtime/manual-only', protect, adminOnly, payrollController.getPayrollWithManualOvertime); 
+router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll); 
+router.post('/payroll/calculate-preview', protect, adminOnly, payrollController.calculatePayroll); // Alternative
+router.post('/payroll/create-with-data', protect, adminOnly, payrollController.createPayroll); // Alternative
+router.post('/payroll/auto-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); // Alternative name
+router.post('/payroll/bulk-auto-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); // Alternative name
+router.post('/payroll/generate/monthly', protect, adminOnly, payrollController.bulkGeneratePayrolls); // Alternative name 
+router.get('/my-payrolls', protect, payrollController.getEmployeePayrolls); // For current logged in employee 
 
 
 // =================== SalaryRule Routes ==================== 

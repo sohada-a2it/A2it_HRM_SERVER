@@ -1,238 +1,424 @@
 const mongoose = require('mongoose');
 
+// Helper function for number to words
+const numberToWords = (num) => {
+  if (num === 0) return 'Zero Taka Only';
+  
+  const units = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  
+  if (num < 100) {
+    return convertTwoDigits(num) + ' Taka Only';
+  }
+  
+  const crore = Math.floor(num / 10000000);
+  const lakh = Math.floor((num % 10000000) / 100000);
+  const thousand = Math.floor((num % 100000) / 1000);
+  const hundred = Math.floor((num % 1000) / 100);
+  const remainder = num % 100;
+  
+  let result = '';
+  
+  if (crore > 0) result += `${convertThreeDigits(crore)} Crore `;
+  if (lakh > 0) result += `${convertThreeDigits(lakh)} Lakh `;
+  if (thousand > 0) result += `${convertThreeDigits(thousand)} Thousand `;
+  if (hundred > 0) result += `${units[hundred]} Hundred `;
+  if (remainder > 0) {
+    if (result !== '') result += 'and ';
+    result += convertTwoDigits(remainder);
+  }
+  
+  return result.trim() + ' Taka Only';
+  
+  function convertThreeDigits(n) {
+    const hundred = Math.floor(n / 100);
+    const remainder = n % 100;
+    let result = '';
+    
+    if (hundred > 0) result += `${units[hundred]} Hundred `;
+    if (remainder > 0) {
+      if (hundred > 0) result += 'and ';
+      result += convertTwoDigits(remainder);
+    }
+    
+    return result.trim();
+  }
+  
+  function convertTwoDigits(n) {
+    if (n < 10) return units[n];
+    if (n < 20) return teens[n - 10];
+    
+    const ten = Math.floor(n / 10);
+    const unit = n % 10;
+    
+    return unit > 0 ? `${tens[ten]} ${units[unit]}` : tens[ten];
+  }
+};
+
 const payrollSchema = new mongoose.Schema({
-  // Employee Information
+  // ========== EMPLOYEE INFORMATION ==========
   employee: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: [true, 'Employee is required']
   },
   employeeName: {
-    type: String, 
+    type: String,
+    required: [true, 'Employee name is required'],
+    trim: true
   },
   employeeId: {
-    type: String, 
-  }, 
-  // Pay Period
-  periodStart: {
-    type: Date,
-    required: true
-  },
-  periodEnd: {
-    type: Date,
-    required: true
-  },
-  
-  // Payroll Status
-  status: {
     type: String,
-    enum: ['Pending', 'Paid', 'Approved', 'Rejected', 'Draft', 'pending_approval', 'Processing'],
-    default: 'Pending'
+    required: [true, 'Employee ID is required'],
+    trim: true
   },
-  
-  // Basic Information
-  notes: {
+  department: {
     type: String,
     default: ''
   },
-  month: {
-    type: Number, 
-  },
-  year: {
-    type: Number, 
+  designation: {
+    type: String,
+    default: ''
   },
   
-  // Salary Details
+  // ========== PAY PERIOD ==========
+  periodStart: {
+    type: Date,
+    required: [true, 'Period start date is required']
+  },
+  periodEnd: {
+    type: Date,
+    required: [true, 'Period end date is required']
+  },
+  month: {
+    type: Number,
+    min: 1,
+    max: 12,
+    required: true
+  },
+  year: {
+    type: Number,
+    required: true
+  },
+  
+  // ========== PAYROLL STATUS ==========
+  status: {
+    type: String,
+    enum: ['Draft', 'Pending', 'Approved', 'Paid', 'Rejected', 'Processing'],
+    default: 'Pending',
+    index: true
+  },
+  
+  // ========== SALARY DETAILS ==========
   salaryDetails: {
     monthlySalary: {
       type: Number,
       required: true,
-      default: 0
+      min: 0
     },
     dailyRate: {
       type: Number,
       required: true,
-      default: 0
+      min: 0
     },
     hourlyRate: {
       type: Number,
       required: true,
-      default: 0
+      min: 0
     },
-    basicSalary: {
+    overtimeRate: {
       type: Number,
       default: 0
     },
-    houseRent: {
-      type: Number,
-      default: 0
+    currency: {
+      type: String,
+      default: 'BDT',
+      enum: ['BDT', 'USD', 'EUR', 'INR']
     },
-    medicalAllowance: {
-      type: Number,
-      default: 0
-    },
-    conveyance: {
-      type: Number,
-      default: 0
+    calculationBasis: {
+      type: String,
+      default: '23 days fixed calculation'
     }
   },
   
-  // Attendance Summary
+  // ========== ATTENDANCE SUMMARY ==========
   attendance: {
-    presentDays: {
-      type: Number,
-      default: 0
-    },
     totalWorkingDays: {
       type: Number,
-      default: 26
+      default: 23,
+      min: 0
     },
-    attendancePercentage: {
+    presentDays: {
       type: Number,
-      default: 0
-    },
-    lateMinutes: {
-      type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     absentDays: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
-    halfDays: {
+    lateDays: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     leaveDays: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
+    },
+    halfDays: {
+      type: Number,
+      default: 0,
+      min: 0
     },
     holidays: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     weeklyOffs: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
+    },
+    attendancePercentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100
     }
   },
   
-  // Earnings Breakdown
+  // ========== MONTH INFO ==========
+  monthInfo: {
+    totalHolidays: {
+      type: Number,
+      default: 0
+    },
+    totalWeeklyOffs: {
+      type: Number,
+      default: 0
+    },
+    holidayList: [String],
+    weeklyOffDays: [String]
+  },
+  
+  // ========== CALCULATION NOTES ==========
+  calculationNotes: {
+    holidayNote: {
+      type: String,
+      default: ''
+    },
+    weeklyOffNote: {
+      type: String,
+      default: ''
+    },
+    calculationNote: {
+      type: String,
+      default: '23 days fixed calculation basis'
+    }
+  },
+  
+  // ========== EARNINGS ==========
   earnings: {
+    // Basic Pay (Auto calculated)
     basicPay: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
+    
+    // Overtime (Manual only)
     overtime: {
-      type: Number,
-      default: 0
+      amount: {
+        type: Number,
+        default: 0,
+        min: 0
+      },
+      hours: {
+        type: Number,
+        default: 0,
+        min: 0
+      },
+      rate: {
+        type: Number,
+        default: 0,
+        min: 0
+      },
+      source: {
+        type: String,
+        enum: ['manual', 'none'],
+        default: 'none'
+      },
+      description: {
+        type: String,
+        default: ''
+      }
     },
-    overtimeHours: {
-      type: Number,
-      default: 0
-    },
+    
+    // Bonus (Manual only)
     bonus: {
-      type: Number,
-      default: 0
+      amount: {
+        type: Number,
+        default: 0,
+        min: 0
+      },
+      type: {
+        type: String,
+        enum: ['festival', 'performance', 'special', 'other', 'none'],
+        default: 'none'
+      },
+      description: {
+        type: String,
+        default: ''
+      }
     },
+    
+    // Allowance (Manual only)
     allowance: {
-      type: Number,
-      default: 0
+      amount: {
+        type: Number,
+        default: 0,
+        min: 0
+      },
+      type: {
+        type: String,
+        enum: ['travel', 'food', 'housing', 'medical', 'other', 'none'],
+        default: 'none'
+      },
+      description: {
+        type: String,
+        default: ''
+      }
     },
+    
+    // Other allowances
     houseRent: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     medical: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     conveyance: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     incentives: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     otherAllowances: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
+    
+    // Total earnings (auto-calculated)
     total: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     }
   },
   
-  // Deductions Breakdown
+  // ========== DEDUCTIONS ==========
   deductions: {
+    // Auto-calculated deductions
     lateDeduction: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     absentDeduction: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     leaveDeduction: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     halfDayDeduction: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
+    
+    // Other deductions
     taxDeduction: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     providentFund: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     advanceSalary: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     loanDeduction: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     otherDeductions: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
+    
+    // Deduction rules applied
+    deductionRules: {
+      type: Map,
+      of: String,
+      default: {
+        lateRule: "3 days late = 1 day salary deduction",
+        absentRule: "1 day absent = 1 day salary deduction",
+        leaveRule: "1 day leave = 1 day salary deduction",
+        halfDayRule: "1 half day = 0.5 day salary deduction",
+        holidayRule: "Holidays are not deducted",
+        weeklyOffRule: "Weekly offs are not deducted"
+      }
+    },
+    
+    // Total deductions (auto-calculated)
     total: {
       type: Number,
-      default: 0
-    },
-    breakdown: {
-      autoCalculated: {
-        type: Number,
-        default: 0
-      },
-      manual: {
-        type: Number,
-        default: 0
-      }
+      default: 0,
+      min: 0
     }
   },
   
-  // Summary
+  // ========== SUMMARY ==========
   summary: {
     grossEarnings: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     totalDeductions: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     netPayable: {
       type: Number,
       required: true,
-      default: 0
+      min: 0
     },
     inWords: {
       type: String,
@@ -240,90 +426,158 @@ const payrollSchema = new mongoose.Schema({
     },
     payableDays: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     }
   },
   
-  // Payment Information
+  // ========== MANUAL INPUTS ==========
+  manualInputs: {
+    overtime: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    overtimeHours: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    bonus: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    allowance: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    enteredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    enteredAt: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  
+  // ========== CALCULATION METADATA ==========
+  calculation: {
+    method: {
+      type: String,
+      enum: ['auto_backend', 'manual', 'hybrid'],
+      default: 'auto_backend'
+    },
+    calculatedDate: {
+      type: Date,
+      default: Date.now
+    },
+    calculatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    dataSources: [{
+      type: String,
+      enum: ['attendance', 'leaves', 'holidays', 'office_schedule', 'manual_input']
+    }],
+    calculationNotes: {
+      type: String,
+      default: ''
+    }
+  },
+  
+  // ========== PAYMENT INFORMATION ==========
   payment: {
     paymentDate: {
       type: Date
     },
     paymentMethod: {
       type: String,
-      enum: ['Bank Transfer', 'Cash', 'Cheque', 'Online Payment', 'Not Paid']
+      enum: ['Bank Transfer', 'Cash', 'Cheque', 'Online Payment', 'Mobile Banking', 'Not Paid'],
+      default: 'Not Paid'
     },
     transactionId: {
-      type: String
+      type: String,
+      default: ''
     },
     bankAccount: {
-      type: String
+      type: String,
+      default: ''
     },
     paidBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
+    },
+    paymentNotes: {
+      type: String,
+      default: ''
     }
   },
   
-  // Metadata
+  // ========== METADATA ==========
+  metadata: {
+    isAutoGenerated: {
+      type: Boolean,
+      default: false
+    },
+    hasManualInputs: {
+      type: Boolean,
+      default: false
+    },
+    deductionRulesApplied: {
+      type: Boolean,
+      default: false
+    },
+    attendanceBased: {
+      type: Boolean,
+      default: true
+    },
+    fixed23Days: {
+      type: Boolean,
+      default: true
+    },
+    version: {
+      type: String,
+      default: '3.0'
+    },
+    batchId: {
+      type: String,
+      default: ''
+    }
+  },
+  
+  // ========== AUDIT TRAIL ==========
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
+    required: true
   },
-  createdRole: {
-    type: String,
-    enum: ['admin', 'employee', 'hr', 'manager']
-  },
-  isAutoGenerated: {
-    type: Boolean,
-    default: false
-  },
-  hasLateLeaveCalculations: {
-    type: Boolean,
-    default: false
-  },
-  autoDeductionsApplied: {
-    type: Boolean,
-    default: false
-  },
-  
-  // For auto salary requests
-  salaryRequestId: {
-    type: String
-  },
-  generatedFromRequest: {
-    type: Boolean,
-    default: false
-  },
-  
-  // For bulk generation
-  batchId: {
-    type: String
-  },
-  isBulkGenerated: {
-    type: Boolean,
-    default: false
-  },
-  
-  // Approvals
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  approvedDate: {
+  approvedAt: {
     type: Date
   },
-  
-  // Audit trail
-  lastUpdatedBy: {
+  rejectedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
+  rejectedAt: {
+    type: Date
+  },
+  rejectionReason: {
+    type: String,
+    default: ''
+  },
   
-  // Soft delete
+  // ========== SOFT DELETE ==========
   isDeleted: {
     type: Boolean,
-    default: false
+    default: false,
+    index: true
   },
   deletedAt: {
     type: Date
@@ -331,119 +585,170 @@ const payrollSchema = new mongoose.Schema({
   deletedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  
+  // ========== NOTES ==========
+  notes: {
+    type: String,
+    default: ''
   }
   
 }, { 
-  timestamps: true 
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-// Indexes for better performance
+// ========== INDEXES ==========
 payrollSchema.index({ employee: 1, month: 1, year: 1 }, { unique: true });
 payrollSchema.index({ status: 1 });
 payrollSchema.index({ month: 1, year: 1 });
 payrollSchema.index({ periodStart: 1, periodEnd: 1 });
 payrollSchema.index({ createdBy: 1 });
 payrollSchema.index({ 'payment.paymentDate': 1 });
+payrollSchema.index({ employeeId: 1 });
 
-// Pre-save middleware to calculate values
+// ========== VIRTUALS ==========
+payrollSchema.virtual('periodFormatted').get(function() {
+  if (this.periodStart && this.periodEnd) {
+    return `${this.periodStart.toLocaleDateString()} - ${this.periodEnd.toLocaleDateString()}`;
+  }
+  return '';
+});
+
+payrollSchema.virtual('monthName').get(function() {
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return monthNames[this.month - 1] || '';
+});
+
+// ========== PRE-SAVE MIDDLEWARE ==========
 payrollSchema.pre('save', function(next) {
-  // Calculate month and year from periodStart
-  if (this.periodStart && !this.month) {
-    this.month = this.periodStart.getMonth() + 1;
-  }
-  if (this.periodStart && !this.year) {
-    this.year = this.periodStart.getFullYear();
-  }
+  // Auto-calculate earnings total
+  this.earnings.total = 
+    (this.earnings.basicPay || 0) +
+    (this.earnings.overtime?.amount || 0) +
+    (this.earnings.bonus?.amount || 0) +
+    (this.earnings.allowance?.amount || 0) +
+    (this.earnings.houseRent || 0) +
+    (this.earnings.medical || 0) +
+    (this.earnings.conveyance || 0) +
+    (this.earnings.incentives || 0) +
+    (this.earnings.otherAllowances || 0);
   
-  // Calculate attendance percentage
-  if (this.attendance && this.attendance.presentDays && this.attendance.totalWorkingDays) {
+  // Auto-calculate deductions total
+  this.deductions.total = 
+    (this.deductions.lateDeduction || 0) +
+    (this.deductions.absentDeduction || 0) +
+    (this.deductions.leaveDeduction || 0) +
+    (this.deductions.halfDayDeduction || 0) +
+    (this.deductions.taxDeduction || 0) +
+    (this.deductions.providentFund || 0) +
+    (this.deductions.advanceSalary || 0) +
+    (this.deductions.loanDeduction || 0) +
+    (this.deductions.otherDeductions || 0);
+  
+  // Auto-calculate summary
+  this.summary.grossEarnings = this.earnings.total;
+  this.summary.totalDeductions = this.deductions.total;
+  this.summary.netPayable = this.earnings.total - this.deductions.total;
+  
+  // Calculate attendance percentage - 23 দিনের ভিত্তিতে
+  if (this.attendance.totalWorkingDays > 0) {
     this.attendance.attendancePercentage = Math.round(
-      (this.attendance.presentDays / this.attendance.totalWorkingDays) * 100
+      (this.attendance.presentDays / 23) * 100
     );
   }
   
-  // Calculate earnings total
-  if (this.earnings) {
-    const earnings = this.earnings;
-    earnings.total = 
-      (earnings.basicPay || 0) +
-      (earnings.overtime || 0) +
-      (earnings.bonus || 0) +
-      (earnings.allowance || 0) +
-      (earnings.houseRent || 0) +
-      (earnings.medical || 0) +
-      (earnings.conveyance || 0) +
-      (earnings.incentives || 0) +
-      (earnings.otherAllowances || 0);
+  // Calculate payable days (প্রকৃত কর্মদিবস)
+  this.summary.payableDays = this.attendance.presentDays;
+  
+  // Calculate weekly offs if not already calculated
+  if (this.monthInfo.totalWeeklyOffs === 0 && this.periodStart && this.periodEnd) {
+    const start = new Date(this.periodStart);
+    const end = new Date(this.periodEnd);
+    const weeklyOffDays = this.monthInfo.weeklyOffDays || ['Friday', 'Saturday'];
+    
+    let weeklyOffCount = 0;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+      if (weeklyOffDays.includes(dayName)) {
+        weeklyOffCount++;
+      }
+    }
+    this.monthInfo.totalWeeklyOffs = weeklyOffCount;
   }
   
-  // Calculate deductions total
-  if (this.deductions) {
-    const deductions = this.deductions;
-    deductions.total = 
-      (deductions.lateDeduction || 0) +
-      (deductions.absentDeduction || 0) +
-      (deductions.leaveDeduction || 0) +
-      (deductions.halfDayDeduction || 0) +
-      (deductions.taxDeduction || 0) +
-      (deductions.providentFund || 0) +
-      (deductions.advanceSalary || 0) +
-      (deductions.loanDeduction || 0) +
-      (deductions.otherDeductions || 0);
+  // Generate inWords if net payable is positive
+  if (this.summary.netPayable > 0 && !this.summary.inWords) {
+    this.summary.inWords = numberToWords(this.summary.netPayable);
   }
   
-  // Calculate summary
-  if (this.earnings && this.deductions) {
-    this.summary.grossEarnings = this.earnings.total || 0;
-    this.summary.totalDeductions = this.deductions.total || 0;
-    this.summary.netPayable = 
-      (this.earnings.total || 0) - (this.deductions.total || 0);
-    this.summary.payableDays = this.attendance?.presentDays || 0;
+  // Update metadata
+  this.metadata.hasManualInputs = 
+    (this.manualInputs.overtime > 0) ||
+    (this.manualInputs.bonus > 0) ||
+    (this.manualInputs.allowance > 0);
+  
+  this.metadata.deductionRulesApplied = 
+    (this.deductions.lateDeduction > 0) ||
+    (this.deductions.absentDeduction > 0) ||
+    (this.deductions.leaveDeduction > 0) ||
+    (this.deductions.halfDayDeduction > 0);
+  
+  // Set overtime rate if not set
+  if (!this.salaryDetails.overtimeRate && this.salaryDetails.hourlyRate) {
+    this.salaryDetails.overtimeRate = Math.round(this.salaryDetails.hourlyRate * 1.5);
   }
+  
+  // Set calculation basis
+  if (!this.salaryDetails.calculationBasis) {
+    this.salaryDetails.calculationBasis = '23 days fixed calculation';
+  }
+  
+  // Update manual inputs to earnings for overtime
+  if (this.manualInputs.overtime > 0) {
+    this.earnings.overtime.amount = this.manualInputs.overtime;
+    this.earnings.overtime.source = 'manual';
+  }
+  
+  // Set fixed23Days metadata
+  this.metadata.fixed23Days = true;
   
   next();
 });
 
-// Method to get payroll in JSON format
-payrollSchema.methods.toJSON = function() {
-  const obj = this.toObject();
-  
-  // Remove sensitive data if needed
-  delete obj.__v;
-  
-  // Format dates
-  if (obj.periodStart) {
-    obj.periodStartFormatted = obj.periodStart.toISOString().split('T')[0];
-  }
-  if (obj.periodEnd) {
-    obj.periodEndFormatted = obj.periodEnd.toISOString().split('T')[0];
-  }
-  if (obj.payment?.paymentDate) {
-    obj.payment.paymentDateFormatted = obj.payment.paymentDate.toISOString().split('T')[0];
-  }
-  
-  return obj;
-};
-
-// Static method to find payroll by employee and period
-payrollSchema.statics.findByEmployeeAndPeriod = async function(employeeId, periodStart, periodEnd) {
+// ========== STATIC METHODS ==========
+payrollSchema.statics.findByEmployeeAndMonth = async function(employeeId, month, year) {
   return this.findOne({
     employee: employeeId,
-    periodStart: new Date(periodStart),
-    periodEnd: new Date(periodEnd)
+    month: month,
+    year: year,
+    isDeleted: false
   });
 };
 
-// Static method to calculate payroll statistics
-payrollSchema.statics.getPayrollStats = async function(month, year) {
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+payrollSchema.statics.findByEmployee = async function(employeeId, year = null) {
+  const query = {
+    employee: employeeId,
+    isDeleted: false
+  };
   
+  if (year) {
+    query.year = year;
+  }
+  
+  return this.find(query).sort({ year: -1, month: -1 });
+};
+
+payrollSchema.statics.getPayrollStats = async function(month, year) {
   const stats = await this.aggregate([
     {
       $match: {
-        periodStart: { $gte: startDate },
-        periodEnd: { $lte: endDate },
+        month: parseInt(month),
+        year: parseInt(year),
         isDeleted: false
       }
     },
@@ -452,21 +757,16 @@ payrollSchema.statics.getPayrollStats = async function(month, year) {
         _id: null,
         totalPayrolls: { $sum: 1 },
         totalNetPayable: { $sum: '$summary.netPayable' },
+        totalDeductions: { $sum: '$deductions.total' },
         totalEmployees: { $addToSet: '$employee' },
-        totalPaid: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'Paid'] }, 1, 0]
-          }
+        paidCount: {
+          $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, 1, 0] }
         },
-        totalPending: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'Pending'] }, 1, 0]
-          }
+        pendingCount: {
+          $sum: { $cond: [{ $eq: ['$status', 'Pending'] }, 1, 0] }
         },
-        totalApproved: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'Approved'] }, 1, 0]
-          }
+        approvedCount: {
+          $sum: { $cond: [{ $eq: ['$status', 'Approved'] }, 1, 0] }
         }
       }
     },
@@ -475,10 +775,11 @@ payrollSchema.statics.getPayrollStats = async function(month, year) {
         _id: 0,
         totalPayrolls: 1,
         totalNetPayable: 1,
+        totalDeductions: 1,
         totalEmployees: { $size: '$totalEmployees' },
-        totalPaid: 1,
-        totalPending: 1,
-        totalApproved: 1
+        paidCount: 1,
+        pendingCount: 1,
+        approvedCount: 1
       }
     }
   ]);
@@ -486,12 +787,128 @@ payrollSchema.statics.getPayrollStats = async function(month, year) {
   return stats[0] || {
     totalPayrolls: 0,
     totalNetPayable: 0,
+    totalDeductions: 0,
     totalEmployees: 0,
-    totalPaid: 0,
-    totalPending: 0,
-    totalApproved: 0
+    paidCount: 0,
+    pendingCount: 0,
+    approvedCount: 0
   };
 };
 
-// models/PayrollModel.js এ
-module.exports = mongoose.model('Payroll', payrollSchema);
+payrollSchema.statics.getEmployeeYearlySummary = async function(employeeId, year) {
+  const summary = await this.aggregate([
+    {
+      $match: {
+        employee: mongoose.Types.ObjectId(employeeId),
+        year: parseInt(year),
+        isDeleted: false
+      }
+    },
+    {
+      $group: {
+        _id: '$employee',
+        totalPayrolls: { $sum: 1 },
+        totalNetPayable: { $sum: '$summary.netPayable' },
+        totalDeductions: { $sum: '$deductions.total' },
+        totalBasicPay: { $sum: '$earnings.basicPay' },
+        totalOvertime: { $sum: '$earnings.overtime.amount' },
+        totalBonus: { $sum: '$earnings.bonus.amount' },
+        totalAllowance: { $sum: '$earnings.allowance.amount' },
+        months: { $addToSet: '$month' }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        totalPayrolls: 1,
+        totalNetPayable: 1,
+        totalDeductions: 1,
+        totalBasicPay: 1,
+        totalOvertime: 1,
+        totalBonus: 1,
+        totalAllowance: 1,
+        monthsCount: { $size: '$months' },
+        averageMonthly: { $divide: ['$totalNetPayable', { $size: '$months' }] }
+      }
+    }
+  ]);
+  
+  return summary[0] || null;
+};
+
+// Add numberToWords as static method
+payrollSchema.statics.numberToWords = numberToWords;
+
+// ========== INSTANCE METHODS ==========
+payrollSchema.methods.markAsPaid = function(paymentData = {}) {
+  this.status = 'Paid';
+  this.payment = {
+    ...this.payment,
+    ...paymentData,
+    paymentDate: paymentData.paymentDate || new Date()
+  };
+  return this.save();
+};
+
+payrollSchema.methods.markAsApproved = function(approvedBy) {
+  this.status = 'Approved';
+  this.approvedBy = approvedBy;
+  this.approvedAt = new Date();
+  return this.save();
+};
+
+payrollSchema.methods.markAsRejected = function(rejectedBy, reason = '') {
+  this.status = 'Rejected';
+  this.rejectedBy = rejectedBy;
+  this.rejectedAt = new Date();
+  this.rejectionReason = reason;
+  return this.save();
+};
+
+payrollSchema.methods.softDelete = function(deletedBy) {
+  this.isDeleted = true;
+  this.deletedAt = new Date();
+  this.deletedBy = deletedBy;
+  return this.save();
+};
+
+payrollSchema.methods.getPayrollSlipData = function() {
+  return {
+    employee: {
+      name: this.employeeName,
+      id: this.employeeId,
+      department: this.department,
+      designation: this.designation
+    },
+    period: {
+      start: this.periodStart,
+      end: this.periodEnd,
+      month: this.monthName,
+      year: this.year,
+      calculationBasis: this.salaryDetails.calculationBasis
+    },
+    salary: {
+      monthly: this.salaryDetails.monthlySalary,
+      daily: this.salaryDetails.dailyRate,
+      hourly: this.salaryDetails.hourlyRate,
+      overtimeRate: this.salaryDetails.overtimeRate
+    },
+    attendance: this.attendance,
+    monthInfo: this.monthInfo,
+    earnings: this.earnings,
+    deductions: this.deductions,
+    summary: this.summary,
+    status: this.status,
+    payment: this.payment,
+    calculationNotes: this.calculationNotes,
+    metadata: {
+      generatedDate: this.createdAt,
+      calculationMethod: this.calculation.method,
+      fixed23Days: this.metadata.fixed23Days,
+      version: this.metadata.version
+    }
+  };
+};
+
+const Payroll = mongoose.model('Payroll', payrollSchema);
+module.exports = Payroll;
