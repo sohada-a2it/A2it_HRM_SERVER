@@ -17,6 +17,7 @@ const OfficeRentController = require('../controller/officeController');
 const billController = require('../controller/utilityBillsController');  
 const officeSupplyController = require('../controller/officeSupplyController');  
 const foodCostController = require('../controller/foodCostController');  
+const softwareSubscriptionController = require('../controller/softwareSubscriptionController');
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -468,5 +469,14 @@ router.put('/update-food-costs/:id', protect, foodCostController.updateFoodCost)
 router.delete('/delete-food-costs/:id', protect, foodCostController.deleteFoodCost); 
 router.get('/food-costs/month/:year/:month',protect, foodCostController.getFoodCostsByMonth); 
 router.get('/food-costs/stats', protect, foodCostController.getFoodCostStats); 
-router.get('/food-costs/check-date', protect, foodCostController.checkDateExists);
+router.get('/food-costs/check-date', protect, foodCostController.checkDateExists); 
+
+ 
+// =============== FSoftware Subscription ROUTES ===============   
+router.get('/software-subscriptions',adminOnly, softwareSubscriptionController.getAllSubscriptions); 
+router.post('/add-software-subscriptions',adminOnly, softwareSubscriptionController.createSubscriptions); 
+router.put('/update-software-subscriptions/:id', adminOnly, softwareSubscriptionController.updateSubscription); 
+router.delete('/delete-software-subscriptions/:id',adminOnly, softwareSubscriptionController.deleteSubscription); 
+router.get('/software-subscriptions-stats', adminOnly, softwareSubscriptionController.getSubscriptionStats); 
+router.post('/software-subscription-migrate-duration',adminOnly, softwareSubscriptionController.migrateDuration); 
 module.exports = router;  
