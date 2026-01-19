@@ -580,8 +580,7 @@ exports.createPayroll = async (req, res) => {
       status: 'fail',
       message: error.message
     });
-  }
-  notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (Basic pay = Monthly salary + deductions based on attendance)`
+  } 
 };
 
 // 3. Get All Payrolls
