@@ -206,15 +206,19 @@ const userSchema = new mongoose.Schema(
       default: ''
     },
 
-    // Shift Management
+ // Shift Management
     shiftTiming: {
       defaultShift: {
         start: { type: String, default: '09:00' },
-        end: { type: String, default: '18:00' }
+        end: { type: String, default: '18:00' },
+        lateThreshold: { type: Number, default: 5 }, // 5 minutes allowed
+        earlyThreshold: { type: Number, default: 1 } // 1 minute early allowed
       },
       assignedShift: {
         start: { type: String, default: '' },
         end: { type: String, default: '' },
+        lateThreshold: { type: Number, default: 5 },
+        earlyThreshold: { type: Number, default: 1 },
         assignedBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User',
@@ -227,6 +231,8 @@ const userSchema = new mongoose.Schema(
       shiftHistory: [{
         start: String,
         end: String,
+        lateThreshold: { type: Number, default: 5 },
+        earlyThreshold: { type: Number, default: 1 },
         assignedBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'User'
@@ -243,6 +249,26 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ['morning', 'evening', 'night', 'flexible'],
       default: 'morning'
+    },
+
+    // Late & Early Settings
+    attendanceSettings: {
+      maxLateAllowed: { type: Number, default: 15 }, // ম্যাক্সিমাম কত মিনিট লেট হতে পারে
+      maxEarlyClockIn: { type: Number, default: 60 }, // শিফট শুরুর কত মিনিট আগে ক্লক ইন করা যাবে
+      autoLateAfter: { type: Number, default: 5 }, // কত মিনিট পর লেট ধরা হবে
+      autoEarlyBefore: { type: Number, default: 1 }, // কত মিনিট আগে এর্লি ধরা হবে
+      allowEarlyClockOut: { type: Boolean, default: false }, // আগে ক্লক আউট করা যাবে কিনা
+      gracePeriod: { type: Number, default: 2 } // গ্রেস পিরিয়ড (মিনিট)
+    },
+
+    // Attendance Stats
+    attendanceStats: {
+      totalLateCount: { type: Number, default: 0 },
+      totalEarlyCount: { type: Number, default: 0 },
+      averageLateMinutes: { type: Number, default: 0 },
+      averageEarlyMinutes: { type: Number, default: 0 },
+      lastLateDate: { type: Date, default: null },
+      lastEarlyDate: { type: Date, default: null }
     },
 
     // Login Stats

@@ -367,7 +367,7 @@ router.get('/payroll/all', protect, adminOnly, payrollController.getAllPayrolls)
 router.get('/payroll/:id', protect, payrollController.getPayrollById); 
 router.put('/update-payroll/:id/status', protect, adminOnly, payrollController.updatePayrollStatus); 
 router.delete('/delete-payroll/:id', protect, adminOnly, payrollController.deletePayroll); 
-router.get('/employee/:employeeId', protect, payrollController.getEmployeePayrolls); 
+router.get('/employee/:userId', protect, payrollController.getEmployeePayrolls); 
 router.post('/payroll/bulk-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); 
 router.get('/payroll/stats/monthly', protect, adminOnly, payrollController.getPayrollStats); 
 router.get('/payroll/export/monthly', protect, adminOnly, payrollController.exportPayrolls); 
