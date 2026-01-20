@@ -1557,6 +1557,7 @@ exports.adminUpdateUser = async (req, res) => {
       status: existingUser.status,
       isActive: existingUser.isActive,
       role: existingUser.role,
+      workType: existingUser.workType, // ✅ workType add করুন
       // Admin fields
       companyName: existingUser.companyName,
       adminPosition: existingUser.adminPosition,
@@ -1578,7 +1579,7 @@ exports.adminUpdateUser = async (req, res) => {
     // Define allowed fields to update
     const updates = {};
 
-    // Common fields
+    // Common fields - এখানে workType যোগ করুন
     const commonFields = [
       "firstName",
       "lastName",
@@ -1590,6 +1591,7 @@ exports.adminUpdateUser = async (req, res) => {
       "picture",
       "status",
       "isActive",
+      "workType", // ✅ workType যোগ করুন
       // Salary fields
       "salaryType",
       "rate",
@@ -1639,6 +1641,16 @@ exports.adminUpdateUser = async (req, res) => {
     // Add common fields to updates
     commonFields.forEach(field => {
       if (req.body[field] !== undefined) {
+        // workType এর জন্য validation
+        if (field === 'workType' && req.body.workType) {
+          const validWorkTypes = ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary', 'remote'];
+          if (!validWorkTypes.includes(req.body.workType)) {
+            return res.status(400).json({
+              success: false,
+              message: `Invalid workType. Must be one of: ${validWorkTypes.join(', ')}`
+            });
+          }
+        }
         updates[field] = req.body[field];
       }
     });
@@ -1698,8 +1710,9 @@ exports.adminUpdateUser = async (req, res) => {
     }
 
     console.log('✅ User updated successfully:', updatedUser.email);
+    console.log('Updated workType:', updatedUser.workType); // ✅ workType দেখান
 
-    // ✅ AuditLog
+    // ✅ AuditLog - এখানে workType যোগ করুন
     await AuditLog.create({
       userId: req.user._id,
       action: "Updated User",
@@ -1717,6 +1730,7 @@ exports.adminUpdateUser = async (req, res) => {
           status: updatedUser.status,
           isActive: updatedUser.isActive,
           role: updatedUser.role,
+          workType: updatedUser.workType, // ✅ newData-তে যোগ করুন
           companyName: updatedUser.companyName,
           adminPosition: updatedUser.adminPosition,
           adminLevel: updatedUser.adminLevel,
@@ -1745,7 +1759,8 @@ exports.adminUpdateUser = async (req, res) => {
       target: updatedUser._id,
       details: {
         email: updatedUser.email,
-        updatedFields: Object.keys(updates)
+        updatedFields: Object.keys(updates),
+        workType: updatedUser.workType // ✅ session activity-তেও যোগ করুন
       }
     });
 
