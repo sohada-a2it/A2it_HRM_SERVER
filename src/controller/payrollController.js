@@ -4,6 +4,7 @@ const Attendance = require('../models/AttendanceModel');
 const Leave = require('../models/LeaveModel');
 const Holiday = require('../models/HolidayModel');
 const OfficeSchedule = require('../models/OfficeScheduleModel');
+const foodCost = require('../models/foodCostModel'); 
 
 // ========== HELPER FUNCTIONS ==========
 // Helper function for currency formatting

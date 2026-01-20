@@ -131,11 +131,45 @@ const userSchema = new mongoose.Schema(
       routingNumber: { type: String, default: '' }
     },
     
-    // Contract Details
-    contractType: {
+     // ============ WORK TYPE FIELDS ============
+    workLocationType: {
       type: String,
-      enum: ['Permanent', 'Contractual', 'Probation', 'Part-time', 'Intern'],
-      default: 'Permanent'
+      enum: ['onsite', 'remote', 'hybrid'],
+      default: 'onsite'
+    },
+    workArrangement: {
+      type: String,
+      enum: ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'],
+      default: 'full-time'
+    },
+    
+    // ============ MEAL/FOOD ALLOWANCE FIELDS ============
+    mealEligibility: {
+      type: Boolean,
+      default: false
+    }, 
+    dailyFoodCost: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    hasRequestedMeal: {
+      type: Boolean,
+      default: false
+    },
+    mealRequestDate: {
+      type: Date
+    },
+    mealRequestApproved: {
+      type: Boolean,
+      default: false
+    },
+    mealApprovedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    mealApprovedAt: {
+      type: Date
     },
 
     // ============ ADMIN-SPECIFIC FIELDS ============
