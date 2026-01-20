@@ -51,17 +51,6 @@ const userSchema = new mongoose.Schema(
     designation: { type: String, default: '' },
     phone: { type: String, default: '' },
 
-        // Work Type (কাজের ধরন)
-  workLocationType: {
-    type: String,
-    enum: ['onsite', 'remote', 'hybrid'],
-    default: 'onsite'
-  },
-  workArrangement: {
-    type: String,
-    enum: ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'],
-    default: 'full-time'
-  },
     // Employee ID - শুধুমাত্র String (ObjectId নয়)
     employeeId: { 
       type: String, 
@@ -131,17 +120,17 @@ const userSchema = new mongoose.Schema(
       routingNumber: { type: String, default: '' }
     },
     
-     // ============ WORK TYPE FIELDS ============
-    workLocationType: {
-      type: String,
-      enum: ['onsite', 'remote', 'hybrid'],
-      default: 'onsite'
-    },
-    workArrangement: {
-      type: String,
-      enum: ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'],
-      default: 'full-time'
-    },
+     // ============ WORK TYPE FIELDS ============ 
+  workLocationType: {
+    type: String,
+    enum: ['onsite', 'remote', 'hybrid'],
+    default: 'onsite'
+  },
+  workArrangement: {
+    type: String,
+    enum: ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'],
+    default: 'full-time'
+  },
     
     // ============ MEAL/FOOD ALLOWANCE FIELDS ============
     mealEligibility: {
