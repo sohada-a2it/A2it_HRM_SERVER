@@ -998,6 +998,9 @@ exports.createUser = async (req, res) => {
       basicSalary,
       salary,
       joiningDate,
+      // ============ WORK TYPE FIELDS ============
+      workLocationType,
+      workArrangement,
       // ============ EMPLOYEE & MODERATOR SPECIFIC ============
       contractType,
       bankDetails,
@@ -1027,6 +1030,8 @@ exports.createUser = async (req, res) => {
     console.log('📝 Creating user with data:', {
       email,
       role,
+      workLocationType: workLocationType || 'Not provided',
+      workArrangement: workArrangement || 'Not provided',
       contractType: contractType || 'Not provided',
       hasBankDetails: !!bankDetails
     });
@@ -1040,6 +1045,22 @@ exports.createUser = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Missing required fields: ${missingFields.join(', ')}`
+      });
+    }
+
+    // Validate workLocationType
+    if (workLocationType && !['onsite', 'remote', 'hybrid'].includes(workLocationType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid workLocationType. Must be 'onsite', 'remote', or 'hybrid'"
+      });
+    }
+
+    // Validate workArrangement
+    if (workArrangement && !['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'].includes(workArrangement)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid workArrangement. Must be 'full-time', 'part-time', 'contractual', 'freelance', 'internship', or 'temporary'"
       });
     }
 
@@ -1082,7 +1103,10 @@ exports.createUser = async (req, res) => {
       rate: rate || 0,
       basicSalary: basicSalary || 0,
       salary: salary || 0,
-      joiningDate: joiningDate ? new Date(joiningDate) : new Date()
+      joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
+      // ============ WORK TYPE FIELDS ============
+      workLocationType: workLocationType || (role === 'admin' ? 'onsite' : 'onsite'),
+      workArrangement: workArrangement || (role === 'admin' ? 'full-time' : 'full-time')
     };
 
     // Helper function for default designation
@@ -1284,6 +1308,8 @@ exports.createUser = async (req, res) => {
       email: userData.email,
       role: userData.role,
       employeeId: userData.employeeId,
+      workLocationType: userData.workLocationType,
+      workArrangement: userData.workArrangement,
       contractType: userData.contractType || 'Not applicable',
       hasBankDetails: !!userData.bankDetails
     });
@@ -1297,6 +1323,8 @@ exports.createUser = async (req, res) => {
       email: newUser.email,
       role: newUser.role,
       employeeId: newUser.employeeId,
+      workLocationType: newUser.workLocationType,
+      workArrangement: newUser.workArrangement,
       contractType: newUser.contractType || 'N/A',
       hasBankDetails: !!newUser.bankDetails
     });
@@ -1304,6 +1332,9 @@ exports.createUser = async (req, res) => {
     // Remove password from response
     const userResponse = newUser.toObject();
     delete userResponse.password;
+
+    // Add display work type for frontend
+    userResponse.workTypeDisplay = `${userResponse.workArrangement} • ${userResponse.workLocationType}`;
 
     // Prepare response message based on role
     let message = "User created successfully";
@@ -1557,7 +1588,9 @@ exports.adminUpdateUser = async (req, res) => {
       status: existingUser.status,
       isActive: existingUser.isActive,
       role: existingUser.role,
-      workType: existingUser.workType, // ✅ workType add করুন
+      // ✅ WORK TYPE FIELDS
+      workLocationType: existingUser.workLocationType,
+      workArrangement: existingUser.workArrangement,
       // Admin fields
       companyName: existingUser.companyName,
       adminPosition: existingUser.adminPosition,
@@ -1579,7 +1612,7 @@ exports.adminUpdateUser = async (req, res) => {
     // Define allowed fields to update
     const updates = {};
 
-    // Common fields - এখানে workType যোগ করুন
+    // Common fields - এখানে workLocationType এবং workArrangement যোগ করুন
     const commonFields = [
       "firstName",
       "lastName",
@@ -1591,7 +1624,9 @@ exports.adminUpdateUser = async (req, res) => {
       "picture",
       "status",
       "isActive",
-      "workType", // ✅ workType যোগ করুন
+      // ✅ WORK TYPE FIELDS
+      "workLocationType",
+      "workArrangement",
       // Salary fields
       "salaryType",
       "rate",
@@ -1641,16 +1676,28 @@ exports.adminUpdateUser = async (req, res) => {
     // Add common fields to updates
     commonFields.forEach(field => {
       if (req.body[field] !== undefined) {
-        // workType এর জন্য validation
-        if (field === 'workType' && req.body.workType) {
-          const validWorkTypes = ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary', 'remote'];
-          if (!validWorkTypes.includes(req.body.workType)) {
+        // workLocationType এর জন্য validation
+        if (field === 'workLocationType' && req.body.workLocationType) {
+          const validWorkLocationTypes = ['onsite', 'remote', 'hybrid'];
+          if (!validWorkLocationTypes.includes(req.body.workLocationType)) {
             return res.status(400).json({
               success: false,
-              message: `Invalid workType. Must be one of: ${validWorkTypes.join(', ')}`
+              message: `Invalid workLocationType. Must be one of: ${validWorkLocationTypes.join(', ')}`
             });
           }
         }
+        
+        // workArrangement এর জন্য validation
+        if (field === 'workArrangement' && req.body.workArrangement) {
+          const validWorkArrangements = ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'];
+          if (!validWorkArrangements.includes(req.body.workArrangement)) {
+            return res.status(400).json({
+              success: false,
+              message: `Invalid workArrangement. Must be one of: ${validWorkArrangements.join(', ')}`
+            });
+          }
+        }
+        
         updates[field] = req.body[field];
       }
     });
@@ -1710,9 +1757,10 @@ exports.adminUpdateUser = async (req, res) => {
     }
 
     console.log('✅ User updated successfully:', updatedUser.email);
-    console.log('Updated workType:', updatedUser.workType); // ✅ workType দেখান
+    console.log('Updated workLocationType:', updatedUser.workLocationType);
+    console.log('Updated workArrangement:', updatedUser.workArrangement);
 
-    // ✅ AuditLog - এখানে workType যোগ করুন
+    // ✅ AuditLog - এখানে workType fields যোগ করুন
     await AuditLog.create({
       userId: req.user._id,
       action: "Updated User",
@@ -1730,7 +1778,10 @@ exports.adminUpdateUser = async (req, res) => {
           status: updatedUser.status,
           isActive: updatedUser.isActive,
           role: updatedUser.role,
-          workType: updatedUser.workType, // ✅ newData-তে যোগ করুন
+          // ✅ WORK TYPE FIELDS
+          workLocationType: updatedUser.workLocationType,
+          workArrangement: updatedUser.workArrangement,
+          workTypeDisplay: `${updatedUser.workArrangement} • ${updatedUser.workLocationType}`,
           companyName: updatedUser.companyName,
           adminPosition: updatedUser.adminPosition,
           adminLevel: updatedUser.adminLevel,
@@ -1760,7 +1811,8 @@ exports.adminUpdateUser = async (req, res) => {
       details: {
         email: updatedUser.email,
         updatedFields: Object.keys(updates),
-        workType: updatedUser.workType // ✅ session activity-তেও যোগ করুন
+        workLocationType: updatedUser.workLocationType,
+        workArrangement: updatedUser.workArrangement
       }
     });
 
@@ -1769,7 +1821,9 @@ exports.adminUpdateUser = async (req, res) => {
       message: "User updated successfully",
       user: {
         ...updatedUser.toObject(),
-        fullName: `${updatedUser.firstName} ${updatedUser.lastName}`
+        fullName: `${updatedUser.firstName} ${updatedUser.lastName}`,
+        // ✅ Add workTypeDisplay for frontend
+        workTypeDisplay: `${updatedUser.workArrangement} • ${updatedUser.workLocationType}`
       }
     });
   } catch (err) {
