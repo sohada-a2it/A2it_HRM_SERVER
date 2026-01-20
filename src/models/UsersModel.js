@@ -51,6 +51,12 @@ const userSchema = new mongoose.Schema(
     designation: { type: String, default: '' },
     phone: { type: String, default: '' },
 
+        // Work Type (কাজের ধরন)
+    workType: {
+      type: String,
+      enum: ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary', 'remote'],
+      default: 'full-time'
+    },
     // Employee ID - শুধুমাত্র String (ObjectId নয়)
     employeeId: { 
       type: String, 

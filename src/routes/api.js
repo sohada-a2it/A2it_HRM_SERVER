@@ -23,6 +23,8 @@ const miscellaneousExpense = require('../controller/miscellaneousController');
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
+
+
 // =================== Login Routes ====================
 // router.post("/admin/login", userController.adminLogin);  
 // router.post("/users/userLogin", userController.userLogin);  
@@ -37,15 +39,11 @@ router.put("/admin/update-user/:id", protect, adminOnly, userController.adminUpd
 router.delete("/admin/user-delete/:id", protect, adminOnly, userController.deleteUser);   
 router.get('/my-sessions', protect, userController.getAllSessions);
 router.delete('/terminate-session/:id', protect, userController.terminateSession);
-router.post('/logout-all', protect, userController.logoutAllSessions); 
-// Admin get user by ID
-router.get('/profile/:id', protect, adminOnly, userController.getUserById);
-
-// Admin search users
-router.get('/admin/users/search', protect, adminOnly, userController.searchUsers);
-
-// Admin get user summary
+router.post('/logout-all', protect, userController.logoutAllSessions);  
+router.get('/profile/:id', protect, adminOnly, userController.getUserById); 
+router.get('/admin/users/search', protect, adminOnly, userController.searchUsers); 
 router.get('/admin/users/:id/summary', protect, adminOnly, userController.getUserSummary);
+
 // =================== OTP Routes ====================
 router.post('/admin/request-otp', authController.AdminRequestOtp);
 router.post('/admin/verify-otp', authController.AdminVerifyOtp);
@@ -61,18 +59,9 @@ router.post("/users/updateProfile", protect, userController.updateProfile);
 router.put("/users/updateProfile", protect, userController.updateProfile);     
 
 // =================== ProfileImage Routes ==================== 
-router.post(
-  '/upload-profile-picture',
-  protect,
-  upload.single('profilePicture'),
-  profileController.uploadProfilePicture
-);
+router.post('/upload-profile-picture',protect,upload.single('profilePicture'),profileController.uploadProfilePicture);
 
-router.delete(
-  '/remove-profile-picture',
-  protect,
-  profileController.removeProfilePicture
-);
+router.delete('/remove-profile-picture',protect,profileController.removeProfilePicture);
 
 // routes/admin.js
 router.post('/send-welcome-email', async (req, res) => {
@@ -367,14 +356,14 @@ router.get('/payroll/all', protect, adminOnly, payrollController.getAllPayrolls)
 router.get('/payroll/:id', protect, payrollController.getPayrollById); 
 router.put('/update-payroll/:id/status', protect, adminOnly, payrollController.updatePayrollStatus); 
 router.delete('/delete-payroll/:id', protect, adminOnly, payrollController.deletePayroll); 
-router.get('/payroll/employee/:userId', protect, adminOnly, payrollController.getEmployeePayrolls); // ADMIN-এর জন্য
+router.get('/payroll/employee/:userId', protect, adminOnly, payrollController.getEmployeePayrolls); 
 router.post('/payroll/bulk-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); 
 router.get('/payroll/stats/monthly', protect, adminOnly, payrollController.getPayrollStats); 
 router.get('/payroll/export/monthly', protect, adminOnly, payrollController.exportPayrolls); 
 router.put('/payroll/:id/manual-inputs', protect, adminOnly, payrollController.updateManualInputs); 
 router.get('/payroll/overtime/manual-only', protect, adminOnly, payrollController.getPayrollWithManualOvertime); 
 router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll);  
-router.get('/my-payrolls', protect, payrollController.getMyPayrolls); // For current logged in employee - এটা আলাদা রাখুন
+router.get('/my-payrolls', protect, payrollController.getMyPayrolls); 
 
 
 // =================== SalaryRule Routes ==================== 
