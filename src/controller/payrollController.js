@@ -779,21 +779,91 @@ exports.deletePayroll = async (req, res) => {
   }
 };
 
-// 7. Get Employee Payrolls
+// payrollController.js-এ
+
+// 7A. Get Employee Payrolls (Admin/HR দেখার জন্য)
 exports.getEmployeePayrolls = async (req, res) => {
   try {
-    // Get employeeId from params OR from authenticated user
-    let employeeId = req.params.employeeId;
-    
-    // If user is not admin and trying to access other employee's data, restrict
-    if (req.user.role !== 'admin' && req.user.role !== 'hr') {
-      // Non-admin users can only view their own payrolls
-      employeeId = req.user._id;
-    }
-    
+    const { userId } = req.params; // URL থেকে employeeId নিচ্ছে
     const { year } = req.query;
     
+    // Check if user is admin/hr
+    if (req.user.role !== 'admin' && req.user.role !== 'hr') {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'You do not have permission to view other employee payrolls'
+      });
+    }
+    
     // Build query
+    const query = { 
+      employee: userId 
+    };
+    
+    if (year && !isNaN(year)) {
+      query.year = parseInt(year);
+    }
+    
+    // Get payrolls
+    const payrolls = await Payroll.find(query)
+      .populate('employee', 'firstName lastName email phone department designation')
+      .populate('createdBy', 'firstName lastName')
+      .sort({ year: -1, month: -1, createdAt: -1 });
+    
+    // Get employee details
+    const employee = await User.findById(userId)
+      .select('firstName lastName employeeId department designation');
+    
+    // Calculate summary
+    const summary = {
+      totalRecords: payrolls.length,
+      totalNetPayable: payrolls.reduce((sum, p) => sum + (p.summary?.netPayable || 0), 0),
+      totalEarnings: payrolls.reduce((sum, p) => sum + (p.summary?.grossEarnings || 0), 0),
+      totalDeductions: payrolls.reduce((sum, p) => sum + (p.deductions?.total || 0), 0),
+      byStatus: payrolls.reduce((acc, p) => {
+        acc[p.status] = (acc[p.status] || 0) + 1;
+        return acc;
+      }, {}),
+      byMonth: payrolls.map(p => ({
+        month: p.month,
+        monthName: new Date(p.year, p.month - 1, 1).toLocaleDateString('en-US', { month: 'short' }),
+        year: p.year,
+        netPayable: p.summary?.netPayable || 0,
+        status: p.status
+      }))
+    };
+    
+    res.status(200).json({
+      status: 'success',
+      data: {
+        employee: employee ? {
+          id: employee._id,
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department,
+          designation: employee.designation
+        } : null,
+        payrolls,
+        summary
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get employee payrolls error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
+
+// 7B. Get My Payrolls (Employee নিজের দেখার জন্য)
+exports.getMyPayrolls = async (req, res) => {
+  try {
+    const { year } = req.query;
+    const employeeId = req.user._id; // Logged in user's ID
+    
+    // Build query - employee নিজের ID
     const query = { 
       employee: employeeId 
     };
@@ -802,7 +872,7 @@ exports.getEmployeePayrolls = async (req, res) => {
       query.year = parseInt(year);
     }
     
-    // Get payrolls
+    // Get payrolls - শুধু নিজের payroll
     const payrolls = await Payroll.find(query)
       .populate('employee', 'firstName lastName email phone department designation')
       .populate('createdBy', 'firstName lastName')
@@ -830,13 +900,20 @@ exports.getEmployeePayrolls = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: {
+        employee: {
+          id: req.user._id,
+          name: `${req.user.firstName} ${req.user.lastName}`,
+          employeeId: req.user.employeeId,
+          department: req.user.department,
+          designation: req.user.designation
+        },
         payrolls,
         summary
       }
     });
     
   } catch (error) {
-    console.error('Get employee payrolls error:', error);
+    console.error('Get my payrolls error:', error);
     res.status(500).json({
       status: 'fail',
       message: error.message

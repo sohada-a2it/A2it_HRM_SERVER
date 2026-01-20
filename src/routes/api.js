@@ -374,7 +374,7 @@ router.get('/payroll/export/monthly', protect, adminOnly, payrollController.expo
 router.put('/payroll/:id/manual-inputs', protect, adminOnly, payrollController.updateManualInputs); 
 router.get('/payroll/overtime/manual-only', protect, adminOnly, payrollController.getPayrollWithManualOvertime); 
 router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll);  
-router.get('/my-payrolls', protect, payrollController.getEmployeePayrolls); // For current logged in employee 
+router.get('/my-payrolls', protect, payrollController.getMyPayrolls); // For current logged in employee 
 
 
 // =================== SalaryRule Routes ==================== 
