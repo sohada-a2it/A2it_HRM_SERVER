@@ -360,21 +360,21 @@ router.put('/updateHoliday/:id', protect, adminOnly, holidayController.updateHol
 router.delete('/deleteHoliday/:id', protect, adminOnly, holidayController.deleteHoliday);
 router.post('/import', protect, adminOnly, holidayController.importHolidays);
 
-  // ====================Payroll Routes(Admin Only) ====================  
+// ====================Payroll Routes(Admin Only) ====================  
 router.post('/payroll/calculate', protect, adminOnly, payrollController.calculatePayroll); 
 router.post('/payroll/create', protect, adminOnly, payrollController.createPayroll); 
 router.get('/payroll/all', protect, adminOnly, payrollController.getAllPayrolls); 
 router.get('/payroll/:id', protect, payrollController.getPayrollById); 
 router.put('/update-payroll/:id/status', protect, adminOnly, payrollController.updatePayrollStatus); 
 router.delete('/delete-payroll/:id', protect, adminOnly, payrollController.deletePayroll); 
-router.get('/employee/:userId', protect, payrollController.getEmployeePayrolls); 
+router.get('/payroll/employee/:userId', protect, adminOnly, payrollController.getEmployeePayrolls); // ADMIN-এর জন্য
 router.post('/payroll/bulk-generate', protect, adminOnly, payrollController.bulkGeneratePayrolls); 
 router.get('/payroll/stats/monthly', protect, adminOnly, payrollController.getPayrollStats); 
 router.get('/payroll/export/monthly', protect, adminOnly, payrollController.exportPayrolls); 
 router.put('/payroll/:id/manual-inputs', protect, adminOnly, payrollController.updateManualInputs); 
 router.get('/payroll/overtime/manual-only', protect, adminOnly, payrollController.getPayrollWithManualOvertime); 
 router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll);  
-router.get('/my-payrolls', protect, payrollController.getMyPayrolls); // For current logged in employee 
+router.get('/my-payrolls', protect, payrollController.getMyPayrolls); // For current logged in employee - এটা আলাদা রাখুন
 
 
 // =================== SalaryRule Routes ==================== 
