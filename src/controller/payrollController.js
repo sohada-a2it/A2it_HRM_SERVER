@@ -782,22 +782,56 @@ exports.deletePayroll = async (req, res) => {
 // 7. Get Employee Payrolls
 exports.getEmployeePayrolls = async (req, res) => {
   try {
-    const { employeeId } = req.params;
+    // Get employeeId from params OR from authenticated user
+    let employeeId = req.params.employeeId;
+    
+    // If user is not admin and trying to access other employee's data, restrict
+    if (req.user.role !== 'admin' && req.user.role !== 'hr') {
+      // Non-admin users can only view their own payrolls
+      employeeId = req.user._id;
+    }
+    
     const { year } = req.query;
     
-    const payrolls = await Payroll.findByEmployee(employeeId, year ? parseInt(year) : null);
+    // Build query
+    const query = { 
+      employee: employeeId 
+    };
     
-    // Get yearly summary if year is specified
-    let yearlySummary = null;
-    if (year) {
-      yearlySummary = await Payroll.getEmployeeYearlySummary(employeeId, parseInt(year));
+    if (year && !isNaN(year)) {
+      query.year = parseInt(year);
     }
+    
+    // Get payrolls
+    const payrolls = await Payroll.find(query)
+      .populate('employee', 'firstName lastName email phone department designation')
+      .populate('createdBy', 'firstName lastName')
+      .sort({ year: -1, month: -1, createdAt: -1 });
+    
+    // Calculate summary
+    const summary = {
+      totalRecords: payrolls.length,
+      totalNetPayable: payrolls.reduce((sum, p) => sum + (p.summary?.netPayable || 0), 0),
+      totalEarnings: payrolls.reduce((sum, p) => sum + (p.summary?.grossEarnings || 0), 0),
+      totalDeductions: payrolls.reduce((sum, p) => sum + (p.deductions?.total || 0), 0),
+      byStatus: payrolls.reduce((acc, p) => {
+        acc[p.status] = (acc[p.status] || 0) + 1;
+        return acc;
+      }, {}),
+      byMonth: payrolls.map(p => ({
+        month: p.month,
+        monthName: new Date(p.year, p.month - 1, 1).toLocaleDateString('en-US', { month: 'short' }),
+        year: p.year,
+        netPayable: p.summary?.netPayable || 0,
+        status: p.status
+      }))
+    };
     
     res.status(200).json({
       status: 'success',
       data: {
         payrolls,
-        summary: yearlySummary
+        summary
       }
     });
     
