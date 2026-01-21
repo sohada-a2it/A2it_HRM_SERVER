@@ -232,83 +232,39 @@ router.post('/send-welcome-email', async (req, res) => {
     }
 });
 
-// ===================== EMPLOYEE ROUTES (Require authentication) ===================== 
-router.get('/today', protect, attendanceController.getTodayStatus); 
-router.post('/clock-in', protect, attendanceController.clockIn); 
-router.post('/clock-out', protect, attendanceController.clockOut); 
-router.get('/records', protect, attendanceController.getAttendanceRecords); 
-router.get('/records/:id', protect, attendanceController.getAttendanceById); 
-router.get('/summary', protect, attendanceController.getUserSummary); 
-router.get('/range', protect, attendanceController.getAttendanceByDateRange); 
-router.get('/shift-timing', protect, attendanceController.getEmployeeShiftTiming); 
-router.get('/employee-attendance', protect, attendanceController.getEmployeeAttendanceWithShift); 
-router.get('/late-statistics', protect, attendanceController.getLateStatistics); 
+// ===================== ENHANCED ROUTES =====================
+
+// Employee Routes
+router.get('/today-status', protect, attendanceController.getTodayStatus);
+router.get('/records', protect, attendanceController.getAttendanceRecords);
+router.get('/summary', protect, attendanceController.getAttendanceSummary);
+router.get('/late-statistics', protect, attendanceController.getLateStatistics);
+router.get('/late-early-statistics', protect, attendanceController.getLateEarlyStatistics);
+router.get('/shift-timing', protect, attendanceController.getShiftTiming);
 router.get('/export', protect, attendanceController.exportAttendanceData);
+router.get('/check-working-day', protect, attendanceController.checkWorkingDay);
+router.post('/clock-in', protect, attendanceController.clockIn);
+router.post('/clock-out', protect, attendanceController.clockOut);
 
-// ===================== ADMIN ROUTES (Require admin privileges) ===================== 
-router.get('/admin/all-records', protect, adminOnly, attendanceController.getAllAttendanceRecords); 
-router.get('/admin/summary', protect, adminOnly, attendanceController.getAllAttendanceSummary); 
-router.put('/admin/correct/:id', protect, adminOnly, attendanceController.adminCorrectAttendance); 
-router.put('/admin/update-shift', protect, adminOnly, attendanceController.updateEmployeeShiftTiming); 
-router.post('/admin/create-attendance', protect, adminOnly, attendanceController.createManualAttendance); 
-router.post('/admin/bulk-attendance', protect, adminOnly, attendanceController.createBulkAttendance); 
-router.post('/admin/trigger-auto-clockout', protect, adminOnly, attendanceController.triggerAutoClockOut); 
-router.get('/admin/late-statistics', protect, adminOnly, attendanceController.getLateStatistics); 
-router.get('/admin/employee-attendance', protect, adminOnly, attendanceController.getEmployeeAttendanceWithShift); 
-router.get('/admin/employee-shift-timing', protect, adminOnly, attendanceController.getEmployeeShiftTiming); 
-router.get('/admin/export', protect, adminOnly, attendanceController.exportAttendanceData);
+// Admin Routes
+router.get('/admin/all-records', protect, adminOnly, attendanceController.getAllAttendanceRecords);
+router.get('/admin/summary', protect, adminOnly, attendanceController.getDashboardStats);
+router.get('/admin/late-statistics', protect, adminOnly, attendanceController.getAdminLateStatistics);
+router.get('/admin/late-early-statistics', protect, adminOnly, attendanceController.getAdminLateEarlyStatistics);
+router.get('/admin/employee-attendance', protect, adminOnly, attendanceController.getAdminEmployeeAttendance);
+router.get('/admin/shift-timing', protect, adminOnly, attendanceController.getAdminShiftTiming);
+router.get('/admin/export', protect, adminOnly, attendanceController.exportAdminAttendanceData);
+router.get('/admin/employee-shift-timing', protect, adminOnly, attendanceController.getAdminShiftTiming);
+router.get('/admin/auto-clock-out-schedule', protect, adminOnly, attendanceController.getAutoClockOutSchedule);
 
-// API Route to submit attendance
-router.post('/attendance/check-in', async (req, res) => {
-  try {
-    const { employeeId, checkInTime } = req.body;
-    
-    const checkInDate = new Date(checkInTime);
-    const hours = checkInDate.getHours();
-    const minutes = checkInDate.getMinutes();
-    
-    // Define 9:30 AM cutoff
-    const CUTOFF_HOUR = 9;
-    const CUTOFF_MINUTE = 30;
-    
-    let status = 'Present';
-    let isLate = false;
-    let lateDayCount = 0;
-    
-    // Check if late
-    if (hours > CUTOFF_HOUR || (hours === CUTOFF_HOUR && minutes > CUTOFF_MINUTE)) {
-      status = 'Late';
-      isLate = true;
-      lateDayCount = 1;
-      
-      // Calculate how many minutes late
-      const lateMinutes = ((hours - CUTOFF_HOUR) * 60) + (minutes - CUTOFF_MINUTE);
-      console.log(`Employee ${employeeId} is ${lateMinutes} minutes late`);
-    }
-    
-    const attendance = new Attendance({
-      employee: employeeId,
-      date: new Date().toISOString().split('T')[0],
-      checkIn: checkInTime,
-      status,
-      isLate,
-      lateMinutes: isLate ? lateMinutes : 0,
-      lateDayCount
-    });
-    
-    await attendance.save();
-    
-    res.status(201).json({
-      success: true,
-      message: `Attendance recorded: ${status}`,
-      data: attendance
-    });
-    
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
+// Admin Action Routes
+router.post('/admin/attendance/manual', protect, adminOnly, attendanceController.createManualAttendance);
+router.post('/admin/attendance/bulk', protect, adminOnly, attendanceController.createBulkAttendance);
+router.put('/admin/correct/:id', protect, adminOnly, attendanceController.correctAttendance);
+router.put('/admin/update-shift', protect, adminOnly, attendanceController.updateEmployeeShift);
+router.post('/admin/trigger-auto-clockout', protect, adminOnly, attendanceController.triggerAutoClockOut);
+router.post('/admin/trigger-absent-marking', protect, adminOnly, attendanceController.triggerAbsentMarking);
+router.post('/admin/trigger-tomorrow-records', protect, adminOnly, attendanceController.triggerTomorrowRecords);
 // All routes require authentication 
 
 // ================= Shift ROUTES ================= 

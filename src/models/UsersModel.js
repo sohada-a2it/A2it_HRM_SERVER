@@ -239,38 +239,48 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
-
-    // Shift Management
-    shiftTiming: {
-      defaultShift: {
-        start: { type: String, default: '09:00' },
-        end: { type: String, default: '18:00' }
-      },
-      assignedShift: {
-        start: { type: String, default: '' },
-        end: { type: String, default: '' },
-        assignedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
-          default: null
-        },
-        assignedAt: { type: Date, default: null },
-        effectiveDate: { type: Date, default: null },
-        isActive: { type: Boolean, default: false }
-      },
-      shiftHistory: [{
-        start: String,
-        end: String,
-        assignedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User'
-        },
-        assignedAt: Date,
-        effectiveDate: Date,
-        endedAt: Date,
-        reason: String
-      }]
+// models/UserModel.js - SHIFT TIMING SECTION UPDATE
+  shiftTiming: {
+    defaultShift: {
+      name: { type: String, default: 'Regular' },
+      start: { type: String, default: '09:00' },
+      end: { type: String, default: '18:00' },
+      lateThreshold: { type: Number, default: 5 },
+      earlyThreshold: { type: Number, default: -1 },
+      autoClockOutDelay: { type: Number, default: 10 }
     },
+    assignedShift: {
+      name: { type: String },
+      start: { type: String },
+      end: { type: String },
+      lateThreshold: { type: Number, default: 5 },
+      earlyThreshold: { type: Number, default: -1 },
+      autoClockOutDelay: { type: Number, default: 10 },
+      assignedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      assignedAt: { type: Date },
+      effectiveDate: { type: Date },
+      isActive: { type: Boolean, default: false }
+    },
+    shiftHistory: [{
+      name: { type: String },
+      start: { type: String },
+      end: { type: String },
+      lateThreshold: { type: Number },
+      earlyThreshold: { type: Number },
+      autoClockOutDelay: { type: Number },
+      assignedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      assignedAt: { type: Date },
+      effectiveDate: { type: Date },
+      endedAt: { type: Date },
+      reason: { type: String }
+    }]
+  },
 
     // Shift Preferences
     preferredShift: {
