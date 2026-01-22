@@ -15,82 +15,86 @@ const SessionLog = require('../models/SessionLogModel');
 const TIMEZONE = 'Asia/Dhaka';
 
 // ===================== Helper Functions =====================
-const parseDeviceInfo = (userAgent) => {
-  const parser = new UAParser(userAgent);
-  const uaResult = parser.getResult();
-  return {
-    type: uaResult.device.type || 'desktop',
-    os: uaResult.os.name || 'Unknown',
-    browser: uaResult.browser.name || 'Unknown',
-    userAgent
-  };
+// ===================== সার্ভার-সাইড Helper Functions =====================
+
+const parseTimeString = (timeStr) => {
+  if (!timeStr) return { hours: 0, minutes: 0 };
+  
+  // Handle both "HH:MM" format and Date object
+  if (typeof timeStr === 'string') {
+    const [hoursStr, minutesStr] = timeStr.split(':');
+    const hours = parseInt(hoursStr, 10) || 0;
+    const minutes = parseInt(minutesStr, 10) || 0;
+    return { hours, minutes };
+  }
+  
+  // If it's already a Date object
+  if (timeStr instanceof Date) {
+    return {
+      hours: timeStr.getHours(),
+      minutes: timeStr.getMinutes()
+    };
+  }
+  
+  return { hours: 0, minutes: 0 };
 };
 
 const timeToMinutes = (timeStr) => {
-  if (!timeStr) return 0;
-  const [hoursStr, minutesStr] = timeStr.split(':');
-  let hours = parseInt(hoursStr, 10);
-  const minutes = parseInt(minutesStr, 10);
-  
-  if (hours >= 24) {
-    const extraDays = Math.floor(hours / 24);
-    hours = hours % 24;
-  }
-  
+  const { hours, minutes } = parseTimeString(timeStr);
   return hours * 60 + minutes;
 };
 
-const addMinutesToTime = (timeStr, minutes) => {
-  const totalMinutes = timeToMinutes(timeStr) + minutes;
+const addMinutesToTime = (timeStr, minutesToAdd) => {
+  const { hours, minutes } = parseTimeString(timeStr);
+  const totalMinutes = hours * 60 + minutes + minutesToAdd;
   
-  if (totalMinutes >= 24 * 60) {
-    const nextDayMinutes = totalMinutes % (24 * 60);
-    const hours = Math.floor(nextDayMinutes / 60);
-    const mins = nextDayMinutes % 60;
-    return {
-      time: `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`,
-      isNextDay: true,
-      totalMinutes: totalMinutes
-    };
-  } else {
-    const hours = Math.floor(totalMinutes / 60);
-    const mins = totalMinutes % 60;
-    return {
-      time: `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`,
-      isNextDay: false,
-      totalMinutes: totalMinutes
-    };
+  let resultHours = Math.floor(totalMinutes / 60) % 24;
+  let resultMinutes = totalMinutes % 60;
+  const isNextDay = totalMinutes >= 24 * 60;
+  
+  // If it's next day, handle properly
+  if (isNextDay) {
+    resultHours = Math.floor(totalMinutes / 60) % 24;
   }
-};
-
-const formatTimeWithDayOffset = (baseDate, timeStr, dayOffset = 0) => {
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  const date = new Date(baseDate);
-  date.setDate(date.getDate() + dayOffset);
-  date.setHours(hours, minutes, 0, 0);
-  return date;
-};
-
-const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
-  const shiftStartTime = formatTimeWithDayOffset(clockInDateTime, employeeShift.start);
   
-  const shiftEndMinutes = timeToMinutes(employeeShift.end);
-  const shiftStartMinutes = timeToMinutes(employeeShift.start);
+  return {
+    time: `${resultHours.toString().padStart(2, '0')}:${resultMinutes.toString().padStart(2, '0')}`,
+    isNextDay,
+    totalMinutes: totalMinutes % (24 * 60)
+  };
+};
+
+// Improved checkLateEarlyForEmployee function
+const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
+  // Parse shift start time
+  const shiftStartTime = parseTimeString(employeeShift.start);
+  const clockInTime = parseTimeString(clockInDateTime);
+  
+  // Calculate shift start in minutes from midnight
+  const shiftStartMinutes = shiftStartTime.hours * 60 + shiftStartTime.minutes;
+  const clockInMinutes = clockInTime.hours * 60 + clockInTime.minutes;
+  
+  // Parse shift end time
+  const shiftEndTime = parseTimeString(employeeShift.end);
+  const shiftEndMinutes = shiftEndTime.hours * 60 + shiftEndTime.minutes;
+  
+  // Check if it's night shift (shift ends on next day)
   const isNightShift = shiftEndMinutes < shiftStartMinutes;
   
-  let adjustedClockInTime = new Date(clockInDateTime);
-  let adjustedShiftStartTime = new Date(shiftStartTime);
+  let adjustedClockInMinutes = clockInMinutes;
+  let adjustedShiftStartMinutes = shiftStartMinutes;
   
   if (isNightShift) {
-    const clockInMinutes = clockInDateTime.getHours() * 60 + clockInDateTime.getMinutes();
-    
+    // For night shift, adjust calculations
     if (clockInMinutes < shiftEndMinutes) {
-      adjustedClockInTime.setDate(adjustedClockInTime.getDate() + 1);
+      // Clock in is after midnight (next day)
+      adjustedClockInMinutes += 24 * 60;
     }
+    // Shift start is on previous day
+    adjustedShiftStartMinutes = shiftStartMinutes;
   }
   
-  const diffMs = adjustedClockInTime - adjustedShiftStartTime;
-  const difference = Math.floor(diffMs / (1000 * 60));
+  const difference = adjustedClockInMinutes - adjustedShiftStartMinutes;
   
   const lateThreshold = employeeShift.lateThreshold || 5;
   const earlyThreshold = employeeShift.earlyThreshold || -1;
@@ -114,6 +118,31 @@ const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
     isNightShift
   };
 };
+
+// Improved formatTimeWithDayOffset
+const formatTimeWithDayOffset = (baseDate, timeStr, dayOffset = 0) => {
+  const { hours, minutes } = parseTimeString(timeStr);
+  const date = new Date(baseDate);
+  date.setDate(date.getDate() + dayOffset);
+  date.setHours(hours, minutes, 0, 0);
+  
+  // Adjust for timezone
+  const timezoneOffset = date.getTimezoneOffset() * 60000;
+  const localDate = new Date(date.getTime() - timezoneOffset);
+  
+  return localDate;
+};
+const parseDeviceInfo = (userAgent) => {
+  const parser = new UAParser(userAgent);
+  const uaResult = parser.getResult();
+  return {
+    type: uaResult.device.type || 'desktop',
+    os: uaResult.os.name || 'Unknown',
+    browser: uaResult.browser.name || 'Unknown',
+    userAgent
+  };
+};
+ 
 
 const getEmployeeShiftDetails = async (employeeId, date) => {
   const today = new Date(date);
