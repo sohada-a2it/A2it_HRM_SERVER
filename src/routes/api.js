@@ -288,7 +288,97 @@ router.post('/admin/trigger-auto-clockout', protect, adminOnly, attendanceContro
 router.post('/admin/trigger-manual-auto-clockout', protect, adminOnly, attendanceController.triggerManualAutoClockOut);
 router.post('/admin/trigger-absent-marking', protect, adminOnly, attendanceController.triggerAbsentMarking);
 router.post('/admin/trigger-tomorrow-records', protect, adminOnly, attendanceController.triggerTomorrowRecords);
-
+// routes/attendance.js
+router.post('/auto-mark-absent', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { date, reason, shiftTiming, ruleType } = req.body;
+    
+    // Check if already marked
+    const existingRecord = await Attendance.findOne({
+      employee: userId,
+      date: { $gte: new Date(date), $lt: new Date(date + 'T23:59:59.999Z') }
+    });
+    
+    if (existingRecord) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance already exists for today'
+      });
+    }
+    
+    // Get day status
+    const day = new Date(date).getDay();
+    const isWeekend = day === 5 || day === 6; // Friday or Saturday
+    
+    if (isWeekend) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot mark absent on weekend'
+      });
+    }
+    
+    // Determine status based on rule type
+    let status = 'Absent';
+    let remarks = '';
+    
+    if (ruleType === '5_hour_rule') {
+      remarks = 'Auto-marked by system (5-hour rule: No clock in within 5 hours of shift start)';
+    } else if (ruleType === 'shift_start_rule') {
+      remarks = 'Auto-marked by system (No clock in within 10 minutes of shift start)';
+    } else {
+      remarks = 'Auto-marked by system due to no clock in';
+    }
+    
+    // Create auto absent record
+    const absentRecord = new Attendance({
+      employee: userId,
+      date: new Date(date),
+      status: status,
+      clockIn: null,
+      clockOut: null,
+      totalHours: 0,
+      overtimeHours: 0,
+      isLate: false,
+      isEarly: false,
+      markedAbsent: true,
+      autoMarked: true,
+      markedBy: 'System Auto',
+      markedAt: new Date(),
+      reason: reason,
+      absentReason: remarks,
+      ruleType: ruleType,
+      shiftStart: shiftTiming?.start || '09:00',
+      shiftEnd: shiftTiming?.end || '18:00',
+      shiftName: shiftTiming?.name || 'Regular Shift',
+      remarks: remarks
+    });
+    
+    await absentRecord.save();
+    
+    // Send notification to user
+    await Notification.create({
+      user: userId,
+      title: 'Auto Absent Marked',
+      message: `You have been marked as Absent for ${date}. Reason: ${reason}`,
+      type: 'attendance',
+      read: false
+    });
+    
+    res.json({
+      success: true,
+      message: 'Auto absent marked successfully',
+      record: absentRecord
+    });
+    
+  } catch (error) {
+    console.error('Auto absent marking error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark auto absent'
+    });
+  }
+});
 // System Auto Routes (Internal use - can be protected differently)
 // router.post('/auto-mark-absent', attendanceController.autoMarkAbsentForAllEmployees);
 

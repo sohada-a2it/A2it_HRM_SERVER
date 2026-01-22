@@ -1,4 +1,3 @@
-// controllers/attendanceController.js
 const mongoose = require('mongoose');
 const UAParser = require('ua-parser-js');
 const cron = require('node-cron');
@@ -29,17 +28,13 @@ const parseDeviceInfo = (userAgent) => {
 
 const timeToMinutes = (timeStr) => {
   if (!timeStr) return 0;
-  
-  // Handle 24+ hour format (for night shifts)
   const [hoursStr, minutesStr] = timeStr.split(':');
   let hours = parseInt(hoursStr, 10);
   const minutes = parseInt(minutesStr, 10);
   
-  // If hours is 24 or more, it's next day
   if (hours >= 24) {
     const extraDays = Math.floor(hours / 24);
     hours = hours % 24;
-    // We'll handle day offset separately
   }
   
   return hours * 60 + minutes;
@@ -48,7 +43,6 @@ const timeToMinutes = (timeStr) => {
 const addMinutesToTime = (timeStr, minutes) => {
   const totalMinutes = timeToMinutes(timeStr) + minutes;
   
-  // Handle crossing midnight
   if (totalMinutes >= 24 * 60) {
     const nextDayMinutes = totalMinutes % (24 * 60);
     const hours = Math.floor(nextDayMinutes / 60);
@@ -78,10 +72,8 @@ const formatTimeWithDayOffset = (baseDate, timeStr, dayOffset = 0) => {
 };
 
 const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
-  // Get shift start time as Date object
   const shiftStartTime = formatTimeWithDayOffset(clockInDateTime, employeeShift.start);
   
-  // For night shifts where end < start, adjust if clock in is before shift end (meaning next day)
   const shiftEndMinutes = timeToMinutes(employeeShift.end);
   const shiftStartMinutes = timeToMinutes(employeeShift.start);
   const isNightShift = shiftEndMinutes < shiftStartMinutes;
@@ -89,18 +81,14 @@ const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
   let adjustedClockInTime = new Date(clockInDateTime);
   let adjustedShiftStartTime = new Date(shiftStartTime);
   
-  // Handle night shift scenario
   if (isNightShift) {
     const clockInMinutes = clockInDateTime.getHours() * 60 + clockInDateTime.getMinutes();
     
-    // If clock in time is before shift end (e.g., clock in at 02:00 for 20:00-04:00 shift)
-    // It means clock in is on next day relative to shift start
     if (clockInMinutes < shiftEndMinutes) {
       adjustedClockInTime.setDate(adjustedClockInTime.getDate() + 1);
     }
   }
   
-  // Calculate difference in minutes
   const diffMs = adjustedClockInTime - adjustedShiftStartTime;
   const difference = Math.floor(diffMs / (1000 * 60));
   
@@ -365,6 +353,8 @@ const addSessionActivity = async (data) => {
 class AutoClockOutService {
   constructor() {
     this.isRunning = false;
+    this.lastAbsentMarking = null;
+    this.lastNonWorkingDayGeneration = null;
     this.initializeScheduler();
   }
 
@@ -376,21 +366,16 @@ class AutoClockOutService {
       await this.checkAndExecuteAutoClockOuts();
     }, options);
 
-    // 12:10 AM - Daily reset
-    cron.schedule('10 0 * * *', async () => {
-      console.log('🔄 Daily reset at 12:10 AM');
+    // 1:00 AM - Tomorrow's non-working day records
+    cron.schedule('0 1 * * *', async () => {
+      console.log('📅 [1:00 AM] Generating tomorrow\'s non-working day records');
+      await this.generateTomorrowsNonWorkingDayRecords();
     }, options);
 
     // 12:10 PM - Working day absent marking
     cron.schedule('10 12 * * *', async () => {
-      console.log('⚠️ Working day absent marking at 12:10 PM');
+      console.log('⚠️ [12:10 PM] Working day absent marking');
       await this.markWorkingDayAbsent();
-    }, options);
-
-    // 1:00 AM - Tomorrow's non-working day records
-    cron.schedule('0 1 * * *', async () => {
-      console.log('📅 Generating tomorrow\'s non-working day records at 1:00 AM');
-      await this.generateTomorrowsNonWorkingDayRecords();
     }, options);
   }
 
@@ -402,7 +387,6 @@ class AutoClockOutService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      // Use moment with timezone for accurate time comparison
       const currentTimeDhaka = moment().tz(TIMEZONE);
       const currentTimeStr = currentTimeDhaka.format('HH:mm');
       const currentMinutes = timeToMinutes(currentTimeStr);
@@ -427,25 +411,18 @@ class AutoClockOutService {
         try {
           const shiftDetails = await getEmployeeShiftDetails(att.employee._id, today);
           
-          // Get auto clock out time in minutes
           const autoClockOutMinutes = timeToMinutes(shiftDetails.autoClockOutTime);
           
-          // If auto clock out is on next day, add 24 hours to comparison
           let comparisonTime = autoClockOutMinutes;
           if (shiftDetails.autoClockOutIsNextDay) {
             comparisonTime += 24 * 60;
             
-            // Also check if current time is before midnight (still same day)
             const midnightMinutes = 24 * 60;
             if (currentMinutes < midnightMinutes) {
-              // It's still same day, but auto clock out is next day
-              // So we should auto clock out only if current time >= auto clock out time (which is impossible)
-              // Actually, we need to auto clock out at the auto clock out time next day
               const currentTimeWithDay = currentMinutes;
               const autoClockOutWithDay = comparisonTime;
               
               if (currentTimeWithDay >= autoClockOutWithDay - (24 * 60)) {
-                // This means we're in the auto clock out window
                 await this.performAutoClockOut(att, shiftDetails);
                 results.autoClockOuts++;
                 continue;
@@ -481,13 +458,11 @@ class AutoClockOutService {
   async performAutoClockOut(attendance, shiftDetails) {
     const clockOutTime = new Date();
     
-    // For night shifts, check if clock out should be next day
     if (shiftDetails.isNightShift) {
       const clockInTime = new Date(attendance.clockIn);
       const clockInDay = clockInTime.getDate();
       const clockOutDay = clockOutTime.getDate();
       
-      // If clock in and clock out are on different days for night shift
       if (clockOutDay !== clockInDay) {
         // This is expected for night shift
       }
@@ -526,6 +501,15 @@ class AutoClockOutService {
   }
 
   async markWorkingDayAbsent() {
+    // Prevent duplicate execution on same day
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (this.lastAbsentMarking === todayStr) {
+      console.log('✅ [12:10 PM] Absent marking already done today');
+      return { message: 'Already marked today', skipped: true };
+    }
+
+    this.isRunning = true;
+    
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -533,74 +517,80 @@ class AutoClockOutService {
       const activeEmployees = await User.find({
         status: 'active',
         role: 'employee'
-      }).select('_id firstName lastName employeeId');
+      }).select('_id firstName lastName employeeId department position');
 
       const results = {
         totalEmployees: activeEmployees.length,
         markedAbsent: 0,
         nonWorkingDaySkipped: 0,
-        alreadyExists: 0,
+        alreadyClockedIn: 0,
         failed: 0
       };
 
       for (const employee of activeEmployees) {
         try {
-          // Check existing attendance
-          const existingAttendance = await Attendance.findOne({
-            employee: employee._id,
-            date: today,
-            isDeleted: false
-          });
-
-          if (existingAttendance) {
-            results.alreadyExists++;
-            continue;
-          }
-
-          // Check day status
+          // Check if TODAY is a working day
           const dayStatus = await checkDayStatus(employee._id, today);
           
-          // Only mark absent for working days
+          // Only process WORKING DAYS at 12:10 PM
           if (dayStatus.isWorkingDay) {
-            const shiftDetails = await getEmployeeShiftDetails(employee._id, today);
-            
-            const attendance = new Attendance({
+            // Check existing attendance
+            const existingAttendance = await Attendance.findOne({
               employee: employee._id,
               date: today,
-              status: 'Absent',
-              shift: {
-                name: shiftDetails.name,
-                start: shiftDetails.start,
-                end: shiftDetails.end,
-                lateThreshold: shiftDetails.lateThreshold,
-                earlyThreshold: shiftDetails.earlyThreshold,
-                autoClockOutDelay: shiftDetails.autoClockOutDelay,
-                isNightShift: shiftDetails.isNightShift || false
-              },
-              markedAbsent: true,
-              absentMarkedAt: new Date(),
-              autoMarked: true,
-              remarks: `Auto-marked as Absent at 12:10 PM (no clock in)`,
-              ipAddress: 'System',
-              device: { type: 'system', os: 'Auto Attendance' },
-              location: 'Office',
-              autoClockOutTime: shiftDetails.autoClockOutTime,
-              autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
+              isDeleted: false
             });
 
-            await attendance.save();
-            results.markedAbsent++;
-            
-            await addSessionActivity({
-              userId: employee._id,
-              action: "Auto Marked Absent",
-              target: attendance._id.toString(),
-              targetType: "Attendance",
-              details: {
-                reason: 'No clock in by 12:10 PM on working day'
-              }
-            });
+            // Only mark absent if:
+            // 1. No attendance record exists, OR
+            // 2. Record exists but employee hasn't clocked in
+            if (!existingAttendance) {
+              const shiftDetails = await getEmployeeShiftDetails(employee._id, today);
+              
+              const attendance = new Attendance({
+                employee: employee._id,
+                date: today,
+                status: 'Absent',
+                shift: {
+                  name: shiftDetails.name,
+                  start: shiftDetails.start,
+                  end: shiftDetails.end,
+                  lateThreshold: shiftDetails.lateThreshold,
+                  earlyThreshold: shiftDetails.earlyThreshold,
+                  autoClockOutDelay: shiftDetails.autoClockOutDelay,
+                  isNightShift: shiftDetails.isNightShift || false
+                },
+                markedAbsent: true,
+                absentMarkedAt: new Date(),
+                autoMarked: true,
+                remarks: `Auto-marked as Absent at 12:10 PM (no clock in on working day)`,
+                ipAddress: 'System',
+                device: { type: 'system', os: 'Auto Attendance' },
+                location: 'Office',
+                autoClockOutTime: shiftDetails.autoClockOutTime,
+                autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
+              });
+
+              await attendance.save();
+              results.markedAbsent++;
+            } 
+            else if (existingAttendance && !existingAttendance.clockIn) {
+              // Update existing record to Absent if no clock in
+              existingAttendance.status = 'Absent';
+              existingAttendance.markedAbsent = true;
+              existingAttendance.absentMarkedAt = new Date();
+              existingAttendance.autoMarked = true;
+              existingAttendance.remarks = `Auto-marked as Absent at 12:10 PM (no clock in)`;
+              
+              await existingAttendance.save();
+              results.markedAbsent++;
+            }
+            else if (existingAttendance && existingAttendance.clockIn) {
+              // Employee already clocked in - skip
+              results.alreadyClockedIn++;
+            }
           } else {
+            // Skip non-working days at 12:10 PM
             results.nonWorkingDaySkipped++;
           }
         } catch (error) {
@@ -609,15 +599,28 @@ class AutoClockOutService {
         }
       }
 
-      console.log(`📋 12:10 PM - Marked ${results.markedAbsent} employees as absent`);
+      console.log(`📋 [12:10 PM] Marked ${results.markedAbsent} employees as absent`);
+      this.lastAbsentMarking = todayStr;
+      
       return results;
     } catch (error) {
       console.error('Mark working day absent failed:', error);
       throw error;
+    } finally {
+      this.isRunning = false;
     }
   }
 
   async generateTomorrowsNonWorkingDayRecords() {
+    // Prevent duplicate execution on same day
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (this.lastNonWorkingDayGeneration === todayStr) {
+      console.log('✅ [1:00 AM] Non-working day records already generated today');
+      return { message: 'Already generated today', skipped: true };
+    }
+
+    this.isRunning = true;
+    
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -627,7 +630,7 @@ class AutoClockOutService {
       const activeEmployees = await User.find({
         status: 'active',
         role: 'employee'
-      }).select('_id firstName lastName employeeId');
+      }).select('_id firstName lastName employeeId department');
 
       const results = {
         totalEmployees: activeEmployees.length,
@@ -639,64 +642,85 @@ class AutoClockOutService {
 
       for (const employee of activeEmployees) {
         try {
-          // Check existing attendance
-          const existingAttendance = await Attendance.findOne({
-            employee: employee._id,
-            date: tomorrow,
-            isDeleted: false
-          });
-
-          if (existingAttendance) {
-            results.skippedExists++;
-            continue;
-          }
-
-          // Check tomorrow's day status
+          // Check day status for TOMORROW
           const dayStatus = await checkDayStatus(employee._id, tomorrow);
           
-          // Only create records for non-working days
+          // ONLY create record for NON-WORKING days
           if (!dayStatus.isWorkingDay) {
-            const shiftDetails = await getEmployeeShiftDetails(employee._id, tomorrow);
-            
-            const attendance = new Attendance({
+            // Check existing attendance
+            const existingAttendance = await Attendance.findOne({
               employee: employee._id,
               date: tomorrow,
-              status: dayStatus.status,
-              shift: {
-                name: shiftDetails.name,
-                start: shiftDetails.start,
-                end: shiftDetails.end,
-                lateThreshold: shiftDetails.lateThreshold,
-                earlyThreshold: shiftDetails.earlyThreshold,
-                autoClockOutDelay: shiftDetails.autoClockOutDelay,
-                isNightShift: shiftDetails.isNightShift || false
-              },
-              autoMarked: true,
-              remarks: `Auto-generated at 1:00 AM: ${dayStatus.reason}`,
-              ipAddress: 'System',
-              device: { type: 'system', os: 'Auto Generator' },
-              location: 'Office',
-              autoClockOutTime: shiftDetails.autoClockOutTime,
-              autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
+              isDeleted: false
             });
 
-            await attendance.save();
-            results.recordsCreated++;
-            
-            // Update leave with attendance record if applicable
-            if (dayStatus.recordType === 'leave' && dayStatus.leaveDetails) {
-              await Leave.findByIdAndUpdate(dayStatus.leaveDetails.leaveId, {
-                $push: {
-                  attendanceRecords: {
-                    date: tomorrow,
-                    attendanceId: attendance._id,
-                    status: dayStatus.status
-                  }
+            if (!existingAttendance) {
+              const shiftDetails = await getEmployeeShiftDetails(employee._id, tomorrow);
+              
+              // Determine status based on day type
+              let status = 'Absent'; // Default fallback
+              
+              if (dayStatus.status === 'Govt Holiday') {
+                status = 'Govt Holiday';
+              } else if (dayStatus.status === 'Weekly Off') {
+                status = 'Weekly Off';
+              } else if (dayStatus.status === 'Off Day') {
+                status = 'Off Day';
+              } else if (dayStatus.recordType === 'leave') {
+                // Leave type from leaveDetails
+                if (dayStatus.leaveDetails?.payStatus === 'Unpaid') {
+                  status = 'Unpaid Leave';
+                } else if (dayStatus.leaveDetails?.payStatus === 'HalfPaid') {
+                  status = 'Half Paid Leave';
+                } else {
+                  status = 'Leave'; // Paid Leave
+                }
+              }
+
+              const attendance = new Attendance({
+                employee: employee._id,
+                date: tomorrow,
+                status: status,
+                shift: {
+                  name: shiftDetails.name,
+                  start: shiftDetails.start,
+                  end: shiftDetails.end,
+                  lateThreshold: shiftDetails.lateThreshold,
+                  earlyThreshold: shiftDetails.earlyThreshold,
+                  autoClockOutDelay: shiftDetails.autoClockOutDelay,
+                  isNightShift: shiftDetails.isNightShift || false
                 },
-                autoGeneratedAttendance: true
+                autoMarked: true,
+                remarks: `Auto-generated at 1:00 AM: ${dayStatus.reason || dayStatus.status}`,
+                ipAddress: 'System',
+                device: { type: 'system', os: 'Auto Generator' },
+                location: 'Office',
+                autoClockOutTime: shiftDetails.autoClockOutTime,
+                autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
+                autoGenerated: true
               });
+
+              await attendance.save();
+              results.recordsCreated++;
+              
+              // Update leave with attendance record if applicable
+              if (dayStatus.recordType === 'leave' && dayStatus.leaveDetails) {
+                await Leave.findByIdAndUpdate(dayStatus.leaveDetails.leaveId, {
+                  $push: {
+                    attendanceRecords: {
+                      date: tomorrow,
+                      attendanceId: attendance._id,
+                      status: status
+                    }
+                  },
+                  autoGeneratedAttendance: true
+                });
+              }
+            } else {
+              results.skippedExists++;
             }
           } else {
+            // Skip WORKING DAYS - NO auto record for working days at 1:00 AM
             results.skippedWorkingDay++;
           }
         } catch (error) {
@@ -705,11 +729,15 @@ class AutoClockOutService {
         }
       }
 
-      console.log(`📋 1:00 AM - Created ${results.recordsCreated} non-working day records for tomorrow`);
+      console.log(`📋 [1:00 AM] Created ${results.recordsCreated} non-working day records for tomorrow`);
+      this.lastNonWorkingDayGeneration = todayStr;
+      
       return results;
     } catch (error) {
       console.error('Generate tomorrow records failed:', error);
       throw error;
+    } finally {
+      this.isRunning = false;
     }
   }
 
@@ -745,6 +773,7 @@ exports.clockIn = async (req, res) => {
       isDeleted: false 
     });
     
+    // If attendance exists and has Absent status from auto-marking, update it
     if (attendance && attendance.clockIn) {
       return res.status(400).json({
         status: "fail",
@@ -804,6 +833,7 @@ exports.clockIn = async (req, res) => {
         autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
       });
     } else {
+      // Update existing attendance (e.g., if it was auto-marked as Absent)
       attendance.clockIn = clockInTime;
       attendance.status = status;
       attendance.shift = {
@@ -826,6 +856,7 @@ exports.clockIn = async (req, res) => {
       attendance.autoClockOutTime = shiftDetails.autoClockOutTime;
       attendance.autoClockOutIsNextDay = shiftDetails.autoClockOutIsNextDay || false;
       
+      // Clear absent marking flags if they exist
       if (attendance.markedAbsent) {
         attendance.markedAbsent = false;
         attendance.absentMarkedAt = null;
@@ -1314,7 +1345,6 @@ exports.createManualAttendance = async (req, res) => {
 
     const shiftDetails = await getEmployeeShiftDetails(employeeId, attendanceDate);
     
-    // Use provided shift or employee's shift
     const finalShiftStart = shiftStart || shiftDetails.start;
     const finalShiftEnd = shiftEnd || shiftDetails.end;
 
@@ -1456,17 +1486,10 @@ exports.updateAttendance = async (req, res) => {
     if (status) attendance.status = status;
     if (remarks) attendance.remarks = remarks;
 
-    // Update total hours if clock in/out changed
-    if ((clockIn !== undefined || clockOut !== undefined) && attendance.clockIn && attendance.clockOut) {
-      const diffMs = new Date(attendance.clockOut) - new Date(attendance.clockIn);
-      attendance.totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(4));
-    }
-
     if (shiftStart || shiftEnd) {
       attendance.shift.start = shiftStart || attendance.shift.start;
       attendance.shift.end = shiftEnd || attendance.shift.end;
       
-      // Recalculate late/early if clock in exists
       if (attendance.clockIn) {
         const lateEarlyCheck = checkLateEarlyForEmployee(attendance.clockIn, {
           start: attendance.shift.start,
@@ -1710,7 +1733,7 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
-// Update Employee Shift Timing (Admin) - Renamed to avoid duplicate
+// Update Employee Shift Timing (Admin)
 exports.updateEmployeeShiftTiming = async (req, res) => {
   try {
     const adminId = req.user._id;
@@ -3296,7 +3319,7 @@ exports.getAdminEmployeeAttendance = async (req, res) => {
         absentDays++;
       } else if (record.status === 'Leave' || record.status === 'Unpaid Leave' || record.status === 'Half Paid Leave') {
         leaveDays++;
-      } else if (record.status === 'Govt Holiday' || record.status === 'Weekly Off' || record.status === 'Off Day') {
+      } else if (record.status === 'Govt Holiday' || record.status === 'Off Day' || record.status === 'Weekly Off') {
         holidayDays++;
       }
     });
