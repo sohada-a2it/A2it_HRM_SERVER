@@ -2320,37 +2320,18 @@ exports.getProfile = async (req, res) => {
 };
 
 // Update profile 
+// ================= UNIFIED UPDATE PROFILE CONTROLLER =================
+
+// Unified Update Profile for all roles (Admin, Employee, Moderator)
 exports.updateProfile = async (req, res) => {
   try {
-    console.log('🔄 Profile Update Request Received');
-    
-    // 🔥 FIX 1: Remove problematic admin fields from request body
-    const adminFields = ['adminLevel', 'adminPosition', 'companyName', 
-                        'permissions', 'isSuperAdmin', 'canManageUsers', 
-                        'canManagePayroll'];
-    
-    adminFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        console.log(`⚠️ Removing admin field: ${field} = ${req.body[field]}`);
-        delete req.body[field];
-      }
-    });
+    console.log('🔄 Unified Profile Update Request');
+    console.log('- User ID:', req.user._id);
+    console.log('- User Role:', req.user.role);
+    console.log('- Request Body:', JSON.stringify(req.body, null, 2));
 
-    // Remove moderator fields if user is not moderator
-    if (req.user.role !== 'moderator') {
-      const moderatorFields = ['moderatorLevel', 'moderatorScope', 'canModerateUsers',
-                              'canModerateContent', 'canViewReports', 'canManageReports',
-                              'moderationLimits'];
-      moderatorFields.forEach(field => {
-        if (req.body[field] !== undefined) {
-          console.log(`⚠️ Removing moderator field: ${field} = ${req.body[field]}`);
-          delete req.body[field];
-        }
-      });
-    }
-
-    // 🔥 FIX 2: Find user
-    const user = await User.findById(req.user.id);
+    // Find user
+    const user = await User.findById(req.user._id);
     
     if (!user) {
       console.log('❌ User not found');
@@ -2364,98 +2345,303 @@ exports.updateProfile = async (req, res) => {
       id: user._id,
       email: user.email,
       role: user.role,
-      employeeId: user.employeeId
+      currentData: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        department: user.department,
+        designation: user.designation
+      }
     });
 
-    // 🔥 FIX 3: Check user role and handle accordingly
-    if (user.role === 'employee') {
-      console.log('👷 Processing employee profile update');
-      
-      // Employee can only update these fields
-      const employeeAllowedFields = [
-        'firstName', 'lastName', 'phone', 'address',
-        'department', 'designation', 'picture',
-        'salaryType', 'rate', 'basicSalary', 'salary',
-        'joiningDate'
-      ];
-      
-      // Update only allowed fields
-      employeeAllowedFields.forEach(field => {
-        if (req.body[field] !== undefined) {
-          console.log(`- Updating ${field}: ${user[field]} -> ${req.body[field]}`);
-          user[field] = req.body[field];
-        }
-      });
-      
-    } else if (user.role === 'admin') {
-      console.log('👑 Processing admin profile update');
-      // Admin can update all fields except role
-      Object.keys(req.body).forEach(field => {
-        if (req.body[field] !== undefined && field !== 'role') {
-          user[field] = req.body[field];
-        }
-      });
-    } else if (user.role === 'moderator') {
-      console.log('🛡️ Processing moderator profile update');
-      // Moderator can update these fields
-      const moderatorAllowedFields = [
-        'firstName', 'lastName', 'phone', 'address',
-        'department', 'designation', 'picture',
-        'salaryType', 'rate', 'basicSalary', 'salary',
-        'joiningDate', 'moderatorLevel', 'moderatorScope',
-        'canModerateUsers', 'canModerateContent', 'canViewReports',
-        'canManageReports', 'moderationLimits', 'permissions'
-      ];
-      
-      moderatorAllowedFields.forEach(field => {
-        if (req.body[field] !== undefined) {
-          user[field] = req.body[field];
-        }
-      });
-    }
-
-    // Save the user
-    console.log('💾 Saving user...');
-    await user.save();
-    console.log('✅ User saved successfully');
-
-    // Prepare response
-    const responseData = {
-      id: user._id,
+    // Store old data for audit
+    const oldData = {
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
-      role: user.role,
       phone: user.phone,
       address: user.address,
       department: user.department,
       designation: user.designation,
       employeeId: user.employeeId,
       picture: user.picture,
+      salaryType: user.salaryType,
+      rate: user.rate,
+      basicSalary: user.basicSalary,
+      salary: user.salary,
+      joiningDate: user.joiningDate,
       status: user.status,
       isActive: user.isActive,
-      updatedAt: user.updatedAt
+      // ✅ WORK TYPE FIELDS
+      workLocationType: user.workLocationType,
+      workArrangement: user.workArrangement
     };
 
-    // Add role-specific fields
-    if (user.role === 'admin') {
+    // ============ ROLE-SPECIFIC OLD DATA ============
+    if (user.role === 'admin' || user.role === 'superAdmin') {
+      oldData.companyName = user.companyName;
+      oldData.adminPosition = user.adminPosition;
+      oldData.adminLevel = user.adminLevel;
+      oldData.permissions = user.permissions;
+      oldData.isSuperAdmin = user.isSuperAdmin;
+      oldData.canManageUsers = user.canManageUsers;
+      oldData.canManagePayroll = user.canManagePayroll;
+    } else if (user.role === 'moderator') {
+      oldData.moderatorLevel = user.moderatorLevel;
+      oldData.moderatorScope = user.moderatorScope;
+      oldData.canModerateUsers = user.canModerateUsers;
+      oldData.canModerateContent = user.canModerateContent;
+      oldData.canViewReports = user.canViewReports;
+      oldData.canManageReports = user.canManageReports;
+      oldData.moderationLimits = user.moderationLimits;
+      oldData.permissions = user.permissions;
+    } else if (user.role === 'employee') {
+      oldData.managerId = user.managerId;
+      oldData.attendanceId = user.attendanceId;
+      oldData.shiftTiming = user.shiftTiming;
+      oldData.preferredShift = user.preferredShift;
+      // ✅ EMPLOYEE SPECIFIC FIELDS
+      oldData.contractType = user.contractType;
+      oldData.bankDetails = user.bankDetails;
+    }
+
+    // ============ COMMON FIELDS FOR ALL ROLES ============
+    const commonFields = [
+      'firstName', 'lastName', 'phone', 'address',
+      'department', 'designation', 'employeeId',
+      'picture', 'status', 'isActive',
+      // ✅ WORK TYPE FIELDS
+      'workLocationType', 'workArrangement',
+      // Salary fields
+      'salaryType', 'rate', 'basicSalary', 'salary',
+      'joiningDate'
+    ];
+
+    console.log('📋 Updating common fields...');
+    commonFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        console.log(`  - ${field}: ${user[field]} → ${req.body[field]}`);
+        user[field] = req.body[field];
+      }
+    });
+
+    // ============ ROLE-SPECIFIC FIELD UPDATES ============
+    console.log(`🎭 Processing ${user.role}-specific fields...`);
+
+    if (user.role === 'admin' || user.role === 'superAdmin') {
+      const adminFields = [
+        'companyName', 'adminPosition', 'adminLevel',
+        'permissions', 'isSuperAdmin', 'canManageUsers',
+        'canManagePayroll'
+      ];
+
+      adminFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          // Super admin protection
+          if (field === 'isSuperAdmin' && req.body[field] === true) {
+            if (req.user.role !== 'superAdmin' && !req.user.isSuperAdmin) {
+              throw new Error("Only super admin can assign super admin status");
+            }
+          }
+          console.log(`  - Admin ${field}: ${user[field]} → ${req.body[field]}`);
+          user[field] = req.body[field];
+        }
+      });
+
+    } else if (user.role === 'moderator') {
+      const moderatorFields = [
+        'moderatorLevel', 'moderatorScope',
+        'canModerateUsers', 'canModerateContent',
+        'canViewReports', 'canManageReports',
+        'moderationLimits', 'permissions'
+      ];
+
+      moderatorFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          console.log(`  - Moderator ${field}: ${user[field]} → ${req.body[field]}`);
+          user[field] = req.body[field];
+        }
+      });
+
+    } else if (user.role === 'employee') {
+      const employeeFields = [
+        'managerId', 'attendanceId', 'shiftTiming',
+        'preferredShift', 'contractType'
+      ];
+
+      employeeFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          console.log(`  - Employee ${field}: ${JSON.stringify(user[field])} → ${JSON.stringify(req.body[field])}`);
+          user[field] = req.body[field];
+        }
+      });
+
+      // Handle bankDetails separately (structured object)
+      if (req.body.bankDetails) {
+        console.log('  - Updating bank details');
+        user.bankDetails = {
+          bankName: req.body.bankDetails.bankName?.trim() || user.bankDetails?.bankName || '',
+          accountNumber: req.body.bankDetails.accountNumber?.toString() || user.bankDetails?.accountNumber || '',
+          accountHolderName: req.body.bankDetails.accountHolderName?.trim() || user.bankDetails?.accountHolderName || '',
+          branchName: req.body.bankDetails.branchName?.trim() || user.bankDetails?.branchName || '',
+          routingNumber: req.body.bankDetails.routingNumber?.toString() || user.bankDetails?.routingNumber || ''
+        };
+      }
+    }
+
+    // ============ VALIDATE WORK TYPE FIELDS ============
+    if (user.workLocationType && !['onsite', 'remote', 'hybrid'].includes(user.workLocationType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid workLocationType. Must be 'onsite', 'remote', or 'hybrid'"
+      });
+    }
+
+    if (user.workArrangement && !['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'].includes(user.workArrangement)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid workArrangement. Must be 'full-time', 'part-time', 'contractual', 'freelance', 'internship', or 'temporary'"
+      });
+    }
+
+    // ============ SAVE UPDATED USER ============
+    console.log('💾 Saving updated user...');
+    await user.save();
+    console.log('✅ User saved successfully');
+
+    // ============ AUDIT LOG ============
+    try {
+      await AuditLog.create({
+        userId: req.user._id,
+        action: "Updated Profile",
+        target: user._id,
+        details: {
+          role: user.role,
+          oldData: oldData,
+          newData: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phone: user.phone,
+            department: user.department,
+            designation: user.designation,
+            employeeId: user.employeeId,
+            // ✅ WORK TYPE FIELDS
+            workLocationType: user.workLocationType,
+            workArrangement: user.workArrangement,
+            workTypeDisplay: `${user.workArrangement} • ${user.workLocationType}`
+          },
+          updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined)
+        },
+        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+        device: req.headers['user-agent'] || 'Unknown'
+      });
+      console.log('✅ Audit log created');
+    } catch (auditError) {
+      console.error('Audit log error:', auditError);
+    }
+
+    // ============ SESSION ACTIVITY ============
+    try {
+      await addSessionActivity({
+        userId: req.user._id,
+        action: "Updated Profile",
+        target: user._id,
+        details: {
+          updatedFields: Object.keys(req.body).filter(key => req.body[key] !== undefined),
+          workLocationType: user.workLocationType,
+          workArrangement: user.workArrangement
+        }
+      });
+      console.log('✅ Session activity logged');
+    } catch (sessionError) {
+      console.error('Session activity error:', sessionError);
+    }
+
+    // ============ PREPARE RESPONSE ============
+    const responseData = {
+      // Basic info
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      fullName: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      
+      // Profile info
+      picture: user.picture,
+      address: user.address,
+      department: user.department,
+      designation: user.designation,
+      employeeId: user.employeeId,
+      
+      // Salary info
+      salaryType: user.salaryType,
+      rate: user.rate,
+      basicSalary: user.basicSalary,
+      salary: user.salary,
+      joiningDate: user.joiningDate,
+      
+      // ✅ WORK TYPE INFO (for all roles)
+      workLocationType: user.workLocationType,
+      workArrangement: user.workArrangement,
+      workTypeDisplay: `${user.workArrangement} • ${user.workLocationType}`,
+      
+      // Account status
+      status: user.status,
+      isActive: user.isActive,
+      
+      // Timestamps
+      updatedAt: user.updatedAt,
+      createdAt: user.createdAt,
+      lastLogin: user.lastLogin,
+      loginCount: user.loginCount || 0
+    };
+
+    // ============ ADD ROLE-SPECIFIC FIELDS TO RESPONSE ============
+    if (user.role === 'admin' || user.role === 'superAdmin') {
       responseData.companyName = user.companyName;
       responseData.adminPosition = user.adminPosition;
       responseData.adminLevel = user.adminLevel;
+      responseData.permissions = user.permissions || [];
+      responseData.isSuperAdmin = user.isSuperAdmin || false;
+      responseData.canManageUsers = user.canManageUsers || false;
+      responseData.canManagePayroll = user.canManagePayroll || false;
     } else if (user.role === 'moderator') {
       responseData.moderatorLevel = user.moderatorLevel;
-      responseData.moderatorScope = user.moderatorScope;
-      responseData.canModerateUsers = user.canModerateUsers;
-      responseData.canModerateContent = user.canModerateContent;
-      responseData.canViewReports = user.canViewReports;
-      responseData.canManageReports = user.canManageReports;
-      responseData.moderationLimits = user.moderationLimits;
-      responseData.permissions = user.permissions;
+      responseData.moderatorScope = user.moderatorScope || [];
+      responseData.canModerateUsers = user.canModerateUsers || false;
+      responseData.canModerateContent = user.canModerateContent || true;
+      responseData.canViewReports = user.canViewReports || true;
+      responseData.canManageReports = user.canManageReports || false;
+      responseData.moderationLimits = user.moderationLimits || {
+        dailyActions: 50,
+        warningLimit: 3,
+        canBanUsers: false,
+        canDeleteContent: true,
+        canEditContent: true,
+        canWarnUsers: true
+      };
+      responseData.permissions = user.permissions || [];
+    } else if (user.role === 'employee') {
+      responseData.managerId = user.managerId;
+      responseData.attendanceId = user.attendanceId;
+      responseData.shiftTiming = user.shiftTiming;
+      responseData.preferredShift = user.preferredShift;
+      // ✅ EMPLOYEE SPECIFIC FIELDS
+      responseData.contractType = user.contractType;
+      responseData.bankDetails = user.bankDetails;
     }
 
-    console.log('🎉 Profile update successful');
-    
-    res.status(200).json({
+    console.log('🎉 Profile update completed successfully');
+    console.log('Updated user data:', {
+      name: responseData.fullName,
+      role: responseData.role,
+      workType: responseData.workTypeDisplay
+    });
+
+    return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
       user: responseData
@@ -2464,10 +2650,11 @@ exports.updateProfile = async (req, res) => {
   } catch (error) {
     console.error('❌ Profile Update Error:', {
       name: error.name,
-      message: error.message
+      message: error.message,
+      stack: error.stack
     });
 
-    // Handle validation errors
+    // Handle specific errors
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(val => val.message);
       return res.status(400).json({
@@ -2476,10 +2663,19 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
-    // Generic error
-    res.status(500).json({
+    if (error.message.includes('Only super admin')) {
+      return res.status(403).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    // Generic error response
+    return res.status(500).json({
       success: false,
-      message: error.message || 'Failed to update profile'
+      message: process.env.NODE_ENV === 'development' 
+        ? error.message 
+        : 'Failed to update profile. Please try again.'
     });
   }
 };

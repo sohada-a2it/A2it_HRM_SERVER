@@ -2,7 +2,8 @@
 const mongoose = require('mongoose');
 const UAParser = require('ua-parser-js');
 const cron = require('node-cron');
-// const moment = require('moment-timezone');
+const ExcelJS = require('exceljs');
+const moment = require('moment-timezone');
 
 const Attendance = require('../models/AttendanceModel');
 const User = require('../models/UsersModel');
@@ -28,21 +29,81 @@ const parseDeviceInfo = (userAgent) => {
 
 const timeToMinutes = (timeStr) => {
   if (!timeStr) return 0;
-  const [hours, minutes] = timeStr.split(':').map(Number);
+  
+  // Handle 24+ hour format (for night shifts)
+  const [hoursStr, minutesStr] = timeStr.split(':');
+  let hours = parseInt(hoursStr, 10);
+  const minutes = parseInt(minutesStr, 10);
+  
+  // If hours is 24 or more, it's next day
+  if (hours >= 24) {
+    const extraDays = Math.floor(hours / 24);
+    hours = hours % 24;
+    // We'll handle day offset separately
+  }
+  
   return hours * 60 + minutes;
 };
 
 const addMinutesToTime = (timeStr, minutes) => {
   const totalMinutes = timeToMinutes(timeStr) + minutes;
-  const hours = Math.floor(totalMinutes / 60) % 24;
-  const mins = totalMinutes % 60;
-  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  
+  // Handle crossing midnight
+  if (totalMinutes >= 24 * 60) {
+    const nextDayMinutes = totalMinutes % (24 * 60);
+    const hours = Math.floor(nextDayMinutes / 60);
+    const mins = nextDayMinutes % 60;
+    return {
+      time: `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`,
+      isNextDay: true,
+      totalMinutes: totalMinutes
+    };
+  } else {
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    return {
+      time: `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`,
+      isNextDay: false,
+      totalMinutes: totalMinutes
+    };
+  }
 };
 
-const checkLateEarlyForEmployee = (clockInTime, employeeShift) => {
-  const clockInMinutes = clockInTime.getHours() * 60 + clockInTime.getMinutes();
+const formatTimeWithDayOffset = (baseDate, timeStr, dayOffset = 0) => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  const date = new Date(baseDate);
+  date.setDate(date.getDate() + dayOffset);
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+};
+
+const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
+  // Get shift start time as Date object
+  const shiftStartTime = formatTimeWithDayOffset(clockInDateTime, employeeShift.start);
+  
+  // For night shifts where end < start, adjust if clock in is before shift end (meaning next day)
+  const shiftEndMinutes = timeToMinutes(employeeShift.end);
   const shiftStartMinutes = timeToMinutes(employeeShift.start);
-  const difference = clockInMinutes - shiftStartMinutes;
+  const isNightShift = shiftEndMinutes < shiftStartMinutes;
+  
+  let adjustedClockInTime = new Date(clockInDateTime);
+  let adjustedShiftStartTime = new Date(shiftStartTime);
+  
+  // Handle night shift scenario
+  if (isNightShift) {
+    const clockInMinutes = clockInDateTime.getHours() * 60 + clockInDateTime.getMinutes();
+    
+    // If clock in time is before shift end (e.g., clock in at 02:00 for 20:00-04:00 shift)
+    // It means clock in is on next day relative to shift start
+    if (clockInMinutes < shiftEndMinutes) {
+      adjustedClockInTime.setDate(adjustedClockInTime.getDate() + 1);
+    }
+  }
+  
+  // Calculate difference in minutes
+  const diffMs = adjustedClockInTime - adjustedShiftStartTime;
+  const difference = Math.floor(diffMs / (1000 * 60));
+  
   const lateThreshold = employeeShift.lateThreshold || 5;
   const earlyThreshold = employeeShift.earlyThreshold || -1;
   
@@ -56,7 +117,14 @@ const checkLateEarlyForEmployee = (clockInTime, employeeShift) => {
     earlyMinutes = Math.abs(difference - earlyThreshold);
   }
   
-  return { isLate, isEarly, lateMinutes, earlyMinutes, difference };
+  return { 
+    isLate, 
+    isEarly, 
+    lateMinutes, 
+    earlyMinutes, 
+    difference,
+    isNightShift
+  };
 };
 
 const getEmployeeShiftDetails = async (employeeId, date) => {
@@ -74,6 +142,12 @@ const getEmployeeShiftDetails = async (employeeId, date) => {
   if (attendance && attendance.adminShiftAdjustment) {
     const adjustment = attendance.adminShiftAdjustment;
     const autoClockOutDelay = adjustment.autoClockOutDelay || 10;
+    const autoClockOutResult = addMinutesToTime(adjustment.end, autoClockOutDelay);
+    
+    const shiftStartMinutes = timeToMinutes(adjustment.start);
+    const shiftEndMinutes = timeToMinutes(adjustment.end);
+    const isNightShift = shiftEndMinutes < shiftStartMinutes;
+    
     return {
       name: 'Admin Adjusted',
       start: adjustment.start,
@@ -81,9 +155,11 @@ const getEmployeeShiftDetails = async (employeeId, date) => {
       lateThreshold: adjustment.lateThreshold || 5,
       earlyThreshold: adjustment.earlyThreshold || -1,
       autoClockOutDelay: autoClockOutDelay,
-      autoClockOutTime: addMinutesToTime(adjustment.end, autoClockOutDelay),
+      autoClockOutTime: autoClockOutResult.time,
+      autoClockOutIsNextDay: autoClockOutResult.isNextDay,
       isAdminAdjusted: true,
-      source: 'attendance_adjustment'
+      source: 'attendance_adjustment',
+      isNightShift: isNightShift
     };
   }
 
@@ -97,8 +173,10 @@ const getEmployeeShiftDetails = async (employeeId, date) => {
       earlyThreshold: -1,
       autoClockOutDelay: 10,
       autoClockOutTime: '18:10',
+      autoClockOutIsNextDay: false,
       isAdminAdjusted: false,
-      source: 'system_default'
+      source: 'system_default',
+      isNightShift: false
     };
     return defaultShift;
   }
@@ -110,6 +188,12 @@ const getEmployeeShiftDetails = async (employeeId, date) => {
     
     const shift = employee.shiftTiming.assignedShift;
     const autoClockOutDelay = shift.autoClockOutDelay || 10;
+    const autoClockOutResult = addMinutesToTime(shift.end, autoClockOutDelay);
+    
+    const shiftStartMinutes = timeToMinutes(shift.start);
+    const shiftEndMinutes = timeToMinutes(shift.end);
+    const isNightShift = shiftEndMinutes < shiftStartMinutes;
+    
     return {
       name: shift.name || 'Assigned Shift',
       start: shift.start,
@@ -117,26 +201,37 @@ const getEmployeeShiftDetails = async (employeeId, date) => {
       lateThreshold: shift.lateThreshold || 5,
       earlyThreshold: shift.earlyThreshold || -1,
       autoClockOutDelay: autoClockOutDelay,
-      autoClockOutTime: addMinutesToTime(shift.end, autoClockOutDelay),
+      autoClockOutTime: autoClockOutResult.time,
+      autoClockOutIsNextDay: autoClockOutResult.isNextDay,
       isAdminAdjusted: false,
-      source: 'assigned_shift'
+      source: 'assigned_shift',
+      isNightShift: isNightShift
     };
   }
 
   // Use default shift
   const defaultShift = employee.shiftTiming?.defaultShift || {};
   const autoClockOutDelay = defaultShift.autoClockOutDelay || 10;
+  const startTime = defaultShift.start || '09:00';
+  const endTime = defaultShift.end || '18:00';
+  const autoClockOutResult = addMinutesToTime(endTime, autoClockOutDelay);
+  
+  const shiftStartMinutes = timeToMinutes(startTime);
+  const shiftEndMinutes = timeToMinutes(endTime);
+  const isNightShift = shiftEndMinutes < shiftStartMinutes;
   
   return {
     name: defaultShift.name || 'Default',
-    start: defaultShift.start || '09:00',
-    end: defaultShift.end || '18:00',
+    start: startTime,
+    end: endTime,
     lateThreshold: defaultShift.lateThreshold || 5,
     earlyThreshold: defaultShift.earlyThreshold || -1,
     autoClockOutDelay: autoClockOutDelay,
-    autoClockOutTime: addMinutesToTime(defaultShift.end || '18:00', autoClockOutDelay),
+    autoClockOutTime: autoClockOutResult.time,
+    autoClockOutIsNextDay: autoClockOutResult.isNextDay,
     isAdminAdjusted: false,
-    source: 'default_shift'
+    source: 'default_shift',
+    isNightShift: isNightShift
   };
 };
 
@@ -306,7 +401,11 @@ class AutoClockOutService {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const currentTime = `${today.getHours().toString().padStart(2, '0')}:${today.getMinutes().toString().padStart(2, '0')}`;
+      
+      // Use moment with timezone for accurate time comparison
+      const currentTimeDhaka = moment().tz(TIMEZONE);
+      const currentTimeStr = currentTimeDhaka.format('HH:mm');
+      const currentMinutes = timeToMinutes(currentTimeStr);
 
       const pendingAttendances = await Attendance.find({
         date: today,
@@ -327,40 +426,35 @@ class AutoClockOutService {
       for (const att of pendingAttendances) {
         try {
           const shiftDetails = await getEmployeeShiftDetails(att.employee._id, today);
-          const currentMinutes = timeToMinutes(currentTime);
+          
+          // Get auto clock out time in minutes
           const autoClockOutMinutes = timeToMinutes(shiftDetails.autoClockOutTime);
-
-          if (currentMinutes >= autoClockOutMinutes) {
-            const clockOutTime = new Date();
-            let totalHours = 0;
-            if (att.clockIn) {
-              const diffMs = clockOutTime - new Date(att.clockIn);
-              totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(4));
+          
+          // If auto clock out is on next day, add 24 hours to comparison
+          let comparisonTime = autoClockOutMinutes;
+          if (shiftDetails.autoClockOutIsNextDay) {
+            comparisonTime += 24 * 60;
+            
+            // Also check if current time is before midnight (still same day)
+            const midnightMinutes = 24 * 60;
+            if (currentMinutes < midnightMinutes) {
+              // It's still same day, but auto clock out is next day
+              // So we should auto clock out only if current time >= auto clock out time (which is impossible)
+              // Actually, we need to auto clock out at the auto clock out time next day
+              const currentTimeWithDay = currentMinutes;
+              const autoClockOutWithDay = comparisonTime;
+              
+              if (currentTimeWithDay >= autoClockOutWithDay - (24 * 60)) {
+                // This means we're in the auto clock out window
+                await this.performAutoClockOut(att, shiftDetails);
+                results.autoClockOuts++;
+                continue;
+              }
             }
-
-            await Attendance.findByIdAndUpdate(att._id, {
-              $set: {
-                clockOut: clockOutTime,
-                totalHours: totalHours,
-                autoClockOut: true,
-                autoClockOutTime: shiftDetails.autoClockOutTime,
-                status: 'Present',
-                remarks: `Auto clocked out at ${clockOutTime.toLocaleTimeString()}`
-              }
-            });
-
-            await addSessionActivity({
-              userId: att.employee._id,
-              action: "Auto Clocked Out",
-              target: att._id.toString(),
-              targetType: "Attendance",
-              details: {
-                shiftEnd: shiftDetails.end,
-                autoClockOutTime: shiftDetails.autoClockOutTime,
-                totalHours: totalHours
-              }
-            });
-
+          }
+          
+          if (currentMinutes >= comparisonTime) {
+            await this.performAutoClockOut(att, shiftDetails);
             results.autoClockOuts++;
           } else {
             results.notTimeYet++;
@@ -382,6 +476,53 @@ class AutoClockOutService {
     } finally {
       this.isRunning = false;
     }
+  }
+
+  async performAutoClockOut(attendance, shiftDetails) {
+    const clockOutTime = new Date();
+    
+    // For night shifts, check if clock out should be next day
+    if (shiftDetails.isNightShift) {
+      const clockInTime = new Date(attendance.clockIn);
+      const clockInDay = clockInTime.getDate();
+      const clockOutDay = clockOutTime.getDate();
+      
+      // If clock in and clock out are on different days for night shift
+      if (clockOutDay !== clockInDay) {
+        // This is expected for night shift
+      }
+    }
+    
+    let totalHours = 0;
+    if (attendance.clockIn) {
+      const diffMs = clockOutTime - new Date(attendance.clockIn);
+      totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(4));
+    }
+
+    await Attendance.findByIdAndUpdate(attendance._id, {
+      $set: {
+        clockOut: clockOutTime,
+        totalHours: totalHours,
+        autoClockOut: true,
+        autoClockOutTime: shiftDetails.autoClockOutTime,
+        autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
+        status: 'Present',
+        remarks: `Auto clocked out at ${clockOutTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE })}`
+      }
+    });
+
+    await addSessionActivity({
+      userId: attendance.employee._id,
+      action: "Auto Clocked Out",
+      target: attendance._id.toString(),
+      targetType: "Attendance",
+      details: {
+        shiftEnd: shiftDetails.end,
+        autoClockOutTime: shiftDetails.autoClockOutTime,
+        totalHours: totalHours,
+        isNightShift: shiftDetails.isNightShift || false
+      }
+    });
   }
 
   async markWorkingDayAbsent() {
@@ -433,7 +574,8 @@ class AutoClockOutService {
                 end: shiftDetails.end,
                 lateThreshold: shiftDetails.lateThreshold,
                 earlyThreshold: shiftDetails.earlyThreshold,
-                autoClockOutDelay: shiftDetails.autoClockOutDelay
+                autoClockOutDelay: shiftDetails.autoClockOutDelay,
+                isNightShift: shiftDetails.isNightShift || false
               },
               markedAbsent: true,
               absentMarkedAt: new Date(),
@@ -442,7 +584,8 @@ class AutoClockOutService {
               ipAddress: 'System',
               device: { type: 'system', os: 'Auto Attendance' },
               location: 'Office',
-              autoClockOutTime: shiftDetails.autoClockOutTime
+              autoClockOutTime: shiftDetails.autoClockOutTime,
+              autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
             });
 
             await attendance.save();
@@ -525,14 +668,16 @@ class AutoClockOutService {
                 end: shiftDetails.end,
                 lateThreshold: shiftDetails.lateThreshold,
                 earlyThreshold: shiftDetails.earlyThreshold,
-                autoClockOutDelay: shiftDetails.autoClockOutDelay
+                autoClockOutDelay: shiftDetails.autoClockOutDelay,
+                isNightShift: shiftDetails.isNightShift || false
               },
               autoMarked: true,
               remarks: `Auto-generated at 1:00 AM: ${dayStatus.reason}`,
               ipAddress: 'System',
               device: { type: 'system', os: 'Auto Generator' },
               location: 'Office',
-              autoClockOutTime: shiftDetails.autoClockOutTime
+              autoClockOutTime: shiftDetails.autoClockOutTime,
+              autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
             });
 
             await attendance.save();
@@ -623,6 +768,7 @@ exports.clockIn = async (req, res) => {
 
     const lateEarlyCheck = checkLateEarlyForEmployee(clockInTime, {
       start: shiftDetails.start,
+      end: shiftDetails.end,
       lateThreshold: shiftDetails.lateThreshold,
       earlyThreshold: shiftDetails.earlyThreshold
     });
@@ -643,7 +789,8 @@ exports.clockIn = async (req, res) => {
           end: shiftDetails.end,
           lateThreshold: shiftDetails.lateThreshold,
           earlyThreshold: shiftDetails.earlyThreshold,
-          autoClockOutDelay: shiftDetails.autoClockOutDelay
+          autoClockOutDelay: shiftDetails.autoClockOutDelay,
+          isNightShift: shiftDetails.isNightShift || false
         },
         lateMinutes: lateEarlyCheck.lateMinutes,
         earlyMinutes: lateEarlyCheck.earlyMinutes,
@@ -652,8 +799,9 @@ exports.clockIn = async (req, res) => {
         ipAddress: req.ip,
         device: deviceInfo,
         location: location || "Office",
-        remarks: `Clocked in at ${clockInTime.toLocaleTimeString()}`,
-        autoClockOutTime: shiftDetails.autoClockOutTime
+        remarks: `Clocked in at ${clockInTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE })}`,
+        autoClockOutTime: shiftDetails.autoClockOutTime,
+        autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
       });
     } else {
       attendance.clockIn = clockInTime;
@@ -664,7 +812,8 @@ exports.clockIn = async (req, res) => {
         end: shiftDetails.end,
         lateThreshold: shiftDetails.lateThreshold,
         earlyThreshold: shiftDetails.earlyThreshold,
-        autoClockOutDelay: shiftDetails.autoClockOutDelay
+        autoClockOutDelay: shiftDetails.autoClockOutDelay,
+        isNightShift: shiftDetails.isNightShift || false
       };
       attendance.lateMinutes = lateEarlyCheck.lateMinutes;
       attendance.earlyMinutes = lateEarlyCheck.earlyMinutes;
@@ -673,8 +822,9 @@ exports.clockIn = async (req, res) => {
       attendance.ipAddress = req.ip;
       attendance.device = deviceInfo;
       attendance.location = location || "Office";
-      attendance.remarks = `Clocked in at ${clockInTime.toLocaleTimeString()}`;
+      attendance.remarks = `Clocked in at ${clockInTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE })}`;
       attendance.autoClockOutTime = shiftDetails.autoClockOutTime;
+      attendance.autoClockOutIsNextDay = shiftDetails.autoClockOutIsNextDay || false;
       
       if (attendance.markedAbsent) {
         attendance.markedAbsent = false;
@@ -691,10 +841,11 @@ exports.clockIn = async (req, res) => {
       targetType: "Attendance",
       details: {
         shift: `${shiftDetails.start}-${shiftDetails.end}`,
-        clockInTime: clockInTime.toLocaleTimeString(),
+        clockInTime: clockInTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE }),
         isLate: lateEarlyCheck.isLate,
         isEarly: lateEarlyCheck.isEarly,
-        location: location || "Office"
+        location: location || "Office",
+        isNightShift: shiftDetails.isNightShift || false
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
@@ -707,6 +858,10 @@ exports.clockIn = async (req, res) => {
     } else if (lateEarlyCheck.isEarly) {
       message += `. ${lateEarlyCheck.earlyMinutes} minutes early`;
     }
+    
+    if (shiftDetails.isNightShift) {
+      message += `. Night shift: ${shiftDetails.start} to ${shiftDetails.end}`;
+    }
 
     res.status(200).json({
       status: "success",
@@ -714,7 +869,8 @@ exports.clockIn = async (req, res) => {
       attendance: {
         ...attendance.toObject(),
         shiftDetails,
-        autoClockOutTime: shiftDetails.autoClockOutTime
+        autoClockOutTime: shiftDetails.autoClockOutTime,
+        autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
       }
     });
 
@@ -758,7 +914,12 @@ exports.clockOut = async (req, res) => {
     const deviceInfo = parseDeviceInfo(req.headers['user-agent']);
     const clockOutTime = timestamp ? new Date(timestamp) : new Date();
 
+    // Calculate total hours
+    const diffMs = clockOutTime - new Date(attendance.clockIn);
+    const totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(4));
+
     attendance.clockOut = clockOutTime;
+    attendance.totalHours = totalHours;
     attendance.ipAddress = req.ip;
     attendance.device = deviceInfo;
     attendance.location = location || "Office";
@@ -775,8 +936,8 @@ exports.clockOut = async (req, res) => {
       target: attendance._id.toString(),
       targetType: "Attendance",
       details: {
-        totalHours: attendance.totalHours,
-        clockOutTime: clockOutTime.toLocaleTimeString(),
+        totalHours: totalHours,
+        clockOutTime: clockOutTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE }),
         location: location || "Office"
       },
       ipAddress: req.ip,
@@ -1167,6 +1328,7 @@ exports.createManualAttendance = async (req, res) => {
       const clockInTime = new Date(clockIn);
       const lateEarlyCheck = checkLateEarlyForEmployee(clockInTime, {
         start: finalShiftStart,
+        end: finalShiftEnd,
         lateThreshold: shiftDetails.lateThreshold,
         earlyThreshold: shiftDetails.earlyThreshold
       });
@@ -1185,7 +1347,7 @@ exports.createManualAttendance = async (req, res) => {
     }
 
     const autoClockOutDelay = shiftDetails.autoClockOutDelay;
-    const autoClockOutTime = addMinutesToTime(finalShiftEnd, autoClockOutDelay);
+    const autoClockOutResult = addMinutesToTime(finalShiftEnd, autoClockOutDelay);
 
     const attendance = new Attendance({
       employee: employeeId,
@@ -1200,7 +1362,8 @@ exports.createManualAttendance = async (req, res) => {
         end: finalShiftEnd,
         lateThreshold: shiftDetails.lateThreshold,
         earlyThreshold: shiftDetails.earlyThreshold,
-        autoClockOutDelay: autoClockOutDelay
+        autoClockOutDelay: autoClockOutDelay,
+        isNightShift: shiftDetails.isNightShift || false
       },
       lateMinutes,
       earlyMinutes,
@@ -1213,7 +1376,8 @@ exports.createManualAttendance = async (req, res) => {
       correctedBy: adminId,
       correctionDate: new Date(),
       remarks: remarks || 'Manual entry by admin',
-      autoClockOutTime: autoClockOutTime
+      autoClockOutTime: autoClockOutResult.time,
+      autoClockOutIsNextDay: autoClockOutResult.isNextDay || false
     });
 
     await attendance.save();
@@ -1292,9 +1456,30 @@ exports.updateAttendance = async (req, res) => {
     if (status) attendance.status = status;
     if (remarks) attendance.remarks = remarks;
 
+    // Update total hours if clock in/out changed
+    if ((clockIn !== undefined || clockOut !== undefined) && attendance.clockIn && attendance.clockOut) {
+      const diffMs = new Date(attendance.clockOut) - new Date(attendance.clockIn);
+      attendance.totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(4));
+    }
+
     if (shiftStart || shiftEnd) {
       attendance.shift.start = shiftStart || attendance.shift.start;
       attendance.shift.end = shiftEnd || attendance.shift.end;
+      
+      // Recalculate late/early if clock in exists
+      if (attendance.clockIn) {
+        const lateEarlyCheck = checkLateEarlyForEmployee(attendance.clockIn, {
+          start: attendance.shift.start,
+          end: attendance.shift.end,
+          lateThreshold: attendance.shift.lateThreshold || 5,
+          earlyThreshold: attendance.shift.earlyThreshold || -1
+        });
+        
+        attendance.lateMinutes = lateEarlyCheck.lateMinutes;
+        attendance.earlyMinutes = lateEarlyCheck.earlyMinutes;
+        attendance.isLate = lateEarlyCheck.isLate;
+        attendance.isEarly = lateEarlyCheck.isEarly;
+      }
       
       attendance.adminAdjustedShift = true;
       attendance.adminShiftAdjustment = {
@@ -1525,8 +1710,8 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
-// Update Employee Shift (Admin)
-exports.updateEmployeeShift = async (req, res) => {
+// Update Employee Shift Timing (Admin) - Renamed to avoid duplicate
+exports.updateEmployeeShiftTiming = async (req, res) => {
   try {
     const adminId = req.user._id;
     const admin = await User.findById(adminId);
@@ -1566,15 +1751,10 @@ exports.updateEmployeeShift = async (req, res) => {
 
     const startMinutes = timeToMinutes(shiftData.start);
     const endMinutes = timeToMinutes(shiftData.end);
-    if (endMinutes <= startMinutes) {
-      return res.status(400).json({
-        status: "fail",
-        message: "End time must be after start time"
-      });
-    }
+    const isNightShift = endMinutes < startMinutes;
 
     const autoClockOutDelay = shiftData.autoClockOutDelay || 10;
-    const autoClockOutTime = addMinutesToTime(shiftData.end, autoClockOutDelay);
+    const autoClockOutResult = addMinutesToTime(shiftData.end, autoClockOutDelay);
 
     // If effectiveDate provided, adjust specific date
     if (effectiveDate) {
@@ -1598,7 +1778,8 @@ exports.updateEmployeeShift = async (req, res) => {
             end: shiftData.end,
             lateThreshold: shiftData.lateThreshold || 5,
             earlyThreshold: shiftData.earlyThreshold || -1,
-            autoClockOutDelay: autoClockOutDelay
+            autoClockOutDelay: autoClockOutDelay,
+            isNightShift: isNightShift
           },
           adminAdjustedShift: true,
           adminShiftAdjustment: {
@@ -1611,7 +1792,8 @@ exports.updateEmployeeShift = async (req, res) => {
             adjustmentDate: new Date(),
             reason: reason || "Admin adjusted shift"
           },
-          autoClockOutTime: autoClockOutTime,
+          autoClockOutTime: autoClockOutResult.time,
+          autoClockOutIsNextDay: autoClockOutResult.isNextDay || false,
           remarks: `Shift adjusted by admin`
         });
       } else {
@@ -1621,7 +1803,8 @@ exports.updateEmployeeShift = async (req, res) => {
           end: shiftData.end,
           lateThreshold: shiftData.lateThreshold || 5,
           earlyThreshold: shiftData.earlyThreshold || -1,
-          autoClockOutDelay: autoClockOutDelay
+          autoClockOutDelay: autoClockOutDelay,
+          isNightShift: isNightShift
         };
         attendance.adminAdjustedShift = true;
         attendance.adminShiftAdjustment = {
@@ -1634,7 +1817,8 @@ exports.updateEmployeeShift = async (req, res) => {
           adjustmentDate: new Date(),
           reason: reason || "Admin adjusted shift"
         };
-        attendance.autoClockOutTime = autoClockOutTime;
+        attendance.autoClockOutTime = autoClockOutResult.time;
+        attendance.autoClockOutIsNextDay = autoClockOutResult.isNextDay || false;
       }
 
       await attendance.save();
@@ -1647,7 +1831,8 @@ exports.updateEmployeeShift = async (req, res) => {
           shift: {
             start: shiftData.start,
             end: shiftData.end,
-            autoClockOutTime: autoClockOutTime
+            autoClockOutTime: autoClockOutResult.time,
+            isNightShift: isNightShift
           },
           effectiveDate: targetDate
         }
@@ -1669,6 +1854,7 @@ exports.updateEmployeeShift = async (req, res) => {
           lateThreshold: employee.shiftTiming.assignedShift.lateThreshold || 5,
           earlyThreshold: employee.shiftTiming.assignedShift.earlyThreshold || -1,
           autoClockOutDelay: employee.shiftTiming.assignedShift.autoClockOutDelay || 10,
+          isNightShift: employee.shiftTiming.assignedShift.isNightShift || false,
           assignedBy: employee.shiftTiming.assignedShift.assignedBy,
           assignedAt: employee.shiftTiming.assignedShift.assignedAt,
           effectiveDate: employee.shiftTiming.assignedShift.effectiveDate,
@@ -1684,6 +1870,7 @@ exports.updateEmployeeShift = async (req, res) => {
         lateThreshold: shiftData.lateThreshold || 5,
         earlyThreshold: shiftData.earlyThreshold || -1,
         autoClockOutDelay: autoClockOutDelay,
+        isNightShift: isNightShift,
         assignedBy: adminId,
         assignedAt: now,
         effectiveDate: now,
@@ -1700,7 +1887,8 @@ exports.updateEmployeeShift = async (req, res) => {
           shift: {
             start: shiftData.start,
             end: shiftData.end,
-            autoClockOutTime: autoClockOutTime
+            autoClockOutTime: autoClockOutResult.time,
+            isNightShift: isNightShift
           },
           updatedBy: `${admin.firstName} ${admin.lastName}`
         }
@@ -1853,11 +2041,13 @@ exports.getAutoClockOutSchedule = async (req, res) => {
         shift: {
           start: shiftDetails.start,
           end: shiftDetails.end,
-          name: shiftDetails.name
+          name: shiftDetails.name,
+          isNightShift: shiftDetails.isNightShift || false
         },
         autoClockOut: {
           time: shiftDetails.autoClockOutTime,
-          delay: shiftDetails.autoClockOutDelay
+          delay: shiftDetails.autoClockOutDelay,
+          isNextDay: shiftDetails.autoClockOutIsNextDay || false
         }
       });
     }
@@ -1883,7 +2073,6 @@ exports.getAutoClockOutSchedule = async (req, res) => {
     });
   }
 };
-// ===================== NEW CONTROLLER FUNCTIONS =====================
 
 // Get Late Statistics (Employee)
 exports.getLateStatistics = async (req, res) => {
@@ -2227,6 +2416,8 @@ exports.getShiftTiming = async (req, res) => {
           lateThreshold: shiftDetails.lateThreshold,
           earlyThreshold: shiftDetails.earlyThreshold,
           autoClockOutTime: shiftDetails.autoClockOutTime,
+          autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
+          isNightShift: shiftDetails.isNightShift || false,
           isAdminAdjusted: shiftDetails.isAdminAdjusted || false,
           source: shiftDetails.source
         },
@@ -2294,6 +2485,8 @@ exports.getAdminShiftTiming = async (req, res) => {
           lateThreshold: shiftDetails.lateThreshold,
           earlyThreshold: shiftDetails.earlyThreshold,
           autoClockOutTime: shiftDetails.autoClockOutTime,
+          autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
+          isNightShift: shiftDetails.isNightShift || false,
           isAdminAdjusted: shiftDetails.isAdminAdjusted || false,
           source: shiftDetails.source
         },
@@ -2361,13 +2554,9 @@ exports.correctAttendance = async (req, res) => {
       
       // Recalculate late/early if clock in exists
       if (attendance.clockIn) {
-        const clockInTime = new Date(attendance.clockIn);
-        const clockInHour = clockInTime.getHours().toString().padStart(2, '0');
-        const clockInMinute = clockInTime.getMinutes().toString().padStart(2, '0');
-        const clockInFormatted = `${clockInHour}:${clockInMinute}`;
-        
-        const lateEarlyCheck = checkLateEarlyForEmployee(clockInTime, {
+        const lateEarlyCheck = checkLateEarlyForEmployee(attendance.clockIn, {
           start: attendance.shift.start,
+          end: attendance.shift.end,
           lateThreshold: attendance.shift.lateThreshold || 5,
           earlyThreshold: attendance.shift.earlyThreshold || -1
         });
@@ -2471,12 +2660,7 @@ exports.updateEmployeeShift = async (req, res) => {
 
     const startMinutes = timeToMinutes(startTime);
     const endMinutes = timeToMinutes(endTime);
-    if (endMinutes <= startMinutes) {
-      return res.status(400).json({
-        status: "fail",
-        message: "End time must be after start time"
-      });
-    }
+    const isNightShift = endMinutes < startMinutes;
 
     // Update employee's assigned shift
     const now = new Date();
@@ -2494,6 +2678,7 @@ exports.updateEmployeeShift = async (req, res) => {
         lateThreshold: employee.shiftTiming.assignedShift.lateThreshold || 5,
         earlyThreshold: employee.shiftTiming.assignedShift.earlyThreshold || -1,
         autoClockOutDelay: employee.shiftTiming.assignedShift.autoClockOutDelay || 10,
+        isNightShift: employee.shiftTiming.assignedShift.isNightShift || false,
         assignedBy: employee.shiftTiming.assignedShift.assignedBy,
         assignedAt: employee.shiftTiming.assignedShift.assignedAt,
         effectiveDate: employee.shiftTiming.assignedShift.effectiveDate,
@@ -2504,7 +2689,7 @@ exports.updateEmployeeShift = async (req, res) => {
 
     // Update with new shift
     const autoClockOutDelay = 10; // Default 10 minutes
-    const autoClockOutTime = addMinutesToTime(endTime, autoClockOutDelay);
+    const autoClockOutResult = addMinutesToTime(endTime, autoClockOutDelay);
 
     employee.shiftTiming.assignedShift = {
       name: 'Custom Shift',
@@ -2513,6 +2698,7 @@ exports.updateEmployeeShift = async (req, res) => {
       lateThreshold: 5,
       earlyThreshold: -1,
       autoClockOutDelay: autoClockOutDelay,
+      isNightShift: isNightShift,
       assignedBy: adminId,
       assignedAt: now,
       effectiveDate: now,
@@ -2533,7 +2719,8 @@ exports.updateEmployeeShift = async (req, res) => {
         newShift: {
           start: startTime,
           end: endTime,
-          autoClockOutTime: autoClockOutTime
+          autoClockOutTime: autoClockOutResult.time,
+          isNightShift: isNightShift
         },
         reason: reason || 'No reason provided',
         adminName: `${admin.firstName} ${admin.lastName}`
@@ -2553,7 +2740,8 @@ exports.updateEmployeeShift = async (req, res) => {
         newShift: {
           start: startTime,
           end: endTime,
-          autoClockOutTime: autoClockOutTime
+          autoClockOutTime: autoClockOutResult.time,
+          isNightShift: isNightShift
         },
         updatedBy: `${admin.firstName} ${admin.lastName}`,
         updatedAt: now
@@ -2633,14 +2821,26 @@ exports.createBulkAttendance = async (req, res) => {
           existingAttendance.clockOut = clockOut ? new Date(clockOut) : null;
           existingAttendance.totalHours = totalHours;
           existingAttendance.status = record.status;
+          
+          const shiftStart = defaultShiftStart || record.shiftStart || '09:00';
+          const shiftEnd = defaultShiftEnd || record.shiftEnd || '18:00';
+          const shiftStartMinutes = timeToMinutes(shiftStart);
+          const shiftEndMinutes = timeToMinutes(shiftEnd);
+          const isNightShift = shiftEndMinutes < shiftStartMinutes;
+          const autoClockOutResult = addMinutesToTime(shiftEnd, 10);
+          
           existingAttendance.shift = {
             name: 'Bulk Updated',
-            start: defaultShiftStart || record.shiftStart || '09:00',
-            end: defaultShiftEnd || record.shiftEnd || '18:00',
+            start: shiftStart,
+            end: shiftEnd,
             lateThreshold: 5,
             earlyThreshold: -1,
-            autoClockOutDelay: 10
+            autoClockOutDelay: 10,
+            isNightShift: isNightShift
           };
+          
+          existingAttendance.autoClockOutTime = autoClockOutResult.time;
+          existingAttendance.autoClockOutIsNextDay = autoClockOutResult.isNextDay || false;
           existingAttendance.remarks = record.remarks || 'Updated via bulk import';
           existingAttendance.correctedByAdmin = true;
           existingAttendance.correctedBy = adminId;
@@ -2652,6 +2852,9 @@ exports.createBulkAttendance = async (req, res) => {
           // Create new record
           const shiftStart = defaultShiftStart || record.shiftStart || '09:00';
           const shiftEnd = defaultShiftEnd || record.shiftEnd || '18:00';
+          const shiftStartMinutes = timeToMinutes(shiftStart);
+          const shiftEndMinutes = timeToMinutes(shiftEnd);
+          const isNightShift = shiftEndMinutes < shiftStartMinutes;
           
           // Calculate late/early for Present status
           let lateMinutes = 0;
@@ -2663,6 +2866,7 @@ exports.createBulkAttendance = async (req, res) => {
             const clockInTime = new Date(clockIn);
             const lateEarlyCheck = checkLateEarlyForEmployee(clockInTime, {
               start: shiftStart,
+              end: shiftEnd,
               lateThreshold: 5,
               earlyThreshold: -1
             });
@@ -2673,7 +2877,7 @@ exports.createBulkAttendance = async (req, res) => {
           }
 
           const autoClockOutDelay = 10;
-          const autoClockOutTime = addMinutesToTime(shiftEnd, autoClockOutDelay);
+          const autoClockOutResult = addMinutesToTime(shiftEnd, autoClockOutDelay);
 
           const newAttendance = new Attendance({
             employee: employeeId,
@@ -2688,7 +2892,8 @@ exports.createBulkAttendance = async (req, res) => {
               end: shiftEnd,
               lateThreshold: 5,
               earlyThreshold: -1,
-              autoClockOutDelay
+              autoClockOutDelay,
+              isNightShift: isNightShift
             },
             lateMinutes,
             earlyMinutes,
@@ -2701,7 +2906,8 @@ exports.createBulkAttendance = async (req, res) => {
             correctedBy: adminId,
             correctionDate: new Date(),
             remarks: record.remarks || 'Created via bulk import',
-            autoClockOutTime,
+            autoClockOutTime: autoClockOutResult.time,
+            autoClockOutIsNextDay: autoClockOutResult.isNextDay || false,
             autoGenerated: record.status !== 'Present'
           });
 
@@ -2787,6 +2993,7 @@ exports.exportAttendanceData = async (req, res) => {
         { header: 'Early Minutes', key: 'earlyMinutes', width: 12 },
         { header: 'Shift Start', key: 'shiftStart', width: 12 },
         { header: 'Shift End', key: 'shiftEnd', width: 12 },
+        { header: 'Night Shift', key: 'isNightShift', width: 10 },
         { header: 'Remarks', key: 'remarks', width: 30 }
       ];
 
@@ -2803,6 +3010,7 @@ exports.exportAttendanceData = async (req, res) => {
           earlyMinutes: record.earlyMinutes || 0,
           shiftStart: record.shift?.start || '09:00',
           shiftEnd: record.shift?.end || '18:00',
+          isNightShift: record.shift?.isNightShift ? 'Yes' : 'No',
           remarks: record.remarks || ''
         });
       });
@@ -2813,11 +3021,11 @@ exports.exportAttendanceData = async (req, res) => {
       const absentDays = attendance.filter(record => record.status === 'Absent').length;
 
       worksheet.addRow([]);
-      worksheet.addRow(['Summary', '', '', '', '', '', '', '', '', '']);
-      worksheet.addRow(['Total Days', attendance.length, '', '', '', '', '', '', '', '']);
-      worksheet.addRow(['Present Days', presentDays, '', '', '', '', '', '', '', '']);
-      worksheet.addRow(['Absent Days', absentDays, '', '', '', '', '', '', '', '']);
-      worksheet.addRow(['Total Hours', totalHours.toFixed(2), '', '', '', '', '', '', '', '']);
+      worksheet.addRow(['Summary', '', '', '', '', '', '', '', '', '', '']);
+      worksheet.addRow(['Total Days', attendance.length, '', '', '', '', '', '', '', '', '']);
+      worksheet.addRow(['Present Days', presentDays, '', '', '', '', '', '', '', '', '']);
+      worksheet.addRow(['Absent Days', absentDays, '', '', '', '', '', '', '', '', '']);
+      worksheet.addRow(['Total Hours', totalHours.toFixed(2), '', '', '', '', '', '', '', '', '']);
 
       // Set response headers
       res.setHeader('Content-Type', 'text/csv');
@@ -2912,6 +3120,7 @@ exports.exportAdminAttendanceData = async (req, res) => {
         { header: 'Late Minutes', key: 'lateMinutes', width: 12 },
         { header: 'Early Minutes', key: 'earlyMinutes', width: 12 },
         { header: 'Shift', key: 'shift', width: 20 },
+        { header: 'Night Shift', key: 'isNightShift', width: 10 },
         { header: 'Remarks', key: 'remarks', width: 30 }
       ];
 
@@ -2929,6 +3138,7 @@ exports.exportAdminAttendanceData = async (req, res) => {
           lateMinutes: record.lateMinutes || 0,
           earlyMinutes: record.earlyMinutes || 0,
           shift: record.shift ? `${record.shift.start} - ${record.shift.end}` : '09:00 - 18:00',
+          isNightShift: record.shift?.isNightShift ? 'Yes' : 'No',
           remarks: record.remarks || ''
         });
       });
@@ -2992,7 +3202,7 @@ exports.checkWorkingDay = async (req, res) => {
 };
 
 // Manual Trigger Auto Clock Out
-exports.triggerAutoClockOut = async (req, res) => {
+exports.triggerManualAutoClockOut = async (req, res) => {
   try {
     const adminId = req.user._id;
     const admin = await User.findById(adminId);
@@ -3019,6 +3229,7 @@ exports.triggerAutoClockOut = async (req, res) => {
     });
   }
 };
+
 // Get Admin Employee Attendance
 exports.getAdminEmployeeAttendance = async (req, res) => {
   try {
@@ -3147,7 +3358,7 @@ exports.getAdminEmployeeAttendance = async (req, res) => {
 };
 
 // Bulk Attendance Creation (Improved)
-exports.createBulkAttendance = async (req, res) => {
+exports.createBulkAttendanceV2 = async (req, res) => {
   try {
     const adminId = req.user._id;
     const admin = await User.findById(adminId);
@@ -3274,15 +3485,24 @@ exports.createBulkAttendance = async (req, res) => {
             existingAttendance.totalHours = 0;
           }
           
+          // Calculate night shift
+          const shiftStartMinutes = timeToMinutes(defaultShiftStart);
+          const shiftEndMinutes = timeToMinutes(defaultShiftEnd);
+          const isNightShift = shiftEndMinutes < shiftStartMinutes;
+          const autoClockOutResult = addMinutesToTime(defaultShiftEnd, 10);
+          
           existingAttendance.shift = {
             name: 'Bulk Updated',
             start: defaultShiftStart,
             end: defaultShiftEnd,
             lateThreshold: 5,
             earlyThreshold: -1,
-            autoClockOutDelay: 10
+            autoClockOutDelay: 10,
+            isNightShift: isNightShift
           };
           
+          existingAttendance.autoClockOutTime = autoClockOutResult.time;
+          existingAttendance.autoClockOutIsNextDay = autoClockOutResult.isNextDay || false;
           existingAttendance.remarks = `Bulk attendance updated for ${dateString}`;
           existingAttendance.correctedByAdmin = true;
           existingAttendance.correctedBy = adminId;
@@ -3292,6 +3512,11 @@ exports.createBulkAttendance = async (req, res) => {
           results.updated++;
         } else {
           // Create new attendance record
+          const shiftStartMinutes = timeToMinutes(defaultShiftStart);
+          const shiftEndMinutes = timeToMinutes(defaultShiftEnd);
+          const isNightShift = shiftEndMinutes < shiftStartMinutes;
+          const autoClockOutResult = addMinutesToTime(defaultShiftEnd, 10);
+          
           const attendance = new Attendance({
             employee: employeeId,
             date: currentDate,
@@ -3305,7 +3530,8 @@ exports.createBulkAttendance = async (req, res) => {
               end: defaultShiftEnd,
               lateThreshold: 5,
               earlyThreshold: -1,
-              autoClockOutDelay: 10
+              autoClockOutDelay: 10,
+              isNightShift: isNightShift
             },
             ipAddress: 'System',
             device: { type: 'system', os: 'Bulk Import' },
@@ -3314,7 +3540,8 @@ exports.createBulkAttendance = async (req, res) => {
             correctedBy: adminId,
             correctionDate: new Date(),
             remarks: `Bulk attendance created for ${dateString}`,
-            autoClockOutTime: addMinutesToTime(defaultShiftEnd, 10)
+            autoClockOutTime: autoClockOutResult.time,
+            autoClockOutIsNextDay: autoClockOutResult.isNextDay || false
           });
           
           await attendance.save();
@@ -3331,7 +3558,7 @@ exports.createBulkAttendance = async (req, res) => {
     
     await addSessionActivity({
       userId: adminId,
-      action: "Bulk Attendance Created",
+      action: "Bulk Attendance Created V2",
       target: employeeId,
       targetType: "User",
       details: {
@@ -3358,3 +3585,747 @@ exports.createBulkAttendance = async (req, res) => {
     });
   }
 };
+
+// Get Employee Attendance Calendar
+exports.getEmployeeCalendar = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { year, month } = req.query;
+
+    const targetYear = year || new Date().getFullYear();
+    const targetMonth = month ? parseInt(month) - 1 : new Date().getMonth();
+
+    const startDate = new Date(targetYear, targetMonth, 1);
+    const endDate = new Date(targetYear, targetMonth + 1, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    const matchCondition = {
+      employee: userId,
+      date: { $gte: startDate, $lte: endDate },
+      isDeleted: false
+    };
+
+    const attendance = await Attendance.find(matchCondition)
+      .sort({ date: 1 })
+      .lean();
+
+    // Generate calendar days
+    const calendar = [];
+    const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const currentDate = new Date(targetYear, targetMonth, day);
+      const dateString = currentDate.toISOString().split('T')[0];
+      
+      const attendanceRecord = attendance.find(record => 
+        record.date.toISOString().split('T')[0] === dateString
+      );
+
+      const dayStatus = await checkDayStatus(userId, currentDate);
+      
+      calendar.push({
+        date: dateString,
+        day: day,
+        dayName: currentDate.toLocaleString('en-US', { weekday: 'short' }),
+        isWorkingDay: dayStatus.isWorkingDay,
+        status: attendanceRecord ? attendanceRecord.status : (dayStatus.isWorkingDay ? 'Not Recorded' : dayStatus.status),
+        clockIn: attendanceRecord?.clockIn,
+        clockOut: attendanceRecord?.clockOut,
+        totalHours: attendanceRecord?.totalHours,
+        isLate: attendanceRecord?.isLate,
+        lateMinutes: attendanceRecord?.lateMinutes,
+        isEarly: attendanceRecord?.isEarly,
+        earlyMinutes: attendanceRecord?.earlyMinutes,
+        remarks: attendanceRecord?.remarks
+      });
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        year: targetYear,
+        month: targetMonth + 1,
+        monthName: new Date(targetYear, targetMonth, 1).toLocaleString('default', { month: 'long' }),
+        totalDays: daysInMonth,
+        calendar,
+        summary: {
+          present: calendar.filter(day => day.status === 'Present' || day.status === 'Late' || day.status === 'Early').length,
+          absent: calendar.filter(day => day.status === 'Absent').length,
+          leave: calendar.filter(day => day.status.includes('Leave')).length,
+          holiday: calendar.filter(day => day.status === 'Govt Holiday' || day.status === 'Off Day').length,
+          weeklyOff: calendar.filter(day => day.status === 'Weekly Off').length
+        }
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+// Get Monthly Report
+exports.getMonthlyReport = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { year, month } = req.query;
+
+    const targetYear = year || new Date().getFullYear();
+    const targetMonth = month ? parseInt(month) - 1 : new Date().getMonth();
+
+    const startDate = new Date(targetYear, targetMonth, 1);
+    const endDate = new Date(targetYear, targetMonth + 1, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    const matchCondition = {
+      employee: userId,
+      date: { $gte: startDate, $lte: endDate },
+      isDeleted: false
+    };
+
+    const attendance = await Attendance.find(matchCondition)
+      .sort({ date: 1 })
+      .lean();
+
+    // Calculate statistics
+    let totalPresent = 0;
+    let totalAbsent = 0;
+    let totalLeave = 0;
+    let totalHoliday = 0;
+    let totalWeeklyOff = 0;
+    let totalHours = 0;
+    let totalLateMinutes = 0;
+    let lateCount = 0;
+    let totalEarlyMinutes = 0;
+    let earlyCount = 0;
+
+    attendance.forEach(record => {
+      if (record.status === 'Present' || record.status === 'Late' || record.status === 'Early') {
+        totalPresent++;
+        totalHours += record.totalHours || 0;
+        
+        if (record.isLate) {
+          lateCount++;
+          totalLateMinutes += record.lateMinutes || 0;
+        }
+        
+        if (record.isEarly) {
+          earlyCount++;
+          totalEarlyMinutes += record.earlyMinutes || 0;
+        }
+      } else if (record.status === 'Absent') {
+        totalAbsent++;
+      } else if (record.status.includes('Leave')) {
+        totalLeave++;
+      } else if (record.status === 'Govt Holiday' || record.status === 'Off Day') {
+        totalHoliday++;
+      } else if (record.status === 'Weekly Off') {
+        totalWeeklyOff++;
+      }
+    });
+
+    // Get employee details
+    const employee = await User.findById(userId).select('firstName lastName employeeId department designation');
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department,
+          designation: employee.designation
+        },
+        period: {
+          year: targetYear,
+          month: targetMonth + 1,
+          monthName: new Date(targetYear, targetMonth, 1).toLocaleString('default', { month: 'long' }),
+          startDate,
+          endDate
+        },
+        statistics: {
+          totalDays: attendance.length,
+          totalPresent,
+          totalAbsent,
+          totalLeave,
+          totalHoliday,
+          totalWeeklyOff,
+          totalHours: parseFloat(totalHours.toFixed(2)),
+          averageHours: totalPresent > 0 ? parseFloat((totalHours / totalPresent).toFixed(2)) : 0,
+          lateCount,
+          averageLateMinutes: lateCount > 0 ? parseFloat((totalLateMinutes / lateCount).toFixed(1)) : 0,
+          earlyCount,
+          averageEarlyMinutes: earlyCount > 0 ? parseFloat((totalEarlyMinutes / earlyCount).toFixed(1)) : 0,
+          attendanceRate: attendance.length > 0 ? parseFloat(((totalPresent / attendance.length) * 100).toFixed(2)) : 0
+        },
+        dailyRecords: attendance.map(record => ({
+          date: record.date,
+          clockIn: record.clockIn,
+          clockOut: record.clockOut,
+          totalHours: record.totalHours,
+          status: record.status,
+          isLate: record.isLate,
+          lateMinutes: record.lateMinutes,
+          isEarly: record.isEarly,
+          earlyMinutes: record.earlyMinutes,
+          remarks: record.remarks,
+          shift: record.shift
+        }))
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+// Get Attendance Analytics
+exports.getAttendanceAnalytics = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { startDate, endDate } = req.query;
+
+    const defaultEndDate = new Date();
+    const defaultStartDate = new Date();
+    defaultStartDate.setDate(defaultStartDate.getDate() - 30);
+
+    const matchCondition = {
+      employee: userId,
+      date: { 
+        $gte: startDate ? new Date(startDate) : defaultStartDate,
+        $lte: endDate ? new Date(endDate) : defaultEndDate
+      },
+      isDeleted: false
+    };
+
+    const attendance = await Attendance.find(matchCondition)
+      .sort({ date: 1 })
+      .lean();
+
+    // Prepare data for charts
+    const dailyData = [];
+    const weeklyData = {};
+    const monthlyData = {};
+
+    attendance.forEach(record => {
+      const date = new Date(record.date);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const weekNumber = Math.ceil(date.getDate() / 7);
+      const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
+      const weekKey = `${year}-W${weekNumber}`;
+
+      // Daily data
+      dailyData.push({
+        date: record.date,
+        status: record.status,
+        totalHours: record.totalHours || 0,
+        isLate: record.isLate,
+        lateMinutes: record.lateMinutes || 0
+      });
+
+      // Weekly data
+      if (!weeklyData[weekKey]) {
+        weeklyData[weekKey] = {
+          week: weekKey,
+          present: 0,
+          absent: 0,
+          leave: 0,
+          totalHours: 0
+        };
+      }
+
+      if (record.status === 'Present' || record.status === 'Late' || record.status === 'Early') {
+        weeklyData[weekKey].present++;
+        weeklyData[weekKey].totalHours += record.totalHours || 0;
+      } else if (record.status === 'Absent') {
+        weeklyData[weekKey].absent++;
+      } else if (record.status.includes('Leave')) {
+        weeklyData[weekKey].leave++;
+      }
+
+      // Monthly data
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = {
+          month: monthKey,
+          present: 0,
+          absent: 0,
+          leave: 0,
+          totalHours: 0
+        };
+      }
+
+      if (record.status === 'Present' || record.status === 'Late' || record.status === 'Early') {
+        monthlyData[monthKey].present++;
+        monthlyData[monthKey].totalHours += record.totalHours || 0;
+      } else if (record.status === 'Absent') {
+        monthlyData[monthKey].absent++;
+      } else if (record.status.includes('Leave')) {
+        monthlyData[monthKey].leave++;
+      }
+    });
+
+    // Calculate trends
+    const statusTrends = {
+      present: 0,
+      absent: 0,
+      late: 0,
+      early: 0,
+      leave: 0
+    };
+
+    attendance.forEach(record => {
+      if (record.status === 'Present') {
+        statusTrends.present++;
+      } else if (record.status === 'Absent') {
+        statusTrends.absent++;
+      } else if (record.status === 'Late') {
+        statusTrends.late++;
+      } else if (record.status === 'Early') {
+        statusTrends.early++;
+      } else if (record.status.includes('Leave')) {
+        statusTrends.leave++;
+      }
+    });
+
+    // Calculate average hours per day
+    const totalHours = attendance.reduce((sum, record) => sum + (record.totalHours || 0), 0);
+    const presentDays = attendance.filter(record => 
+      record.status === 'Present' || record.status === 'Late' || record.status === 'Early'
+    ).length;
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        period: {
+          startDate: startDate || defaultStartDate,
+          endDate: endDate || defaultEndDate
+        },
+        summary: {
+          totalRecords: attendance.length,
+          presentDays,
+          absentDays: statusTrends.absent,
+          leaveDays: statusTrends.leave,
+          lateDays: statusTrends.late,
+          earlyDays: statusTrends.early,
+          totalHours: parseFloat(totalHours.toFixed(2)),
+          averageHoursPerDay: presentDays > 0 ? parseFloat((totalHours / presentDays).toFixed(2)) : 0,
+          attendanceRate: attendance.length > 0 ? parseFloat(((presentDays / attendance.length) * 100).toFixed(2)) : 0
+        },
+        analytics: {
+          dailyData,
+          weeklyData: Object.values(weeklyData),
+          monthlyData: Object.values(monthlyData),
+          statusDistribution: statusTrends,
+          trends: {
+            averageHours: parseFloat(totalHours.toFixed(2)),
+            presentPercentage: attendance.length > 0 ? parseFloat(((presentDays / attendance.length) * 100).toFixed(2)) : 0,
+            latePercentage: presentDays > 0 ? parseFloat(((statusTrends.late / presentDays) * 100).toFixed(2)) : 0,
+            earlyPercentage: presentDays > 0 ? parseFloat(((statusTrends.early / presentDays) * 100).toFixed(2)) : 0
+          }
+        }
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+// Get Employee Today's Schedule
+exports.getEmployeeSchedule = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { date } = req.query;
+
+    const targetDate = date ? new Date(date) : new Date();
+    targetDate.setHours(0, 0, 0, 0);
+
+    const shiftDetails = await getEmployeeShiftDetails(userId, targetDate);
+    const dayStatus = await checkDayStatus(userId, targetDate);
+    const attendance = await Attendance.findOne({
+      employee: userId,
+      date: targetDate,
+      isDeleted: false
+    });
+
+    // Calculate remaining time for auto clock out
+    let timeRemaining = null;
+    let autoClockOutStatus = 'not_applicable';
+
+    if (attendance && attendance.clockIn && !attendance.clockOut) {
+      const currentTime = moment().tz(TIMEZONE);
+      const todayStr = targetDate.toISOString().split('T')[0];
+      
+      // Parse auto clock out time
+      const [autoHour, autoMinute] = shiftDetails.autoClockOutTime.split(':').map(Number);
+      let autoClockOutMoment = moment.tz(`${todayStr} ${shiftDetails.autoClockOutTime}`, 'YYYY-MM-DD HH:mm', TIMEZONE);
+      
+      // If auto clock out is next day, add 1 day
+      if (shiftDetails.autoClockOutIsNextDay) {
+        autoClockOutMoment = autoClockOutMoment.add(1, 'day');
+      }
+      
+      const diffMinutes = Math.floor(autoClockOutMoment.diff(currentTime, 'minutes', true));
+      
+      if (diffMinutes > 0) {
+        timeRemaining = diffMinutes;
+        autoClockOutStatus = 'pending';
+      } else if (diffMinutes === 0) {
+        autoClockOutStatus = 'due';
+      } else {
+        autoClockOutStatus = 'overdue';
+      }
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        date: targetDate,
+        dayStatus: {
+          isWorkingDay: dayStatus.isWorkingDay,
+          status: dayStatus.status,
+          reason: dayStatus.reason
+        },
+        shiftDetails: {
+          name: shiftDetails.name,
+          start: shiftDetails.start,
+          end: shiftDetails.end,
+          autoClockOutTime: shiftDetails.autoClockOutTime,
+          autoClockOutDelay: shiftDetails.autoClockOutDelay,
+          autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
+          lateThreshold: shiftDetails.lateThreshold,
+          earlyThreshold: shiftDetails.earlyThreshold,
+          isNightShift: shiftDetails.isNightShift || false,
+          source: shiftDetails.source
+        },
+        attendance: attendance ? {
+          clockIn: attendance.clockIn,
+          clockOut: attendance.clockOut,
+          status: attendance.status,
+          totalHours: attendance.totalHours,
+          isLate: attendance.isLate,
+          lateMinutes: attendance.lateMinutes,
+          isEarly: attendance.isEarly,
+          earlyMinutes: attendance.earlyMinutes,
+          remarks: attendance.remarks
+        } : null,
+        autoClockOut: {
+          status: autoClockOutStatus,
+          timeRemaining,
+          nextCheck: 'Every 5 minutes'
+        },
+        actions: {
+          canClockIn: dayStatus.isWorkingDay && (!attendance || !attendance.clockIn),
+          canClockOut: attendance && attendance.clockIn && !attendance.clockOut,
+          isClockedIn: attendance && attendance.clockIn,
+          isClockedOut: attendance && attendance.clockOut
+        }
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+// Quick Clock In/Out
+exports.quickClockAction = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { action, location } = req.body;
+
+    if (!action || !['clockin', 'clockout'].includes(action.toLowerCase())) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Valid action required: clockin or clockout"
+      });
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (action.toLowerCase() === 'clockin') {
+      // Check if already clocked in
+      const existingAttendance = await Attendance.findOne({
+        employee: userId,
+        date: today,
+        clockIn: { $exists: true },
+        isDeleted: false
+      });
+
+      if (existingAttendance && existingAttendance.clockIn) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Already clocked in today"
+        });
+      }
+
+      // Call clockIn function
+      req.body = { timestamp: new Date().toISOString(), location };
+      return exports.clockIn(req, res);
+    } else {
+      // Check if clocked in
+      const existingAttendance = await Attendance.findOne({
+        employee: userId,
+        date: today,
+        clockIn: { $exists: true },
+        clockOut: { $exists: false },
+        isDeleted: false
+      });
+
+      if (!existingAttendance || !existingAttendance.clockIn) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Clock in first"
+        });
+      }
+
+      if (existingAttendance.clockOut) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Already clocked out today"
+        });
+      }
+
+      // Call clockOut function
+      req.body = { timestamp: new Date().toISOString(), location };
+      return exports.clockOut(req, res);
+    }
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+// Get Attendance Notifications
+exports.getAttendanceNotifications = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const notifications = [];
+    
+    // Check today's attendance status
+    const attendance = await Attendance.findOne({
+      employee: userId,
+      date: today,
+      isDeleted: false
+    });
+
+    const shiftDetails = await getEmployeeShiftDetails(userId, today);
+    const dayStatus = await checkDayStatus(userId, today);
+
+    // Notification for non-working day
+    if (!dayStatus.isWorkingDay) {
+      notifications.push({
+        type: 'info',
+        title: `${dayStatus.status}`,
+        message: dayStatus.reason,
+        priority: 'low',
+        timestamp: new Date()
+      });
+    }
+
+    // Notification if not clocked in on working day
+    if (dayStatus.isWorkingDay && (!attendance || !attendance.clockIn)) {
+      const currentHour = new Date().getHours();
+      
+      if (currentHour >= 9 && currentHour < 12) {
+        notifications.push({
+          type: 'warning',
+          title: 'Clock In Reminder',
+          message: 'You haven\'t clocked in yet today',
+          priority: 'medium',
+          timestamp: new Date()
+        });
+      }
+    }
+
+    // Notification for late clock in
+    if (attendance && attendance.isLate) {
+      notifications.push({
+        type: 'warning',
+        title: 'Late Arrival',
+        message: `You were ${attendance.lateMinutes} minutes late today`,
+        priority: 'medium',
+        timestamp: new Date()
+      });
+    }
+
+    // Notification for early clock in
+    if (attendance && attendance.isEarly) {
+      notifications.push({
+        type: 'info',
+        title: 'Early Arrival',
+        message: `You arrived ${attendance.earlyMinutes} minutes early today`,
+        priority: 'low',
+        timestamp: new Date()
+      });
+    }
+
+    // Notification for pending clock out
+    if (attendance && attendance.clockIn && !attendance.clockOut) {
+      const currentTime = new Date();
+      const [endHour, endMinute] = shiftDetails.end.split(':').map(Number);
+      const shiftEndTime = new Date(today);
+      shiftEndTime.setHours(endHour, endMinute, 0, 0);
+      
+      if (currentTime >= shiftEndTime) {
+        notifications.push({
+          type: 'warning',
+          title: 'Clock Out Reminder',
+          message: 'Remember to clock out',
+          priority: 'high',
+          timestamp: new Date()
+        });
+      }
+    }
+
+    // Sort notifications by priority
+    const priorityOrder = { high: 3, medium: 2, low: 1 };
+    notifications.sort((a, b) => priorityOrder[b.priority] - priorityOrder[a.priority]);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        total: notifications.length,
+        unread: notifications.length,
+        notifications
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+// Get Attendance History by Date Range
+exports.getAttendanceHistory = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { startDate, endDate, status, includeDetails = true } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Start date and end date are required"
+      });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    const matchCondition = {
+      employee: userId,
+      date: { $gte: start, $lte: end },
+      isDeleted: false
+    };
+
+    if (status) {
+      matchCondition.status = status;
+    }
+
+    const attendance = await Attendance.find(matchCondition)
+      .sort({ date: -1 })
+      .lean();
+
+    // Get employee details
+    const employee = await User.findById(userId).select('firstName lastName employeeId department');
+
+    // Calculate summary
+    const summary = {
+      totalDays: attendance.length,
+      present: 0,
+      absent: 0,
+      late: 0,
+      early: 0,
+      leave: 0,
+      holiday: 0,
+      weeklyOff: 0,
+      totalHours: 0,
+      averageHours: 0
+    };
+
+    attendance.forEach(record => {
+      if (record.status === 'Present' || record.status === 'Late' || record.status === 'Early') {
+        summary.present++;
+        summary.totalHours += record.totalHours || 0;
+        
+        if (record.isLate) summary.late++;
+        if (record.isEarly) summary.early++;
+      } else if (record.status === 'Absent') {
+        summary.absent++;
+      } else if (record.status.includes('Leave')) {
+        summary.leave++;
+      } else if (record.status === 'Govt Holiday' || record.status === 'Off Day') {
+        summary.holiday++;
+      } else if (record.status === 'Weekly Off') {
+        summary.weeklyOff++;
+      }
+    });
+
+    summary.averageHours = summary.present > 0 ? parseFloat((summary.totalHours / summary.present).toFixed(2)) : 0;
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          department: employee.department
+        },
+        period: {
+          startDate: start,
+          endDate: end,
+          totalDays: Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1
+        },
+        summary,
+        records: includeDetails ? attendance.map(record => ({
+          date: record.date,
+          clockIn: record.clockIn,
+          clockOut: record.clockOut,
+          totalHours: record.totalHours,
+          status: record.status,
+          isLate: record.isLate,
+          lateMinutes: record.lateMinutes,
+          isEarly: record.isEarly,
+          earlyMinutes: record.earlyMinutes,
+          shift: record.shift,
+          remarks: record.remarks,
+          correctedByAdmin: record.correctedByAdmin,
+          autoMarked: record.autoMarked,
+          markedAbsent: record.markedAbsent
+        })) : []
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+
+module.exports = exports;

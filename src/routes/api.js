@@ -56,7 +56,7 @@ router.get('/session/:id', protect, adminOnly, userController.getSessionById);
 // =================== Employee Routes ====================  
 router.get("/users/getProfile", protect,userController.getProfile); 
 router.post("/users/updateProfile", protect, userController.updateProfile);
-router.put("/users/updateProfile", protect, userController.updateProfile);     
+// router.put("/users/updateProfile", protect, userController.updateProfile);     
 
 // =================== ProfileImage Routes ==================== 
 router.post('/upload-profile-picture',protect,upload.single('profilePicture'),profileController.uploadProfilePicture);
@@ -232,8 +232,6 @@ router.post('/send-welcome-email', async (req, res) => {
     }
 });
 
-// ===================== ENHANCED ROUTES =====================
-
 // Employee Routes
 router.get('/today-status', protect, attendanceController.getTodayStatus);
 router.get('/records', protect, attendanceController.getAttendanceRecords);
@@ -246,6 +244,15 @@ router.get('/check-working-day', protect, attendanceController.checkWorkingDay);
 router.post('/clock-in', protect, attendanceController.clockIn);
 router.post('/clock-out', protect, attendanceController.clockOut);
 
+// Enhanced Employee Routes
+router.get('/calendar', protect, attendanceController.getEmployeeCalendar);
+router.get('/monthly-report', protect, attendanceController.getMonthlyReport);
+router.get('/analytics', protect, attendanceController.getAttendanceAnalytics);
+router.get('/schedule', protect, attendanceController.getEmployeeSchedule);
+router.post('/quick-action', protect, attendanceController.quickClockAction);
+router.get('/notifications', protect, attendanceController.getAttendanceNotifications);
+router.get('/history', protect, attendanceController.getAttendanceHistory);
+
 // Admin Routes
 router.get('/admin/all-records', protect, adminOnly, attendanceController.getAllAttendanceRecords);
 router.get('/admin/summary', protect, adminOnly, attendanceController.getDashboardStats);
@@ -254,17 +261,37 @@ router.get('/admin/late-early-statistics', protect, adminOnly, attendanceControl
 router.get('/admin/employee-attendance', protect, adminOnly, attendanceController.getAdminEmployeeAttendance);
 router.get('/admin/shift-timing', protect, adminOnly, attendanceController.getAdminShiftTiming);
 router.get('/admin/export', protect, adminOnly, attendanceController.exportAdminAttendanceData);
-router.get('/admin/employee-shift-timing', protect, adminOnly, attendanceController.getAdminShiftTiming);
 router.get('/admin/auto-clock-out-schedule', protect, adminOnly, attendanceController.getAutoClockOutSchedule);
 
-// Admin Action Routes
-router.post('/admin/attendance/manual', protect, adminOnly, attendanceController.createManualAttendance);
-router.post('/admin/attendance/bulk', protect, adminOnly, attendanceController.createBulkAttendance);
+// Enhanced Admin Routes
+router.get('/admin/employee-calendar', protect, adminOnly, attendanceController.getEmployeeCalendar);
+router.get('/admin/employee-monthly-report', protect, adminOnly, attendanceController.getMonthlyReport);
+router.get('/admin/employee-analytics', protect, adminOnly, attendanceController.getAttendanceAnalytics);
+router.get('/admin/employee-schedule', protect, adminOnly, attendanceController.getEmployeeSchedule);
+
+// Admin CRUD Routes
+router.post('/admin/manual', protect, adminOnly, attendanceController.createManualAttendance);
+router.put('/admin/update/:id', protect, adminOnly, attendanceController.updateAttendance);
+router.delete('/admin/delete/:id', protect, adminOnly, attendanceController.deleteAttendance);
+
+// Admin Correction Routes
 router.put('/admin/correct/:id', protect, adminOnly, attendanceController.correctAttendance);
+router.post('/admin/bulk', protect, adminOnly, attendanceController.createBulkAttendance);
+router.post('/admin/bulk-v2', protect, adminOnly, attendanceController.createBulkAttendanceV2);
+
+// Admin Shift Management Routes
 router.put('/admin/update-shift', protect, adminOnly, attendanceController.updateEmployeeShift);
+router.put('/admin/update-shift-timing', protect, adminOnly, attendanceController.updateEmployeeShiftTiming);
+
+// Admin Trigger Routes
 router.post('/admin/trigger-auto-clockout', protect, adminOnly, attendanceController.triggerAutoClockOut);
+router.post('/admin/trigger-manual-auto-clockout', protect, adminOnly, attendanceController.triggerManualAutoClockOut);
 router.post('/admin/trigger-absent-marking', protect, adminOnly, attendanceController.triggerAbsentMarking);
 router.post('/admin/trigger-tomorrow-records', protect, adminOnly, attendanceController.triggerTomorrowRecords);
+
+// System Auto Routes (Internal use - can be protected differently)
+// router.post('/auto-mark-absent', attendanceController.autoMarkAbsentForAllEmployees);
+
 // All routes require authentication 
 
 // ================= Shift ROUTES ================= 
