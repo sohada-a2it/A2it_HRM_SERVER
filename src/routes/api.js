@@ -43,7 +43,21 @@ router.post('/logout-all', protect, userController.logoutAllSessions);
 router.get('/profile/:id', protect, adminOnly, userController.getUserById); 
 router.get('/admin/users/search', protect, adminOnly, userController.searchUsers); 
 router.get('/admin/users/:id/summary', protect, adminOnly, userController.getUserSummary);
+// ================= ONSITE BENEFITS MANAGEMENT ROUTES =================
+router.get('/admin/onsite-employees', 
+  protect, adminOnly,
+  userController.getOnsiteEmployees
+);
 
+router.put('/admin/employee/:employeeId/onsite-benefits', 
+  protect, adminOnly, 
+  userController.updateOnsiteBenefitsSettings
+);
+
+router.post('/admin/bulk-onsite-benefits', 
+  protect, adminOnly,
+  userController.bulkUpdateOnsiteBenefits
+);
 // =================== OTP Routes ====================
 router.post('/admin/request-otp', authController.AdminRequestOtp);
 router.post('/admin/verify-otp', authController.AdminVerifyOtp);
@@ -569,4 +583,5 @@ router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseS
 // router.post('/apply-to-payroll', protect, adminOnly, mealController.applyFoodCostToPayroll);
 // router.post('/bulk-apply', protect, adminOnly, mealController.bulkApplyFoodCostToPayrolls);
 // router.get('/summary', protect, adminOnly, mealController.getMealRequestSummary); 
+
 module.exports = router;  

@@ -131,12 +131,58 @@ const userSchema = new mongoose.Schema(
     enum: ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'],
     default: 'full-time'
   },
-    
-    // ============ MEAL/FOOD ALLOWANCE FIELDS ============
-    mealEligibility: {
-      type: Boolean,
-      default: false
-    }, 
+    // ============ ONSITE BENEFITS FIELDS ============ (NEW)
+onsiteBenefits: {
+  // DEDUCTION - Salary থেকে বাদ যাবে
+  fixedDeduction: {
+    type: Number,
+    default: 500, // মাসিক ৫০০ টাকা deduction
+    min: 0
+  },
+  
+  // ALLOWANCE - Salary-তে যোগ হবে (Present Days × 10)
+  dailyAllowanceRate: {
+    type: Number,
+    default: 10, // দৈনিক ১০ টাকা allowance
+    min: 0
+  },
+  
+  isActive: {
+    type: Boolean,
+    default: function() {
+      // শুধু onsite employees এর জন্য
+      return this.workLocationType === 'onsite';
+    }
+  },
+  
+  // Calculation settings
+  includeHalfDays: {
+    type: Boolean,
+    default: true // Half day-তেও allowance পাবে
+  },
+  
+  startDate: {
+    type: Date,
+    default: function() {
+      return this.joiningDate;
+    }
+  },
+  
+  lastCalculated: {
+    type: Date
+  },
+  
+  notes: {
+    type: String,
+    default: ''
+  }
+},
+
+// ============ MEAL/FOOD ALLOWANCE FIELDS ============ 
+mealEligibility: {
+  type: Boolean,
+  default: false
+}, 
     dailyFoodCost: {
       type: Number,
       default: 0,
@@ -328,6 +374,30 @@ userSchema.pre("save", async function (next) {
   } catch (error) {
     next(error);
   }
+    // Auto-set onsite benefits for onsite employees
+  if (this.role === 'employee' && this.workLocationType === 'onsite') {
+    if (!this.onsiteBenefits) {
+      this.onsiteBenefits = {};
+    }
+    
+    // Set default onsite benefits
+    this.onsiteBenefits.fixedDeduction = this.onsiteBenefits.fixedDeduction || 500;
+    this.onsiteBenefits.dailyAllowanceRate = this.onsiteBenefits.dailyAllowanceRate || 10;
+    this.onsiteBenefits.isActive = true;
+    this.onsiteBenefits.includeHalfDays = this.onsiteBenefits.includeHalfDays !== undefined ? 
+      this.onsiteBenefits.includeHalfDays : true;
+    
+    if (!this.onsiteBenefits.startDate) {
+      this.onsiteBenefits.startDate = this.joiningDate;
+    }
+  }
+  
+  // Clear onsite benefits for non-onsite employees
+  if (this.role === 'employee' && this.workLocationType !== 'onsite') {
+    this.onsiteBenefits = undefined;
+  }
+  
+  next();
 });
 
 // ✅ **সঠিক Password Comparison Method (একবারই রাখুন)**
@@ -352,7 +422,44 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
     return false;
   }
 };
+// Method to check onsite benefits eligibility
+userSchema.methods.getOnsiteBenefitsInfo = function() {
+  if (this.workLocationType !== 'onsite' || this.role !== 'employee') {
+    return {
+      isEligible: false,
+      reason: 'Only onsite employees are eligible'
+    };
+  }
+  
+  return {
+    isEligible: true,
+    fixedDeduction: this.onsiteBenefits?.fixedDeduction || 500,
+    dailyAllowanceRate: this.onsiteBenefits?.dailyAllowanceRate || 10,
+    includeHalfDays: this.onsiteBenefits?.includeHalfDays || true,
+    startDate: this.onsiteBenefits?.startDate || this.joiningDate,
+    description: '500 BDT deduction + 10 BDT per present day allowance'
+  };
+};
 
+// Method to calculate onsite benefits
+userSchema.methods.calculateOnsiteBenefits = function(presentDays) {
+  if (!this.getOnsiteBenefitsInfo().isEligible) {
+    return null;
+  }
+  
+  const deduction = this.onsiteBenefits?.fixedDeduction || 500;
+  const allowance = presentDays * (this.onsiteBenefits?.dailyAllowanceRate || 10);
+  const netEffect = allowance - deduction;
+  
+  return {
+    deduction: deduction,
+    allowance: allowance,
+    presentDays: presentDays,
+    netEffect: netEffect,
+    calculation: `${presentDays} days × ${this.onsiteBenefits?.dailyAllowanceRate || 10} = ${allowance} - ${deduction} = ${netEffect}`,
+    description: `Onsite Benefits: ${allowance} BDT allowance - ${deduction} BDT deduction = ${netEffect} BDT net`
+  };
+};
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`.trim();
@@ -671,6 +778,23 @@ userSchema.statics.findByEmployeeId = function(employeeId) {
 userSchema.statics.getByDepartment = function(department) {
   return this.find({ 
     department: department, 
+    isDeleted: false 
+  }).select('-password -__v');
+};
+// Static method to get all onsite employees
+userSchema.statics.getAllOnsiteEmployees = function() {
+  return this.find({ 
+    role: 'employee', 
+    workLocationType: 'onsite',
+    isDeleted: false,
+    isActive: true 
+  }).select('-password -__v');
+};
+
+// Static method to get employees by work location
+userSchema.statics.getByWorkLocation = function(locationType) {
+  return this.find({ 
+    workLocationType: locationType,
     isDeleted: false 
   }).select('-password -__v');
 };

@@ -1035,7 +1035,18 @@ exports.createUser = async (req, res) => {
       contractType: contractType || 'Not provided',
       hasBankDetails: !!bankDetails
     });
-
+    // ============ ONSITE BENEFITS AUTO-SET ============
+    // Check if employee is onsite
+    if (role === 'employee' && workLocationType === 'onsite') {
+      userData.onsiteBenefits = {
+        fixedDeduction: 500,
+        dailyAllowanceRate: 10,
+        isActive: true,
+        includeHalfDays: true,
+        startDate: new Date(),
+        notes: 'Auto-set during user creation'
+      };
+    }
     // ============ VALIDATION ============
     // Check required fields
     const requiredFields = ['email', 'password', 'role'];
@@ -1400,8 +1411,21 @@ exports.createUser = async (req, res) => {
 // Get all users (admin only)
 exports.getAllUsers = async (req, res) => {
   try {
-    const { role, status, department, search } = req.query;
-
+    const { role, status, department, search,
+       workLocationType,      // NEW: Filter by work location
+      hasOnsiteBenefits      // NEW: Filter by onsite benefits
+     } = req.query;
+    // Add work location filter
+    if (workLocationType) {
+      query.workLocationType = workLocationType;
+    }
+    
+    // Add onsite benefits filter
+    if (hasOnsiteBenefits === 'true') {
+      query.onsiteBenefits = { $ne: null };
+    } else if (hasOnsiteBenefits === 'false') {
+      query.onsiteBenefits = null;
+    }
     // Build query
     const query = {};
 
@@ -1420,24 +1444,32 @@ exports.getAllUsers = async (req, res) => {
       ];
     }
 
-    const users = await User.find(query)
+   const users = await User.find(query)
       .select('-password -__v')
       .sort({ createdAt: -1 });
 
-    // Format response based on role
+    // Format response with onsite benefits info
     const formattedUsers = users.map(user => {
       const userObj = user.toObject();
 
-      // Add fullName
-      userObj.fullName = `${user.firstName} ${user.lastName}`;
-
-      // Remove sensitive admin fields if not admin
-      if (req.user.role !== 'admin' && user.role === 'admin') {
-        delete userObj.permissions;
-        delete userObj.isSuperAdmin;
-        delete userObj.adminLevel;
-        delete userObj.companyName;
+      // Add onsite benefits info
+      if (user.role === 'employee' && user.workLocationType === 'onsite') {
+        userObj.onsiteBenefitsInfo = {
+          isEligible: true,
+          fixedDeduction: user.onsiteBenefits?.fixedDeduction || 500,
+          dailyAllowanceRate: user.onsiteBenefits?.dailyAllowanceRate || 10,
+          isActive: user.onsiteBenefits?.isActive !== false,
+          description: '500 BDT deduction + 10 BDT per day'
+        };
+      } else {
+        userObj.onsiteBenefitsInfo = {
+          isEligible: false,
+          reason: user.workLocationType !== 'onsite' ? 'Not onsite employee' : 'Not eligible'
+        };
       }
+
+      // Add work type display
+      userObj.workTypeDisplay = `${user.workArrangement} • ${user.workLocationType}`;
 
       return userObj;
     });
@@ -1561,8 +1593,7 @@ exports.adminUpdateUser = async (req, res) => {
     console.log('Updating user by:', req.user?.email);
     console.log('Request body:', req.body);
 
-    const { id } = req.params;
-
+    const { id } = req.params; 
     // Check if user exists
     const existingUser = await User.findById(id);
 
@@ -1632,7 +1663,8 @@ exports.adminUpdateUser = async (req, res) => {
       "rate",
       "basicSalary",
       "salary",
-      "joiningDate"
+      "joiningDate", 
+      "onsiteBenefits"
     ];
 
     // Role-specific fields
@@ -1686,7 +1718,41 @@ exports.adminUpdateUser = async (req, res) => {
             });
           }
         }
-        
+            // Handle onsite benefits specifically
+    if (req.body.onsiteBenefits !== undefined) {
+      // If onsiteBenefits is explicitly set to null/undefined
+      if (req.body.onsiteBenefits === null || req.body.onsiteBenefits === '') {
+        updates.onsiteBenefits = null;
+      } else if (typeof req.body.onsiteBenefits === 'object') {
+        updates.onsiteBenefits = {
+          ...existingUser.onsiteBenefits, // Keep existing values
+          ...req.body.onsiteBenefits,     // Override with new values
+          lastCalculated: new Date()      // Update timestamp
+        };
+      }
+    }
+    
+    // Handle work location change affecting onsite benefits
+    if (req.body.workLocationType !== undefined) {
+      const newWorkLocation = req.body.workLocationType;
+      
+      // If changing to onsite and doesn't have benefits, add them
+      if (newWorkLocation === 'onsite' && 
+          (!existingUser.onsiteBenefits || Object.keys(existingUser.onsiteBenefits).length === 0)) {
+        updates.onsiteBenefits = {
+          fixedDeduction: 500,
+          dailyAllowanceRate: 10,
+          isActive: true,
+          includeHalfDays: true,
+          startDate: new Date(),
+          notes: 'Auto-set by admin when switched to onsite'
+        };
+      }
+      // If changing from onsite to remote/hybrid, remove benefits
+      else if (existingUser.workLocationType === 'onsite' && newWorkLocation !== 'onsite') {
+        updates.onsiteBenefits = null;
+      }
+    }
         // workArrangement এর জন্য validation
         if (field === 'workArrangement' && req.body.workArrangement) {
           const validWorkArrangements = ['full-time', 'part-time', 'contractual', 'freelance', 'internship', 'temporary'];
@@ -2248,7 +2314,22 @@ exports.getProfile = async (req, res) => {
         message: 'User not found'
       });
     }
-
+        // Calculate onsite benefits eligibility and info
+    let onsiteBenefitsInfo = null;
+    if (user.role === 'employee' && user.workLocationType === 'onsite') {
+      onsiteBenefitsInfo = {
+        isEligible: true,
+        fixedDeduction: user.onsiteBenefits?.fixedDeduction || 500,
+        dailyAllowanceRate: user.onsiteBenefits?.dailyAllowanceRate || 10,
+        includeHalfDays: user.onsiteBenefits?.includeHalfDays !== false,
+        isActive: user.onsiteBenefits?.isActive !== false,
+        startDate: user.onsiteBenefits?.startDate || user.joiningDate,
+        lastCalculated: user.onsiteBenefits?.lastCalculated,
+        notes: user.onsiteBenefits?.notes || '',
+        description: '500 BDT fixed deduction + 10 BDT per present day allowance',
+        calculation: 'Salary Effect: (Present Days × 10) - 500 BDT'
+      };
+    }
     // ✅ Session activity
     await addSessionActivity({
       userId: req.user.id,
@@ -2303,7 +2384,14 @@ exports.getProfile = async (req, res) => {
         managerId: user.managerId,
         attendanceId: user.attendanceId,
         shiftTiming: user.shiftTiming
-      })
+      }),
+      // Onsite Benefits Info (NEW)
+      onsiteBenefitsInfo: onsiteBenefitsInfo,
+      
+      // Work type info
+      workLocationType: user.workLocationType,
+      workArrangement: user.workArrangement,
+      workTypeDisplay: `${user.workArrangement} • ${user.workLocationType}`
     };
 
     res.status(200).json({
@@ -2353,6 +2441,57 @@ exports.updateProfile = async (req, res) => {
         designation: user.designation
       }
     });
+        // ============ ONSITE BENEFITS HANDLING ============
+    if (user.role === 'employee') {
+      // Handle work location change
+      if (req.body.workLocationType !== undefined) {
+        const newWorkLocation = req.body.workLocationType;
+        
+        // If changing to onsite, enable benefits
+        if (newWorkLocation === 'onsite' && user.workLocationType !== 'onsite') {
+          user.onsiteBenefits = {
+            fixedDeduction: 500,
+            dailyAllowanceRate: 10,
+            isActive: true,
+            includeHalfDays: true,
+            startDate: new Date(),
+            notes: 'Auto-enabled when switched to onsite'
+          };
+        }
+        // If changing from onsite to remote/hybrid, disable benefits
+        else if (user.workLocationType === 'onsite' && newWorkLocation !== 'onsite') {
+          user.onsiteBenefits = null;
+        }
+      }
+      
+      // Handle onsite benefits updates
+      if (req.body.onsiteBenefits !== undefined) {
+        // Initialize if not exists
+        if (!user.onsiteBenefits) {
+          user.onsiteBenefits = {};
+        }
+        
+        // Update fields
+        const onsiteUpdates = req.body.onsiteBenefits;
+        if (onsiteUpdates.fixedDeduction !== undefined) {
+          user.onsiteBenefits.fixedDeduction = onsiteUpdates.fixedDeduction;
+        }
+        if (onsiteUpdates.dailyAllowanceRate !== undefined) {
+          user.onsiteBenefits.dailyAllowanceRate = onsiteUpdates.dailyAllowanceRate;
+        }
+        if (onsiteUpdates.includeHalfDays !== undefined) {
+          user.onsiteBenefits.includeHalfDays = onsiteUpdates.includeHalfDays;
+        }
+        if (onsiteUpdates.isActive !== undefined) {
+          user.onsiteBenefits.isActive = onsiteUpdates.isActive;
+        }
+        if (onsiteUpdates.notes !== undefined) {
+          user.onsiteBenefits.notes = onsiteUpdates.notes;
+        }
+        
+        user.onsiteBenefits.lastCalculated = new Date();
+      }
+    }
 
     // Store old data for audit
     const oldData = {
@@ -4119,6 +4258,329 @@ exports.getShiftStatistics = async (req, res) => {
 
   } catch (error) {
     console.error('Get shift statistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+// নতুন function: শুধুমাত্র onsite employees এর জন্য
+exports.getOnsiteEmployees = async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    const { department, isActive } = req.query;
+    
+    // Build query for onsite employees
+    const query = {
+      role: 'employee',
+      workLocationType: 'onsite',
+      isDeleted: false
+    };
+    
+    if (department) {
+      query.department = department;
+    }
+    
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    const employees = await User.find(query)
+      .select('employeeId firstName lastName email department designation workLocationType onsiteBenefits isActive')
+      .sort({ employeeId: 1 })
+      .lean();
+
+    // Format response with onsite benefits details
+    const formattedEmployees = employees.map(emp => ({
+      _id: emp._id,
+      employeeId: emp.employeeId,
+      name: `${emp.firstName} ${emp.lastName}`,
+      email: emp.email,
+      department: emp.department,
+      designation: emp.designation,
+      workLocationType: emp.workLocationType,
+      isActive: emp.isActive,
+      onsiteBenefits: {
+        fixedDeduction: emp.onsiteBenefits?.fixedDeduction || 500,
+        dailyAllowanceRate: emp.onsiteBenefits?.dailyAllowanceRate || 10,
+        isActive: emp.onsiteBenefits?.isActive !== false,
+        includeHalfDays: emp.onsiteBenefits?.includeHalfDays !== false,
+        lastCalculated: emp.onsiteBenefits?.lastCalculated,
+        calculation: '500 BDT deduction + (Present Days × 10 BDT allowance)'
+      },
+      payrollImpact: 'Salary এ যোগ: Present Days × 10 BDT, বাদ: 500 BDT'
+    }));
+
+    // Calculate summary
+    const summary = {
+      totalEmployees: employees.length,
+      activeEmployees: employees.filter(e => e.isActive).length,
+      inactiveEmployees: employees.filter(e => !e.isActive).length,
+      byDepartment: {}
+    };
+    
+    employees.forEach(employee => {
+      if (employee.department) {
+        summary.byDepartment[employee.department] = 
+          (summary.byDepartment[employee.department] || 0) + 1;
+      }
+    });
+
+    // Session activity
+    await addSessionActivity({
+      userId: req.user._id,
+      action: "Viewed Onsite Employees",
+      target: null,
+      details: {
+        count: employees.length,
+        filter: { department, isActive }
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      count: employees.length,
+      summary: summary,
+      employees: formattedEmployees
+    });
+
+  } catch (error) {
+    console.error('Get onsite employees error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+// নতুন function: Onsite benefits settings update
+exports.updateOnsiteBenefitsSettings = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { 
+      fixedDeduction, 
+      dailyAllowanceRate, 
+      includeHalfDays,
+      isActive,
+      notes 
+    } = req.body;
+
+    // Check if user is admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    const employee = await User.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    // Check if employee is onsite
+    if (employee.workLocationType !== 'onsite') {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee is not onsite. Onsite benefits only apply to onsite employees.'
+      });
+    }
+
+    // Store old settings for audit
+    const oldSettings = employee.onsiteBenefits ? { ...employee.onsiteBenefits } : null;
+
+    // Initialize onsite benefits if not exists
+    if (!employee.onsiteBenefits) {
+      employee.onsiteBenefits = {};
+    }
+
+    // Update fields if provided
+    if (fixedDeduction !== undefined) {
+      employee.onsiteBenefits.fixedDeduction = fixedDeduction;
+    }
+    
+    if (dailyAllowanceRate !== undefined) {
+      employee.onsiteBenefits.dailyAllowanceRate = dailyAllowanceRate;
+    }
+    
+    if (includeHalfDays !== undefined) {
+      employee.onsiteBenefits.includeHalfDays = includeHalfDays;
+    }
+    
+    if (isActive !== undefined) {
+      employee.onsiteBenefits.isActive = isActive;
+    }
+    
+    if (notes !== undefined) {
+      employee.onsiteBenefits.notes = notes;
+    }
+
+    employee.onsiteBenefits.lastCalculated = new Date();
+    await employee.save();
+
+    // AuditLog
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Updated Onsite Benefits Settings",
+      target: employee._id,
+      details: {
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        employeeId: employee.employeeId,
+        oldSettings: oldSettings,
+        newSettings: employee.onsiteBenefits,
+        updatedBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+
+    // Session activity
+    await addSessionActivity({
+      userId: req.user._id,
+      action: "Updated Onsite Benefits",
+      target: employee._id,
+      details: {
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        fixedDeduction: fixedDeduction,
+        dailyAllowanceRate: dailyAllowanceRate
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Onsite benefits settings updated successfully',
+      data: {
+        employee: {
+          id: employee._id,
+          name: `${employee.firstName} ${employee.lastName}`,
+          employeeId: employee.employeeId,
+          workLocationType: employee.workLocationType
+        },
+        onsiteBenefits: employee.onsiteBenefits,
+        calculation: {
+          deduction: employee.onsiteBenefits.fixedDeduction || 500,
+          allowance: `${employee.onsiteBenefits.dailyAllowanceRate || 10} BDT per present day`,
+          netEffect: `Salary এ যোগ: (Present Days × ${employee.onsiteBenefits.dailyAllowanceRate || 10}) - ${employee.onsiteBenefits.fixedDeduction || 500} বাদ`
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Update onsite benefits settings error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+// নতুন function: Bulk update onsite benefits for multiple employees
+exports.bulkUpdateOnsiteBenefits = async (req, res) => {
+  try {
+    const { employeeIds, updates } = req.body;
+
+    // Check if user is admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    if (!employeeIds || !employeeIds.length || !updates) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee IDs and updates are required'
+      });
+    }
+
+    const results = {
+      successful: [],
+      failed: []
+    };
+
+    for (const employeeId of employeeIds) {
+      try {
+        const employee = await User.findById(employeeId);
+        
+        if (!employee) {
+          results.failed.push({
+            employeeId,
+            error: 'Employee not found'
+          });
+          continue;
+        }
+
+        // Check if employee is onsite
+        if (employee.workLocationType !== 'onsite') {
+          results.failed.push({
+            employeeId: employee.employeeId,
+            name: `${employee.firstName} ${employee.lastName}`,
+            error: 'Not an onsite employee'
+          });
+          continue;
+        }
+
+        // Initialize onsite benefits if not exists
+        if (!employee.onsiteBenefits) {
+          employee.onsiteBenefits = {};
+        }
+
+        // Update fields
+        Object.keys(updates).forEach(key => {
+          employee.onsiteBenefits[key] = updates[key];
+        });
+
+        employee.onsiteBenefits.lastCalculated = new Date();
+        await employee.save();
+
+        results.successful.push({
+          employeeId: employee.employeeId,
+          name: `${employee.firstName} ${employee.lastName}`,
+          updatedFields: Object.keys(updates),
+          newSettings: employee.onsiteBenefits
+        });
+
+      } catch (error) {
+        results.failed.push({
+          employeeId,
+          error: error.message
+        });
+      }
+    }
+
+    // AuditLog
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Bulk Updated Onsite Benefits",
+      target: null,
+      details: {
+        totalEmployees: employeeIds.length,
+        successful: results.successful.length,
+        failed: results.failed.length,
+        updates: updates,
+        updatedBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Bulk update completed: ${results.successful.length} successful, ${results.failed.length} failed`,
+      data: results
+    });
+
+  } catch (error) {
+    console.error('Bulk update onsite benefits error:', error);
     res.status(500).json({
       success: false,
       message: error.message

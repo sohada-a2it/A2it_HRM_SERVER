@@ -353,6 +353,8 @@ exports.calculatePayroll = async (req, res) => {
 };
 
 // 2. Create Payroll
+// controllers/payrollController.js - এই function-এ updates করুন
+
 exports.createPayroll = async (req, res) => {
   try {
     const {
@@ -388,6 +390,15 @@ exports.createPayroll = async (req, res) => {
       });
     }
     
+    // Get employee data for onsite benefits calculation
+    const employee = await User.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Employee not found'
+      });
+    }
+    
     // Calculate payroll with OPTION A
     const calculation = await calculatePayroll(
       employeeId,
@@ -397,23 +408,93 @@ exports.createPayroll = async (req, res) => {
       { overtime, bonus, allowance }
     );
     
-    // Check if net payable is 0
-    if (calculation.calculations.totals.netPayable === 0) {
+    // ============ ONSITE BENEFITS CALCULATION (NEW) ============
+    let onsiteBenefitsDetails = {
+      deduction: 0,
+      allowance: 0,
+      presentDays: 0,
+      netEffect: 0,
+      calculationNote: 'Not an onsite employee'
+    };
+    
+    // Check if employee is onsite
+    if (employee.workLocationType === 'onsite' && employee.role === 'employee') {
+      const presentDays = calculation.attendance.presentDays || 0;
+      const halfDays = calculation.attendance.halfDays || 0;
+      
+      // Get onsite benefits settings from employee
+      const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
+      const fixedDeduction = employee.onsiteBenefits?.fixedDeduction || 500;
+      const dailyRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;
+      
+      // Calculate eligible days for allowance
+      const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(halfDays / 2) : 0);
+      
+      // Calculate onsite benefits
+      const onsiteAllowance = eligibleDays * dailyRate;
+      const onsiteDeduction = fixedDeduction;
+      const netOnsiteEffect = onsiteAllowance - onsiteDeduction;
+      
+      onsiteBenefitsDetails = {
+        deduction: onsiteDeduction,
+        allowance: onsiteAllowance,
+        presentDays: eligibleDays,
+        netEffect: netOnsiteEffect,
+        calculationNote: `Onsite Benefits: ${eligibleDays} days × ${dailyRate} BDT = ${onsiteAllowance} - ${onsiteDeduction} deduction = ${netOnsiteEffect} BDT`,
+        details: {
+          employeeId: employee.employeeId,
+          workLocation: employee.workLocationType,
+          includeHalfDays: includeHalfDays,
+          dailyRate: dailyRate,
+          fixedDeduction: fixedDeduction
+        }
+      };
+      
+      // Add onsite allowance to total earnings
+      calculation.calculations.allowance = (calculation.calculations.allowance || 0) + onsiteAllowance;
+      
+      // Add onsite deduction to deductions
+      // Note: We'll handle this separately in payroll deductions
+    }
+    // ============ END ONSITE BENEFITS CALCULATION ============
+    
+    // Recalculate totals after adding onsite benefits
+    const totalEarnings = calculation.calculations.basicPay + 
+                         calculation.calculations.overtime.amount + 
+                         calculation.calculations.bonus + 
+                         calculation.calculations.allowance;
+    
+    // Add onsite deduction to total deductions
+    const totalDeductions = calculation.calculations.deductions.actualTotal + 
+                           onsiteBenefitsDetails.deduction;
+    
+    const netPayable = totalEarnings - totalDeductions;
+    
+    // Check if net payable is 0 or negative (with safety check)
+    if (netPayable <= 0) {
       return res.status(400).json({
         status: 'fail',
-        message: 'Net payable amount is 0. Cannot create payroll.',
-        data: calculation,
-        warning: 'Deductions equal or exceed earnings. Salary would be 0.'
+        message: 'Net payable amount is 0 or negative. Cannot create payroll.',
+        data: {
+          originalCalculation: calculation,
+          onsiteBenefits: onsiteBenefitsDetails,
+          totals: {
+            earnings: totalEarnings,
+            deductions: totalDeductions,
+            netPayable: netPayable
+          }
+        },
+        warning: 'Deductions equal or exceed earnings. Salary would be 0 or negative.'
       });
     }
     
     // Create payroll document
     const payroll = new Payroll({
       employee: employeeId,
-      employeeName: calculation.employeeDetails.name,
-      employeeId: calculation.employeeDetails.employeeId,
-      department: calculation.employeeDetails.department,
-      designation: calculation.employeeDetails.designation,
+      employeeName: calculation.employeeDetails.name || employee.fullName,
+      employeeId: calculation.employeeDetails.employeeId || employee.employeeId,
+      department: calculation.employeeDetails.department || employee.department,
+      designation: calculation.employeeDetails.designation || employee.designation,
       
       periodStart: calculation.period.startDate,
       periodEnd: calculation.period.endDate,
@@ -448,6 +529,9 @@ exports.createPayroll = async (req, res) => {
         )
       },
       
+      // ============ ONSITE BENEFITS DETAILS IN PAYROLL (NEW) ============
+      onsiteBenefitsDetails: onsiteBenefitsDetails,
+      
       earnings: {
         basicPay: calculation.calculations.basicPay,
         
@@ -466,17 +550,19 @@ exports.createPayroll = async (req, res) => {
         },
         
         allowance: {
-          amount: calculation.calculations.allowance,
+          amount: calculation.calculations.allowance, // This now includes onsite allowance
           type: calculation.calculations.allowance > 0 ? 'other' : 'none',
-          description: calculation.calculations.allowance > 0 ? 'Manual allowance' : ''
+          description: calculation.calculations.allowance > 0 ? 
+            `Manual allowance + Onsite allowance (${onsiteBenefitsDetails.allowance} BDT)` : 
+            ''
         },
         
         houseRent: 0,
         medical: 0,
         conveyance: 0,
         incentives: 0,
-        otherAllowances: 0,
-        total: calculation.calculations.totals.earnings
+        otherAllowances: onsiteBenefitsDetails.allowance, // Onsite allowance as separate entry
+        total: totalEarnings
       },
       
       deductions: {
@@ -488,7 +574,7 @@ exports.createPayroll = async (req, res) => {
         providentFund: 0,
         advanceSalary: 0,
         loanDeduction: 0,
-        otherDeductions: 0,
+        otherDeductions: onsiteBenefitsDetails.deduction, // Onsite deduction here
         
         deductionRules: {
           lateRule: "3 days late = 1 day salary deduction",
@@ -498,24 +584,30 @@ exports.createPayroll = async (req, res) => {
           holidayRule: "Holidays are not deducted",
           weeklyOffRule: "Weekly offs are not deducted",
           capRule: "Total deductions cannot exceed monthly salary",
-          netPayableRule: "Net payable minimum 0"
+          netPayableRule: "Net payable minimum 0",
+          onsiteDeductionRule: "Fixed 500 BDT deduction for onsite employees",
+          onsiteAllowanceRule: "10 BDT per present day for onsite employees"
         },
         
-        total: calculation.calculations.deductions.actualTotal,
-        calculatedTotal: calculation.calculations.deductions.calculatedTotal,
+        total: totalDeductions,
+        calculatedTotal: calculation.calculations.deductions.calculatedTotal + onsiteBenefitsDetails.deduction,
         isCapped: calculation.calculations.deductions.isCapped,
         cappedAmount: calculation.calculations.deductions.cappedAmount,
-        deductionBreakdown: calculation.calculations.deductions.breakdown
+        deductionBreakdown: {
+          ...calculation.calculations.deductions.breakdown,
+          onsiteDeduction: onsiteBenefitsDetails.deduction
+        }
       },
       
       summary: {
-      grossEarnings: calculation.calculations.totals.earnings,
-      totalDeductions: calculation.calculations.totals.deductions,
-      netPayable: calculation.calculations.totals.netPayable,
-      payableDays: calculation.attendance.presentDays,
-      deductionCapApplied: calculation.calculations.deductions.isCapped,
-      rulesApplied: calculation.calculations.totals.ruleApplied
-    },
+        grossEarnings: totalEarnings,
+        totalDeductions: totalDeductions,
+        netPayable: netPayable,
+        payableDays: calculation.attendance.presentDays,
+        deductionCapApplied: calculation.calculations.deductions.isCapped,
+        rulesApplied: calculation.calculations.totals.ruleApplied,
+        onsiteBenefitsApplied: employee.workLocationType === 'onsite'
+      },
       
       monthInfo: {
         totalHolidays: calculation.attendance.holidays || 0,
@@ -528,7 +620,8 @@ exports.createPayroll = async (req, res) => {
         holidayNote: calculation.notes?.holidayNote || '',
         weeklyOffNote: calculation.notes?.weeklyOffNote || '',
         calculationNote: calculation.notes?.calculationNote || '23 days fixed calculation basis',
-        deductionNote: calculation.notes?.deductionNote || ''
+        deductionNote: calculation.notes?.deductionNote || '',
+        onsiteBenefitsNote: onsiteBenefitsDetails.calculationNote
       },
       
       manualInputs: {
@@ -545,7 +638,7 @@ exports.createPayroll = async (req, res) => {
         calculatedDate: new Date(),
         calculatedBy: req.user._id,
         dataSources: ['attendance', 'leaves', 'holidays', 'office_schedule', 'manual_input'],
-        calculationNotes: 'Auto-calculated with 23 days fixed basis + Deduction Cap'
+        calculationNotes: 'Auto-calculated with 23 days fixed basis + Deduction Cap + Onsite Benefits'
       },
       
       metadata: {
@@ -555,25 +648,42 @@ exports.createPayroll = async (req, res) => {
         deductionCapApplied: calculation.calculations.deductions.isCapped,
         attendanceBased: true,
         fixed23Days: true,
-        version: '3.1', // Updated version for Option A
-        safetyRules: ['Deduction cap = monthly salary', 'Net payable minimum 0']
+        version: '3.2', // Updated version for onsite benefits
+        safetyRules: ['Deduction cap = monthly salary', 'Net payable minimum 0'],
+        onsiteBenefitsIncluded: employee.workLocationType === 'onsite',
+        workLocationType: employee.workLocationType
       },
       
       createdBy: req.user._id,
-      notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (23 days fixed + Deduction Cap)`
+      notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (23 days fixed + Deduction Cap + Onsite Benefits)`
     });
     
     await payroll.save();
     
-    res.status(201).json({
+    // Update employee's last calculated date for onsite benefits
+    if (employee.workLocationType === 'onsite') {
+      employee.onsiteBenefits.lastCalculated = new Date();
+      await employee.save();
+    }
+    
+    const response = {
       status: 'success',
       message: 'Payroll created successfully with safety rules',
       data: payroll,
-      warnings: calculation.calculations.deductions.isCapped ? [
-        'Deductions capped at monthly salary',
-        `Excess deduction not applied: ${formatCurrency(calculation.calculations.deductions.cappedAmount)}`
-      ] : []
-    });
+      warnings: []
+    };
+    
+    // Add warnings if needed
+    if (calculation.calculations.deductions.isCapped) {
+      response.warnings.push('Deductions capped at monthly salary');
+      response.warnings.push(`Excess deduction not applied: ${formatCurrency(calculation.calculations.deductions.cappedAmount)}`);
+    }
+    
+    if (employee.workLocationType === 'onsite') {
+      response.warnings.push(`Onsite benefits applied: ${onsiteBenefitsDetails.allowance} BDT allowance - ${onsiteBenefitsDetails.deduction} BDT deduction = ${onsiteBenefitsDetails.netEffect} BDT net effect`);
+    }
+    
+    res.status(201).json(response);
     
   } catch (error) {
     console.error('Create payroll error:', error);
@@ -583,6 +693,15 @@ exports.createPayroll = async (req, res) => {
     });
   } 
 };
+
+// Helper function to format currency
+// const formatCurrency = (amount) => {
+//   return new Intl.NumberFormat('en-BD', {
+//     style: 'currency',
+//     currency: 'BDT',
+//     minimumFractionDigits: 2
+//   }).format(amount);
+// };
 
 // 3. Get All Payrolls
 exports.getAllPayrolls = async (req, res) => {
@@ -1589,5 +1708,54 @@ exports.checkEmployeeAcceptance = async (req, res) => {
       status: 'fail',
       message: error.message
     });
+  }
+};
+exports.calculateOnsiteBenefitsForPayroll = async (employeeId, month, year, attendanceData) => {
+  try {
+    const employee = await User.findById(employeeId);
+    
+    // Check if employee is onsite
+    if (employee.workLocationType !== 'onsite') {
+      return {
+        deduction: 0,
+        allowance: 0,
+        presentDays: 0,
+        netEffect: 0,
+        calculationNote: 'Not an onsite employee'
+      };
+    }
+    
+    const presentDays = attendanceData.presentDays || 0;
+    const halfDays = attendanceData.halfDays || 0;
+    
+    // Calculate eligible days
+    const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
+    const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(halfDays / 2) : 0);
+    
+    // Get rates from employee data
+    const fixedDeduction = employee.onsiteBenefits?.fixedDeduction || 500;
+    const dailyRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;
+    
+    // Calculate benefits
+    const allowance = eligibleDays * dailyRate;
+    const deduction = fixedDeduction;
+    const netEffect = allowance - deduction;
+    
+    return {
+      deduction: deduction,
+      allowance: allowance,
+      presentDays: eligibleDays,
+      netEffect: netEffect,
+      calculationNote: `Onsite Benefits: ${eligibleDays} days × ${dailyRate} BDT = ${allowance} - ${deduction} deduction = ${netEffect} BDT`
+    };
+  } catch (error) {
+    console.error('Error calculating onsite benefits:', error);
+    return {
+      deduction: 0,
+      allowance: 0,
+      presentDays: 0,
+      netEffect: 0,
+      calculationNote: 'Error in calculation'
+    };
   }
 };
