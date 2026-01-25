@@ -547,7 +547,29 @@ const payrollSchema = new mongoose.Schema({
       default: ''
     }
   },
-  
+  // Payroll Model-এ
+// ========== FOOD COST DEDUCTION ==========
+foodCostDetails: {
+  totalMealCost: {
+    type: Number,
+    default: 0
+  },
+  fixedDeduction: {
+    type: Number,
+    default: 0
+  },
+  totalFoodDeduction: {
+    type: Number,
+    default: 0
+  },
+  mealDays: {
+    type: Number,
+    default: 0
+  },
+  calculationDate: {
+    type: Date
+  }
+},
   // ========== AUDIT TRAIL ==========
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,

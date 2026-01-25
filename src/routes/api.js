@@ -557,4 +557,15 @@ router.put('/update-miscellaneous/:id',protect, miscellaneousExpense.updateExtra
 router.delete('/delete-miscellaneous/:id',protect, miscellaneousExpense.deleteExtraExpense); 
 router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseStats);
 
+
+// // =============== meal Cost ROUTES =============== 
+// Employee routes
+// router.post('/request', protect, mealController.requestMeal);
+
+// Admin routes
+// router.post('/approve', protect, adminOnly, mealController.approveMealRequests);
+// router.post('/calculate-monthly', protect, adminOnly, mealController.calculateMonthlyFoodCostDeduction);
+// router.post('/apply-to-payroll', protect, adminOnly, mealController.applyFoodCostToPayroll);
+// router.post('/bulk-apply', protect, adminOnly, mealController.bulkApplyFoodCostToPayrolls);
+// router.get('/summary', protect, adminOnly, mealController.getMealRequestSummary); 
 module.exports = router;  
