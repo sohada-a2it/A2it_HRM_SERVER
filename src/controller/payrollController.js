@@ -752,23 +752,24 @@ exports.updatePayrollStatus = async (req, res) => {
   }
 };
 
-// 6. Delete Payroll (Soft Delete)
+// 6. Delete Payroll (Hard Delete - Permanent)
 exports.deletePayroll = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id);
     
-    if (!payroll || payroll.isDeleted) {
+    if (!payroll) {
       return res.status(404).json({
         status: 'fail',
         message: 'Payroll not found'
       });
     }
     
-    await payroll.softDelete(req.user._id);
+    // Permanent delete from database
+    await Payroll.findByIdAndDelete(req.params.id);
     
     res.status(200).json({
       status: 'success',
-      message: 'Payroll deleted successfully'
+      message: 'Payroll deleted permanently'
     });
     
   } catch (error) {
