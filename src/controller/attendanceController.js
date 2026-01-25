@@ -14,7 +14,8 @@ const SessionLog = require('../models/SessionLogModel');
 
 const TIMEZONE = 'Asia/Dhaka';
 
-// ===================== Helper Functions ===================== 
+// ===================== Helper Functions =====================
+// ===================== সার্ভার-সাইড Helper Functions =====================
 
 const parseTimeString = (timeStr) => {
   if (!timeStr) return { hours: 0, minutes: 0 };
