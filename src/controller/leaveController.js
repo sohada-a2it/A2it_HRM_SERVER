@@ -106,8 +106,8 @@ exports.getAllLeaves = async (req, res) => {
       
       if (leaveObj.employee) {
         leaveObj.employeeName = `${leaveObj.employee.firstName} ${leaveObj.employee.lastName}`;
-        leaveObj.employee = leaveObj.employee.employeeId;
-        leaveObj.department = leaveObj.employee.department;
+            leaveObj.employeeId = leaveObj.employee.employeeId; // ✅ সঠিকভাবে set করুন
+            leaveObj.department = leaveObj.employee.department;
         leaveObj.profilePicture = leaveObj.employee.profilePicture;
       }
       
