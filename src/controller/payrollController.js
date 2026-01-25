@@ -409,6 +409,7 @@ exports.createPayroll = async (req, res) => {
     );
     
     // ============ ONSITE BENEFITS CALCULATION (NEW) ============
+        // ============ ONSITE BENEFITS CALCULATION (UPDATED - FIXED) ============
     let onsiteBenefitsDetails = {
       deduction: 0,
       allowance: 0,
@@ -416,6 +417,56 @@ exports.createPayroll = async (req, res) => {
       netEffect: 0,
       calculationNote: 'Not an onsite employee'
     };
+    
+    // Check if employee is onsite
+    if (employee.workLocationType === 'onsite' && employee.role === 'employee') {
+      const presentDays = calculation.attendance.presentDays || 0;
+      const halfDays = calculation.attendance.halfDays || 0;
+      
+      // Get onsite benefits settings from employee
+      const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
+      const fixedDeduction = employee.onsiteBenefits?.fixedDeduction || 500;
+      const dailyRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;
+      
+      // Calculate eligible days for allowance
+      const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(halfDays / 2) : 0);
+      
+      // Calculate onsite benefits
+      const onsiteAllowance = eligibleDays * dailyRate;
+      const onsiteDeduction = fixedDeduction;
+      const netOnsiteEffect = onsiteAllowance - onsiteDeduction;
+      
+      onsiteBenefitsDetails = {
+        deduction: onsiteDeduction,
+        allowance: onsiteAllowance,
+        presentDays: eligibleDays,
+        netEffect: netOnsiteEffect,
+        calculationNote: `Onsite Benefits: ${eligibleDays} days × ${dailyRate} BDT = ${onsiteAllowance} - ${onsiteDeduction} deduction = ${netOnsiteEffect} BDT`,
+        details: {
+          employeeId: employee.employeeId,
+          workLocation: employee.workLocationType,
+          includeHalfDays: includeHalfDays,
+          dailyRate: dailyRate,
+          fixedDeduction: fixedDeduction
+        }
+      };
+      
+      // IMPORTANT FIX: Add onsite allowance to total allowance
+      calculation.calculations.allowance = (calculation.calculations.allowance || 0) + onsiteAllowance;
+      
+      // IMPORTANT FIX: Add onsite deduction to total deductions
+      calculation.calculations.deductions.actualTotal += onsiteDeduction;
+      calculation.calculations.deductions.calculatedTotal += onsiteDeduction;
+      
+      // Update deduction breakdown
+      calculation.calculations.deductions.breakdown.onsiteDeduction = {
+        amount: onsiteDeduction,
+        percentage: calculation.calculations.deductions.calculatedTotal > 0 
+          ? (onsiteDeduction / calculation.calculations.deductions.calculatedTotal * 100) 
+          : 0
+      };
+    }
+    // ============ END ONSITE BENEFITS CALCULATION ============
     
     // Check if employee is onsite
     if (employee.workLocationType === 'onsite' && employee.role === 'employee') {
@@ -459,17 +510,16 @@ exports.createPayroll = async (req, res) => {
     // ============ END ONSITE BENEFITS CALCULATION ============
     
     // Recalculate totals after adding onsite benefits
+    // Recalculate totals after adding onsite benefits
     const totalEarnings = calculation.calculations.basicPay + 
                          calculation.calculations.overtime.amount + 
                          calculation.calculations.bonus + 
                          calculation.calculations.allowance;
     
-    // Add onsite deduction to total deductions
-    const totalDeductions = calculation.calculations.deductions.actualTotal + 
-                           onsiteBenefitsDetails.deduction;
+    // IMPORTANT: Use the updated total deductions that already includes onsite deduction
+    const totalDeductions = calculation.calculations.deductions.actualTotal;
     
-    const netPayable = totalEarnings - totalDeductions;
-    
+    const netPayable = Math.max(0, totalEarnings - totalDeductions);
     // Check if net payable is 0 or negative (with safety check)
     if (netPayable <= 0) {
       return res.status(400).json({
