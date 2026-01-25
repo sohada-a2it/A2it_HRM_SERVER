@@ -409,14 +409,79 @@ exports.createPayroll = async (req, res) => {
     );
     
     // ============ ONSITE BENEFITS CALCULATION (NEW) ============
-        // ============ ONSITE BENEFITS CALCULATION (UPDATED - FIXED) ============
+    // ============ ONSITE BENEFITS CALCULATION (UPDATED - SEPARATE) ============
     let onsiteBenefitsDetails = {
-      deduction: 0,
-      allowance: 0,
+      serviceCharge: 0,           // সার্ভিস চার্জ (ডিডাকশন)
+      teaAllowance: 0,           // চা ভাতা (এলাউন্স)
+      totalAllowance: 0,         // মোট এলাউন্স
+      totalDeduction: 0,         // মোট ডিডাকশন
       presentDays: 0,
       netEffect: 0,
       calculationNote: 'Not an onsite employee'
     };
+    
+    // Check if employee is onsite
+    if (employee.workLocationType === 'onsite' && employee.role === 'employee') {
+      const presentDays = calculation.attendance.presentDays || 0;
+      const halfDays = calculation.attendance.halfDays || 0;
+      
+      // Get onsite benefits settings from employee
+      const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
+      const serviceCharge = employee.onsiteBenefits?.serviceCharge || 500;    // নাম পরিবর্তন
+      const teaAllowanceRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;  // নাম পরিবর্তন
+      
+      // Calculate eligible days for tea allowance
+      const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(halfDays / 2) : 0);
+      
+      // Calculate onsite benefits - আলাদা আলাদাভাবে
+      const teaAllowance = eligibleDays * teaAllowanceRate;  // চা ভাতা
+      const serviceChargeDeduction = serviceCharge;          // সার্ভিস চার্জ
+      const netOnsiteEffect = teaAllowance - serviceChargeDeduction;
+      
+      onsiteBenefitsDetails = {
+        serviceCharge: serviceChargeDeduction,
+        teaAllowance: teaAllowance,
+        totalAllowance: teaAllowance,
+        totalDeduction: serviceChargeDeduction,
+        presentDays: eligibleDays,
+        netEffect: netOnsiteEffect,
+        calculationNote: `Onsite Benefits: Service Charge ${serviceChargeDeduction} BDT + Tea Allowance ${eligibleDays} days × ${teaAllowanceRate} BDT = ${teaAllowance} BDT (Net: ${netOnsiteEffect} BDT)`,
+        details: {
+          serviceCharge: serviceChargeDeduction,
+          teaAllowanceRate: teaAllowanceRate,
+          eligibleDays: eligibleDays,
+          includeHalfDays: includeHalfDays
+        },
+        breakdown: {
+          teaAllowance: `${eligibleDays} days × ${teaAllowanceRate} BDT = ${teaAllowance} BDT`,
+          serviceCharge: `Fixed ${serviceChargeDeduction} BDT`,
+          calculation: `Tea Allowance ${teaAllowance} - Service Charge ${serviceChargeDeduction} = Net ${netOnsiteEffect} BDT`
+        }
+      };
+      
+      // IMPORTANT: Add tea allowance to total allowance
+      calculation.calculations.allowance = (calculation.calculations.allowance || 0) + teaAllowance;
+      
+      // IMPORTANT: Add service charge to total deductions
+      calculation.calculations.deductions.actualTotal += serviceChargeDeduction;
+      calculation.calculations.deductions.calculatedTotal += serviceChargeDeduction;
+      
+      // Update deduction breakdown with separate entries
+      calculation.calculations.deductions.breakdown.serviceCharge = {
+        amount: serviceChargeDeduction,
+        percentage: calculation.calculations.deductions.calculatedTotal > 0 
+          ? (serviceChargeDeduction / calculation.calculations.deductions.calculatedTotal * 100) 
+          : 0,
+        description: 'Onsite Service Charge'
+      };
+      
+      calculation.calculations.deductions.breakdown.teaAllowance = {
+        amount: -teaAllowance, // Negative because it's an allowance (earnings)
+        percentage: 0,
+        description: 'Onsite Tea Allowance (Added to earnings)'
+      };
+    }
+    // ============ END ONSITE BENEFITS CALCULATION ============
     
     // Check if employee is onsite
     if (employee.workLocationType === 'onsite' && employee.role === 'employee') {
@@ -579,7 +644,7 @@ exports.createPayroll = async (req, res) => {
         )
       },
       
-      // ============ ONSITE BENEFITS DETAILS IN PAYROLL (NEW) ============
+      // ============ ONSITE BENEFITS DETAILS IN PAYROLL ============
       onsiteBenefitsDetails: onsiteBenefitsDetails,
       
       earnings: {
@@ -600,10 +665,12 @@ exports.createPayroll = async (req, res) => {
         },
         
         allowance: {
-          amount: calculation.calculations.allowance, // This now includes onsite allowance
+          amount: calculation.calculations.allowance,
           type: calculation.calculations.allowance > 0 ? 'other' : 'none',
           description: calculation.calculations.allowance > 0 ? 
-            `Manual allowance + Onsite allowance (${onsiteBenefitsDetails.allowance} BDT)` : 
+            (onsiteBenefitsDetails.teaAllowance > 0 ? 
+              `Manual: ${allowance} + Onsite Tea Allowance: ${onsiteBenefitsDetails.teaAllowance}` : 
+              'Manual allowance') : 
             ''
         },
         
@@ -611,7 +678,8 @@ exports.createPayroll = async (req, res) => {
         medical: 0,
         conveyance: 0,
         incentives: 0,
-        otherAllowances: onsiteBenefitsDetails.allowance, // Onsite allowance as separate entry
+        otherAllowances: onsiteBenefitsDetails.teaAllowance, // চা ভাতা আলাদাভাবে
+        onsiteTeaAllowance: onsiteBenefitsDetails.teaAllowance, // নতুন ফিল্ড
         total: totalEarnings
       },
       
@@ -624,7 +692,8 @@ exports.createPayroll = async (req, res) => {
         providentFund: 0,
         advanceSalary: 0,
         loanDeduction: 0,
-        otherDeductions: onsiteBenefitsDetails.deduction, // Onsite deduction here
+        serviceCharge: onsiteBenefitsDetails.serviceCharge, // সার্ভিস চার্জ আলাদাভাবে
+        otherDeductions: onsiteBenefitsDetails.serviceCharge, // পুরানো ফিল্ডে রাখা
         
         deductionRules: {
           lateRule: "3 days late = 1 day salary deduction",
@@ -635,18 +704,15 @@ exports.createPayroll = async (req, res) => {
           weeklyOffRule: "Weekly offs are not deducted",
           capRule: "Total deductions cannot exceed monthly salary",
           netPayableRule: "Net payable minimum 0",
-          onsiteDeductionRule: "Fixed 500 BDT deduction for onsite employees",
-          onsiteAllowanceRule: "10 BDT per present day for onsite employees"
+          serviceChargeRule: "Fixed 500 BDT service charge for onsite employees",
+          teaAllowanceRule: "10 BDT tea allowance per present day for onsite employees"
         },
         
         total: totalDeductions,
-        calculatedTotal: calculation.calculations.deductions.calculatedTotal + onsiteBenefitsDetails.deduction,
+        calculatedTotal: calculation.calculations.deductions.calculatedTotal,
         isCapped: calculation.calculations.deductions.isCapped,
         cappedAmount: calculation.calculations.deductions.cappedAmount,
-        deductionBreakdown: {
-          ...calculation.calculations.deductions.breakdown,
-          onsiteDeduction: onsiteBenefitsDetails.deduction
-        }
+        deductionBreakdown: calculation.calculations.deductions.breakdown
       },
       
       summary: {
@@ -656,7 +722,14 @@ exports.createPayroll = async (req, res) => {
         payableDays: calculation.attendance.presentDays,
         deductionCapApplied: calculation.calculations.deductions.isCapped,
         rulesApplied: calculation.calculations.totals.ruleApplied,
-        onsiteBenefitsApplied: employee.workLocationType === 'onsite'
+        onsiteBenefitsApplied: employee.workLocationType === 'onsite',
+        onsiteBenefitsDetails: onsiteBenefitsDetails,
+        // নতুন ফিল্ড যোগ করুন
+        onsiteBreakdown: {
+          teaAllowance: onsiteBenefitsDetails.teaAllowance,
+          serviceCharge: onsiteBenefitsDetails.serviceCharge,
+          netOnsiteEffect: onsiteBenefitsDetails.netEffect
+        }
       },
       
       monthInfo: {
@@ -718,8 +791,25 @@ exports.createPayroll = async (req, res) => {
     
     const response = {
       status: 'success',
-      message: 'Payroll created successfully with safety rules',
-      data: payroll,
+      message: 'Payroll created successfully',
+      data: {
+        payrollId: payroll._id,
+        employee: payroll.employeeName,
+        netPayable: payroll.summary.netPayable,
+        onsiteBenefits: {
+          serviceCharge: onsiteBenefitsDetails.serviceCharge,
+          teaAllowance: onsiteBenefitsDetails.teaAllowance,
+          calculation: onsiteBenefitsDetails.calculationNote,
+          breakdown: onsiteBenefitsDetails.breakdown
+        },
+        breakdown: {
+          earnings: totalEarnings,
+          deductions: totalDeductions,
+          onsiteTeaAllowance: onsiteBenefitsDetails.teaAllowance,
+          onsiteServiceCharge: onsiteBenefitsDetails.serviceCharge,
+          netOnsiteEffect: onsiteBenefitsDetails.netEffect
+        }
+      },
       warnings: []
     };
     
