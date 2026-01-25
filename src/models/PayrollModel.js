@@ -613,7 +613,12 @@ foodCostDetails: {
   notes: {
     type: String,
     default: ''
-  }
+  },
+  // Metadata-এ employeeAccepted field যোগ করুন:
+employeeAccepted: {
+  type: Boolean,
+  default: false
+},
   
 }, { 
   timestamps: true,

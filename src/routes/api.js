@@ -432,8 +432,9 @@ router.get('/payroll/export/monthly', protect, adminOnly, payrollController.expo
 router.put('/payroll/:id/manual-inputs', protect, adminOnly, payrollController.updateManualInputs); 
 router.get('/payroll/overtime/manual-only', protect, adminOnly, payrollController.getPayrollWithManualOvertime); 
 router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.recalculatePayroll);  
-router.get('/my-payrolls', protect, payrollController.getMyPayrolls); 
-
+router.get('/my-payrolls', protect, payrollController.getMyPayrolls);  
+router.put('/payroll/:id/employee-accept', protect, employeeOnly, payrollController.employeeAcceptPayroll);
+router.get('/payroll/:id/check-acceptance', protect, payrollController.checkEmployeeAcceptance);
 
 // =================== SalaryRule Routes ==================== 
 router.get('/active', protect, salaryRuleController.getActiveSalaryRules); 

@@ -1483,3 +1483,111 @@ exports.recalculatePayroll = async (req, res) => {
     });
   }
 };
+
+// 14. Employee Accept Payroll
+exports.employeeAcceptPayroll = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const employeeId = req.user._id; // Current logged in employee
+    
+    // Find payroll
+    const payroll = await Payroll.findById(id);
+    
+    if (!payroll || payroll.isDeleted) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+    
+    // Check if payroll belongs to this employee
+    if (payroll.employee.toString() !== employeeId.toString()) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'You can only accept your own payroll'
+      });
+    }
+    
+    // Check if already paid or accepted
+    if (payroll.status === 'Paid') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Payroll is already paid'
+      });
+    }
+    
+    // Update status to "Paid" and add employee acceptance info
+    payroll.status = 'Paid';
+    payroll.employeeAccepted = {
+      accepted: true,
+      acceptedAt: new Date(),
+      acceptedBy: employeeId
+    };
+    
+    // Update payment info
+    payroll.payment = {
+      paymentDate: new Date(),
+      paymentMethod: 'Employee Accepted',
+      transactionId: `EMP_ACCEPT_${Date.now()}`,
+      bankAccount: 'Employee Acceptance',
+      paidBy: employeeId,
+      paymentNotes: 'Accepted by employee through portal'
+    };
+    
+    // Add metadata
+    payroll.metadata.employeeAccepted = true;
+    
+    await payroll.save();
+    
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll accepted successfully. Status updated to "Paid".',
+      data: {
+        payrollId: payroll._id,
+        status: payroll.status,
+        acceptedAt: payroll.employeeAccepted.acceptedAt,
+        netPayable: payroll.summary.netPayable
+      }
+    });
+    
+  } catch (error) {
+    console.error('Employee accept payroll error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
+
+// 15. Check Employee Acceptance Status
+exports.checkEmployeeAcceptance = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const payroll = await Payroll.findById(id).select('employeeAccepted status payment employee');
+    
+    if (!payroll) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+    
+    res.status(200).json({
+      status: 'success',
+      data: {
+        employeeAccepted: payroll.employeeAccepted || { accepted: false },
+        status: payroll.status,
+        paymentDate: payroll.payment?.paymentDate,
+        employeeId: payroll.employee
+      }
+    });
+    
+  } catch (error) {
+    console.error('Check employee acceptance error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
