@@ -1,46 +1,9 @@
 // controllers/mealController.js
-const User = require('../models/UsersModel');
-const AuditLog = require('../models/AuditModel'); 
+const Meal = require('../models/mealModel');
+const MealSubscription = require('../models/MealSubscriptionModel');
+const User = require('../models/UserModel');
+const AuditLog = require('../models/AuditModel');
 
-// ============================
-// HELPER FUNCTIONS
-// ============================
-
-// Helper: Get current month in YYYY-MM format
-const getCurrentMonth = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-};
-
-// Helper: Calculate next month
-const getNextMonth = (month = null) => {
-  const date = month ? new Date(`${month}-01`) : new Date();
-  date.setMonth(date.getMonth() + 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-};
-
-// Helper: Format date to YYYY-MM-DD
-const formatDate = (date) => {
-  return date.toISOString().split('T')[0];
-};
-
-// Helper: Calculate working days for a month (for display only)
-const calculateWorkingDaysForMonth = (month) => {
-  const [year, monthNum] = month.split('-').map(Number);
-  const daysInMonth = new Date(year, monthNum, 0).getDate();
-  let workingDays = 0;
-  
-  // Simple calculation: Monday-Friday as working days
-  for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(year, monthNum - 1, day);
-    const dayOfWeek = date.getDay();
-    if (dayOfWeek >= 1 && dayOfWeek <= 5) { // Monday = 1, Friday = 5
-      workingDays++;
-    }
-  }
-  
-  return workingDays;
-};
 // ============================
 // HELPER FUNCTIONS
 // ============================
@@ -50,644 +13,197 @@ const isAdmin = (user) => {
   return user.role === 'admin' || user.role === 'superAdmin';
 };
 
-// Helper: Validate month format
-const isValidMonth = (month) => {
-  return /^\d{4}-\d{2}$/.test(month);
+// Helper: Get current month in YYYY-MM format
+const getCurrentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
 
-// ============================
-// SINGLE REQUEST SYSTEM
-// ============================
+// Helper: Format date to YYYY-MM-DD
+const formatDate = (date) => {
+  return date.toISOString().split('T')[0];
+};
 
-// Employee: Request meal
-exports.requestMeal = async (req, res) => {
-  try {
-    const employee = await User.findById(req.user._id);
-    
-    if (!employee.mealEligibility) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are not eligible for meal benefits.'
-      });
+// Helper: Calculate working days for a month
+const calculateWorkingDaysForMonth = (month) => {
+  const [year, monthNum] = month.split('-').map(Number);
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+  let workingDays = 0;
+  
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, monthNum - 1, day);
+    const dayOfWeek = date.getDay();
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      workingDays++;
     }
-    
-    const { mealPreference, note, month } = req.body;
-    
-    if (!mealPreference || !['office', 'outside', 'none'].includes(mealPreference)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please select valid meal preference'
-      });
-    }
-    
-    // If employee has active subscription, they can still make single requests
-    // but we'll mark it as subscription request
-    const requestMonth = month || getCurrentMonth();
-    
-    // Check if already requested for this month
-    const existingRequest = employee.monthlyMealRequests?.find(
-      req => req.month === requestMonth
-    );
-    
-    if (existingRequest) {
-      return res.status(400).json({
-        success: false,
-        message: `You already have a ${existingRequest.status} meal request for ${requestMonth}`
-      });
-    }
-    
-    // Determine request type
-    const requestType = employee.mealSubscription === 'active' ? 'subscription' : 'single';
-    
-    // Add monthly request
-    employee.monthlyMealRequests.push({
-      month: requestMonth,
-      status: 'requested',
-      preference: mealPreference,
-      requestDate: new Date(),
-      note: note || '',
-      mealDays: 0,
-      requestType: requestType,
-      requestedBy: req.user._id
-    });
-    
-    // Update single request fields for backward compatibility
-    employee.mealPreference = mealPreference;
-    employee.mealRequestStatus = 'requested';
-    employee.mealRequestDate = new Date();
-    employee.mealNote = note || '';
-    
-    await employee.save();
-    
-    // Audit Log
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Meal Request Submitted",
-      target: employee._id,
-      details: {
-        mealPreference: mealPreference,
-        note: note,
-        month: requestMonth,
-        employeeId: employee.employeeId,
-        requestType: requestType,
-        requestedBy: 'self'
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: `Meal request submitted for ${requestMonth}`,
-      data: {
-        mealPreference: mealPreference,
-        status: 'requested',
-        month: requestMonth,
-        requestDate: new Date(),
-        requestType: requestType
-      }
-    });
-    
-  } catch (error) {
-    console.error('Meal request error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
   }
+  
+  return workingDays;
 };
 
 // ============================
-// ADMIN CREATE MEAL FOR USER
+// DAILY MEAL REQUESTS
 // ============================
 
-// Admin: Create meal request for any user
-exports.adminCreateMealForUser = async (req, res) => {
+// Employee: Request daily meal
+exports.requestDailyMeal = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
+    const { mealPreference, date, note } = req.body;
     
-    const { employeeId, month, mealPreference, note, status = 'approved' } = req.body;
-    
-    if (!employeeId || !month || !mealPreference) {
+    if (!mealPreference || !['office', 'outside'].includes(mealPreference)) {
       return res.status(400).json({
         success: false,
-        message: 'Employee ID, month and meal preference are required'
+        message: 'Please select valid meal preference: office or outside'
       });
     }
     
-    if (!isValidMonth(month)) {
+    if (!date) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid month format. Use YYYY-MM'
+        message: 'Date is required'
       });
     }
     
-    if (!['office', 'outside'].includes(mealPreference)) {
+    const mealDate = new Date(date);
+    
+    // Check if user is onsite
+    const user = await User.findById(req.user._id);
+    if (user.workLocationType !== 'onsite') {
       return res.status(400).json({
         success: false,
-        message: 'Invalid meal preference'
+        message: 'Only onsite users can request meals'
       });
     }
     
-    const employee = await User.findOne({ employeeId });
-    
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-    
-    // Check if employee is onsite
-    if (!employee.mealEligibility) {
-      return res.status(400).json({
-        success: false,
-        message: 'Employee is not eligible for meal benefits'
-      });
-    }
-    
-    // Check if already exists
-    const existingRequest = employee.monthlyMealRequests?.find(
-      req => req.month === month
-    );
-    
-    if (existingRequest) {
-      return res.status(400).json({
-        success: false,
-        message: `Meal request already exists for ${month} (Status: ${existingRequest.status})`
-      });
-    }
-    
-    // Create meal request
-    employee.monthlyMealRequests.push({
-      month: month,
-      status: status,
-      preference: mealPreference,
-      requestDate: new Date(),
-      approvalDate: status === 'approved' ? new Date() : null,
-      approvedBy: status === 'approved' ? req.user._id : null,
-      note: note || `Created by admin: ${req.user.email}`,
-      mealDays: 0,
-      requestType: 'admin_created',
-      requestedBy: req.user._id,
-      isAdminCreated: true
-    });
-    
-    // Update employee's meal preference if not set
-    if (!employee.mealPreference) {
-      employee.mealPreference = mealPreference;
-    }
-    
-    await employee.save();
-    
-    // Audit Log
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Admin Created Meal Request",
-      target: employee._id,
-      details: {
-        adminId: req.user._id,
-        adminEmail: req.user.email,
-        employeeId: employee.employeeId,
-        employeeName: `${employee.firstName} ${employee.lastName}`,
-        month: month,
-        preference: mealPreference,
-        status: status,
-        note: note
+    // Check if already has meal for this date
+    const existingMeal = await Meal.findOne({
+      user: req.user._id,
+      date: {
+        $gte: new Date(mealDate.setHours(0, 0, 0, 0)),
+        $lte: new Date(mealDate.setHours(23, 59, 59, 999))
       },
-      ip: req.ip,
-      device: req.headers['user-agent']
+      isDeleted: false
     });
     
-    res.status(201).json({
-      success: true,
-      message: `Meal request created for ${employee.employeeId} (${month})`,
-      data: {
-        employeeId: employee.employeeId,
-        name: `${employee.firstName} ${employee.lastName}`,
-        month: month,
-        preference: mealPreference,
-        status: status,
-        createdBy: req.user.email,
-        createdDate: new Date()
-      }
-    });
-    
-  } catch (error) {
-    console.error('Admin create meal error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// ============================
-// DELETE MEAL REQUESTS
-// ============================
-
-// Employee: Delete own meal request
-exports.deleteMyMealRequest = async (req, res) => {
-  try {
-    const employee = await User.findById(req.user._id);
-    const { month, requestId } = req.body;
-    
-    if (!month && !requestId) {
+    if (existingMeal) {
       return res.status(400).json({
         success: false,
-        message: 'Month or request ID is required'
+        message: `You already have a ${existingMeal.status} meal request for ${formatDate(new Date(date))}`
       });
     }
     
-    let requestToDelete;
+    // Check if user has active subscription for this month
+    const month = getCurrentMonth();
+    const subscription = await MealSubscription.findOne({
+      user: req.user._id,
+      status: 'active',
+      isDeleted: false
+    });
     
-    if (requestId) {
-      // Delete by request ID
-      requestToDelete = employee.monthlyMealRequests.id(requestId);
-    } else {
-      // Delete by month
-      requestToDelete = employee.monthlyMealRequests.find(
-        req => req.month === month
-      );
-    }
-    
-    if (!requestToDelete) {
-      return res.status(404).json({
-        success: false,
-        message: 'Meal request not found'
-      });
-    }
-    
-    // Check if request can be deleted
-    if (requestToDelete.status === 'approved') {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete approved meal request. Please contact admin.'
-      });
-    }
-    
-    // Check if it's admin created (employee can't delete admin created)
-    if (requestToDelete.isAdminCreated && !isAdmin(req.user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Cannot delete admin-created meal request'
-      });
-    }
-    
-    // Store details before deletion
-    const deletedRequest = {
-      month: requestToDelete.month,
-      preference: requestToDelete.preference,
-      status: requestToDelete.status,
-      requestDate: requestToDelete.requestDate
-    };
-    
-    // Remove the request
-    requestToDelete.remove();
-    
-    // If this was the only request for current month, update single request status
-    const currentMonth = getCurrentMonth();
-    if (requestToDelete.month === currentMonth) {
-      const hasOtherCurrentMonthReq = employee.monthlyMealRequests.some(
-        req => req.month === currentMonth
+    if (subscription) {
+      const isApproved = subscription.monthlyApprovals?.find(
+        a => a.month === month && a.status === 'approved'
       );
       
-      if (!hasOtherCurrentMonthReq) {
-        employee.mealRequestStatus = 'none';
-        employee.mealPreference = null;
-      }
-    }
-    
-    await employee.save();
-    
-    // Audit Log
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Meal Request Deleted",
-      target: employee._id,
-      details: {
-        deletedBy: 'self',
-        employeeId: employee.employeeId,
-        deletedRequest: deletedRequest,
-        reason: req.body.reason || 'No reason provided'
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Meal request deleted successfully',
-      data: {
-        deletedRequest: deletedRequest,
-        deletedAt: new Date()
-      }
-    });
-    
-  } catch (error) {
-    console.error('Delete meal request error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Admin: Delete any meal request
-exports.adminDeleteMealRequest = async (req, res) => {
-  try {
-    if (!isAdmin(req.user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-    
-    const { employeeId, month, requestId, reason } = req.body;
-    
-    if (!employeeId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Employee ID is required'
-      });
-    }
-    
-    const employee = await User.findOne({ employeeId });
-    
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-    
-    let requestToDelete;
-    
-    if (requestId) {
-      // Delete by request ID
-      requestToDelete = employee.monthlyMealRequests.id(requestId);
-    } else if (month) {
-      // Delete by month
-      requestToDelete = employee.monthlyMealRequests.find(
-        req => req.month === month
-      );
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Month or request ID is required'
-      });
-    }
-    
-    if (!requestToDelete) {
-      return res.status(404).json({
-        success: false,
-        message: 'Meal request not found'
-      });
-    }
-    
-    // Store details before deletion
-    const deletedRequest = {
-      month: requestToDelete.month,
-      preference: requestToDelete.preference,
-      status: requestToDelete.status,
-      requestDate: requestToDelete.requestDate,
-      approvalDate: requestToDelete.approvalDate,
-      requestedBy: requestToDelete.requestedBy
-    };
-    
-    // Remove the request
-    requestToDelete.remove();
-    
-    // Update employee's status if needed
-    const currentMonth = getCurrentMonth();
-    if (requestToDelete.month === currentMonth) {
-      const hasOtherCurrentMonthReq = employee.monthlyMealRequests.some(
-        req => req.month === currentMonth
-      );
-      
-      if (!hasOtherCurrentMonthReq) {
-        employee.mealRequestStatus = 'none';
-      }
-    }
-    
-    await employee.save();
-    
-    // Audit Log
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Admin Deleted Meal Request",
-      target: employee._id,
-      details: {
-        adminId: req.user._id,
-        adminEmail: req.user.email,
-        employeeId: employee.employeeId,
-        deletedRequest: deletedRequest,
-        reason: reason || 'Admin deleted'
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Meal request deleted by admin',
-      data: {
-        employeeId: employee.employeeId,
-        name: `${employee.firstName} ${employee.lastName}`,
-        deletedRequest: deletedRequest,
-        deletedBy: req.user.email,
-        deletedAt: new Date(),
-        reason: reason
-      }
-    });
-    
-  } catch (error) {
-    console.error('Admin delete meal error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// ============================
-// VIEW ALL REQUESTS (ADMIN)
-// ============================
-
-// Admin: Get all meal requests with filters
-exports.getAllMealRequests = async (req, res) => {
-  try {
-    if (!isAdmin(req.user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-    
-    const { 
-      type = 'all', 
-      status, 
-      department, 
-      month, 
-      startDate, 
-      endDate,
-      employeeId,
-      page = 1,
-      limit = 20
-    } = req.query;
-    
-    const currentMonth = month || getCurrentMonth();
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    // Build query
-    let query = {
-      workLocationType: 'onsite',
-      $or: [
-        { role: 'employee' },
-        { role: 'admin' },
-        { role: 'moderator' }
-      ]
-    };
-    
-    if (department && department !== 'all') {
-      query.department = department;
-    }
-    
-    if (employeeId) {
-      query.employeeId = { $regex: employeeId, $options: 'i' };
-    }
-    
-    // Get total count
-    const totalEmployees = await User.countDocuments(query);
-    
-    // Get employees with pagination
-    const employees = await User.find(query)
-      .select('employeeId firstName lastName email department designation role mealPreference mealRequestStatus mealRequestDate mealApprovedDate mealNote mealSubscription mealAutoRenew mealSubscriptionStartDate monthlyMealRequests')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    // Process all meal requests (not just current month)
-    let allRequests = [];
-    
-    employees.forEach(emp => {
-      // Get single request if exists
-      if (emp.mealRequestStatus !== 'none') {
-        allRequests.push({
-          _id: emp._id,
-          employeeId: emp.employeeId,
-          name: `${emp.firstName} ${emp.lastName}`,
-          email: emp.email,
-          department: emp.department,
-          designation: emp.designation,
-          requestType: 'single',
-          month: currentMonth,
-          status: emp.mealRequestStatus,
-          preference: emp.mealPreference,
-          requestDate: emp.mealRequestDate,
-          approvalDate: emp.mealApprovedDate,
-          note: emp.mealNote || '',
-          subscription: emp.mealSubscription,
-          isAdminCreated: false
+      if (isApproved) {
+        return res.status(400).json({
+          success: false,
+          message: 'You have an active subscription for this month. Daily requests are not needed.'
         });
       }
-      
-      // Get all monthly requests
-      if (emp.monthlyMealRequests && emp.monthlyMealRequests.length > 0) {
-        emp.monthlyMealRequests.forEach(req => {
-          allRequests.push({
-            _id: emp._id,
-            employeeId: emp.employeeId,
-            name: `${emp.firstName} ${emp.lastName}`,
-            email: emp.email,
-            department: emp.department,
-            designation: emp.designation,
-            requestType: 'monthly',
-            requestId: req._id,
-            month: req.month,
-            status: req.status,
-            preference: req.preference,
-            requestDate: req.requestDate,
-            approvalDate: req.approvalDate,
-            approvedBy: req.approvedBy,
-            note: req.note || '',
-            mealDays: req.mealDays || 0,
-            subscription: emp.mealSubscription,
-            requestTypeDetail: req.requestType,
-            isAdminCreated: req.isAdminCreated || false,
-            canDelete: true // Admin can delete any
-          });
-        });
-      }
-    });
-    
-    // Apply filters
-    let filteredRequests = allRequests;
-    
-    // Filter by type
-    if (type !== 'all') {
-      filteredRequests = filteredRequests.filter(req => req.requestType === type);
     }
     
-    // Filter by status
+    // Create daily meal
+    const meal = new Meal({
+      user: req.user._id,
+      mealType: 'lunch',
+      preference: mealPreference,
+      date: new Date(date),
+      status: 'pending',
+      notes: note || '',
+      paymentMethod: 'salary_deduction',
+      createdBy: req.user._id
+    });
+    
+    await meal.save();
+    
+    // Audit Log
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Daily Meal Request Submitted",
+      target: meal._id,
+      details: {
+        date: date,
+        preference: mealPreference,
+        employeeId: user.employeeId
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Daily meal request submitted successfully',
+      data: meal
+    });
+    
+  } catch (error) {
+    console.error('Daily meal request error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Employee: Get my daily meals
+exports.getMyDailyMeals = async (req, res) => {
+  try {
+    const { date, month, status, page = 1, limit = 20 } = req.query;
+    
+    let query = { user: req.user._id, isDeleted: false };
+    
+    if (date) {
+      const startDate = new Date(date);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(date);
+      endDate.setHours(23, 59, 59, 999);
+      query.date = { $gte: startDate, $lte: endDate };
+    }
+    
+    if (month) {
+      const [year, monthNum] = month.split('-').map(Number);
+      const startDate = new Date(year, monthNum - 1, 1);
+      const endDate = new Date(year, monthNum, 0);
+      query.date = { $gte: startDate, $lte: endDate };
+    }
+    
     if (status && status !== 'all') {
-      filteredRequests = filteredRequests.filter(req => req.status === status);
+      query.status = status;
     }
     
-    // Filter by month
-    if (month && month !== 'all') {
-      filteredRequests = filteredRequests.filter(req => req.month === month);
-    }
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await Meal.countDocuments(query);
     
-    // Filter by date range
-    if (startDate && endDate) {
-      filteredRequests = filteredRequests.filter(req => {
-        const reqDate = req.requestDate;
-        return reqDate >= new Date(startDate) && reqDate <= new Date(endDate);
-      });
-    }
-    
-    // Sort by request date (newest first)
-    filteredRequests.sort((a, b) => new Date(b.requestDate) - new Date(a.requestDate));
-    
-    // Pagination for filtered results
-    const totalFiltered = filteredRequests.length;
-    const paginatedRequests = filteredRequests.slice(skip, skip + parseInt(limit));
-    
-    // Statistics
-    const stats = {
-      totalEmployees: totalEmployees,
-      totalRequests: allRequests.length,
-      filteredRequests: totalFiltered,
-      singleRequests: allRequests.filter(r => r.requestType === 'single').length,
-      monthlyRequests: allRequests.filter(r => r.requestType === 'monthly').length,
-      requested: allRequests.filter(r => r.status === 'requested').length,
-      approved: allRequests.filter(r => r.status === 'approved').length,
-      rejected: allRequests.filter(r => r.status === 'rejected').length,
-      cancelled: allRequests.filter(r => r.status === 'cancelled').length,
-      adminCreated: allRequests.filter(r => r.isAdminCreated).length
-    };
+    const meals = await Meal.find(query)
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('approvedBy', 'firstName lastName email');
     
     res.status(200).json({
       success: true,
-      stats: stats,
-      currentMonth: currentMonth,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: totalFiltered,
-        pages: Math.ceil(totalFiltered / parseInt(limit))
+        total: total,
+        pages: Math.ceil(total / parseInt(limit))
       },
-      requests: paginatedRequests
+      meals: meals
     });
     
   } catch (error) {
-    console.error('Get all meal requests error:', error);
+    console.error('Get daily meals error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -695,191 +211,53 @@ exports.getAllMealRequests = async (req, res) => {
   }
 };
 
-// ============================
-// EMPLOYEE: VIEW OWN REQUESTS
-// ============================
-
-// Employee: Get all my meal requests
-exports.getMyAllMealRequests = async (req, res) => {
+// Employee: Cancel daily meal
+exports.cancelDailyMeal = async (req, res) => {
   try {
-    const employee = await User.findById(req.user._id)
-      .select('employeeId firstName lastName mealEligibility monthlyMealRequests mealSubscription mealAutoRenew');
+    const { mealId, reason } = req.body;
     
-    if (!employee.mealEligibility) {
-      return res.status(200).json({
-        success: true,
-        eligible: false,
-        message: 'Not eligible for meal benefits',
-        requests: []
+    const meal = await Meal.findById(mealId);
+    
+    if (!meal) {
+      return res.status(404).json({
+        success: false,
+        message: 'Meal not found'
       });
     }
     
-    const { status, month, startDate, endDate } = req.query;
-    
-    // Get all monthly requests
-    let myRequests = employee.monthlyMealRequests || [];
-    
-    // Apply filters
-    if (status && status !== 'all') {
-      myRequests = myRequests.filter(req => req.status === status);
-    }
-    
-    if (month && month !== 'all') {
-      myRequests = myRequests.filter(req => req.month === month);
-    }
-    
-    if (startDate && endDate) {
-      myRequests = myRequests.filter(req => {
-        const reqDate = req.requestDate;
-        return reqDate >= new Date(startDate) && reqDate <= new Date(endDate);
-      });
-    }
-    
-    // Sort by month (newest first)
-    myRequests.sort((a, b) => b.month.localeCompare(a.month));
-    
-    // Format response
-    const formattedRequests = myRequests.map(req => ({
-      requestId: req._id,
-      month: req.month,
-      status: req.status,
-      preference: req.preference,
-      requestDate: req.requestDate,
-      approvalDate: req.approvalDate,
-      note: req.note || '',
-      mealDays: req.mealDays || 0,
-      requestType: req.requestType || 'monthly',
-      isAdminCreated: req.isAdminCreated || false,
-      canDelete: req.status !== 'approved' && !req.isAdminCreated
-    }));
-    
-    // Statistics for employee
-    const myStats = {
-      totalRequests: employee.monthlyMealRequests?.length || 0,
-      approved: employee.monthlyMealRequests?.filter(r => r.status === 'approved').length || 0,
-      requested: employee.monthlyMealRequests?.filter(r => r.status === 'requested').length || 0,
-      rejected: employee.monthlyMealRequests?.filter(r => r.status === 'rejected').length || 0,
-      subscription: employee.mealSubscription,
-      autoRenew: employee.mealAutoRenew
-    };
-    
-    res.status(200).json({
-      success: true,
-      eligible: true,
-      stats: myStats,
-      requests: formattedRequests
-    });
-    
-  } catch (error) {
-    console.error('Get my meal requests error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// ============================
-// ADMIN UPDATE MEAL REQUEST
-// ============================
-
-// Admin: Update any meal request
-exports.adminUpdateMealRequest = async (req, res) => {
-  try {
-    if (!isAdmin(req.user)) {
+    // Check permission
+    if (meal.user.toString() !== req.user._id.toString() && !isAdmin(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Not authorized to cancel this meal'
       });
     }
     
-    const { employeeId, month, requestId, updates } = req.body;
-    
-    if (!employeeId || !updates) {
+    // Check if can be cancelled
+    if (!meal.canCancel()) {
       return res.status(400).json({
         success: false,
-        message: 'Employee ID and updates are required'
+        message: 'Meal cannot be cancelled. Cancellation deadline passed or already served.'
       });
     }
     
-    const employee = await User.findOne({ employeeId });
+    meal.status = 'cancelled';
+    meal.cancelledBy = req.user._id;
+    meal.cancelledAt = new Date();
+    meal.cancellationReason = reason || '';
+    meal.notes = meal.notes ? `${meal.notes} | Cancelled: ${reason}` : `Cancelled: ${reason}`;
     
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-    
-    let mealRequest;
-    
-    if (requestId) {
-      // Find by request ID
-      mealRequest = employee.monthlyMealRequests.id(requestId);
-    } else if (month) {
-      // Find by month
-      mealRequest = employee.monthlyMealRequests.find(req => req.month === month);
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Month or request ID is required'
-      });
-    }
-    
-    if (!mealRequest) {
-      return res.status(404).json({
-        success: false,
-        message: 'Meal request not found'
-      });
-    }
-    
-    // Store old values
-    const oldValues = {
-      status: mealRequest.status,
-      preference: mealRequest.preference,
-      note: mealRequest.note
-    };
-    
-    // Apply updates
-    if (updates.status && ['requested', 'approved', 'rejected', 'cancelled'].includes(updates.status)) {
-      mealRequest.status = updates.status;
-      if (updates.status === 'approved') {
-        mealRequest.approvalDate = new Date();
-        mealRequest.approvedBy = req.user._id;
-      }
-    }
-    
-    if (updates.preference && ['office', 'outside'].includes(updates.preference)) {
-      mealRequest.preference = updates.preference;
-    }
-    
-    if (updates.note !== undefined) {
-      mealRequest.note = updates.note;
-    }
-    
-    if (updates.mealDays !== undefined) {
-      mealRequest.mealDays = updates.mealDays;
-    }
-    
-    await employee.save();
+    await meal.save();
     
     // Audit Log
     await AuditLog.create({
       userId: req.user._id,
-      action: "Admin Updated Meal Request",
-      target: employee._id,
+      action: "Daily Meal Cancelled",
+      target: meal._id,
       details: {
-        adminId: req.user._id,
-        adminEmail: req.user.email,
-        employeeId: employee.employeeId,
-        month: mealRequest.month,
-        oldValues: oldValues,
-        newValues: {
-          status: mealRequest.status,
-          preference: mealRequest.preference,
-          note: mealRequest.note,
-          mealDays: mealRequest.mealDays
-        }
+        mealDate: meal.date,
+        reason: reason,
+        cancelledBy: req.user.email
       },
       ip: req.ip,
       device: req.headers['user-agent']
@@ -887,128 +265,12 @@ exports.adminUpdateMealRequest = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: 'Meal request updated successfully',
-      data: {
-        employeeId: employee.employeeId,
-        name: `${employee.firstName} ${employee.lastName}`,
-        month: mealRequest.month,
-        updatedValues: {
-          status: mealRequest.status,
-          preference: mealRequest.preference,
-          note: mealRequest.note,
-          mealDays: mealRequest.mealDays
-        },
-        updatedBy: req.user.email,
-        updatedAt: new Date()
-      }
+      message: 'Meal cancelled successfully',
+      data: meal
     });
     
   } catch (error) {
-    console.error('Admin update meal error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-// ============================
-// SINGLE REQUEST SYSTEM
-// ============================
-
-// Controller-এ পরিবর্তন করুন:
-exports.requestMeal = async (req, res) => {
-  try {
-    const employee = await User.findById(req.user._id);
-    
-    // Check if employee is onsite
-    if (!employee.mealEligibility) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are not eligible for meal benefits. Only onsite users can request meals.'
-      });
-    }
-    
-    const { mealPreference, note, month } = req.body; // month add করুন
-    
-    if (!mealPreference || !['office', 'outside','none'].includes(mealPreference)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please select meal preference: "office", "outside", or "none"'
-      });
-    }
-    
-    // Check if user has active subscription
-    if (employee.mealSubscription === 'active') {
-      return res.status(400).json({
-        success: false,
-        message: 'You have an active subscription. Please manage your meal requests from subscription section.'
-      });
-    }
-    
-    // Use provided month or current month
-    const requestMonth = month || getCurrentMonth();
-    
-    // Check if already has a request for this month
-    const existingMonthlyReq = employee.monthlyMealRequests?.find(
-      req => req.month === requestMonth
-    );
-    
-    if (existingMonthlyReq) {
-      return res.status(400).json({
-        success: false,
-        message: `You already have a ${existingMonthlyReq.status} meal request for ${requestMonth}`
-      });
-    }
-    
-    // Add as monthly request (not as single request)
-    employee.monthlyMealRequests.push({
-      month: requestMonth,
-      status: 'requested',
-      preference: mealPreference,
-      requestDate: new Date(),
-      note: note || '',
-      mealDays: 0,
-      requestType: 'single' // Mark as single request
-    });
-    
-    // Also update single request fields for backward compatibility
-    employee.mealPreference = mealPreference;
-    employee.mealRequestStatus = 'requested';
-    employee.mealRequestDate = new Date();
-    employee.mealNote = note || '';
-    
-    await employee.save();
-    
-    // Audit Log
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Meal Request Submitted",
-      target: employee._id,
-      details: {
-        mealPreference: mealPreference,
-        note: note,
-        month: requestMonth,
-        employeeId: employee.employeeId,
-        requestType: 'single'
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: `Meal request submitted successfully for ${requestMonth} (Preference: ${mealPreference})`,
-      data: {
-        mealPreference: mealPreference,
-        status: 'requested',
-        month: requestMonth,
-        requestDate: new Date(),
-        requestType: 'single'
-      }
-    });
-    
-  } catch (error) {
-    console.error('Meal request error:', error);
+    console.error('Cancel daily meal error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -1017,70 +279,89 @@ exports.requestMeal = async (req, res) => {
 };
 
 // ============================
-// MONTHLY SUBSCRIPTION SYSTEM
+// SUBSCRIPTION MANAGEMENT
 // ============================
 
 // Employee: Setup monthly subscription
 exports.setupMonthlySubscription = async (req, res) => {
   try {
-    const employee = await User.findById(req.user._id);
-    const { mealPreference, autoRenew = true } = req.body;
+    const { preference, autoRenew = true } = req.body;
     
-    // Check if employee is onsite
-    if (!employee.mealEligibility) {
+    if (!preference || !['office', 'outside'].includes(preference)) {
       return res.status(400).json({
         success: false,
-        message: 'You are not eligible for meal benefits. Only onsite users can request meals.'
+        message: 'Please select valid meal preference: office or outside'
       });
     }
     
-    // Validate preference
-    if (!mealPreference || !['office', 'outside'].includes(mealPreference)) {
+    const user = await User.findById(req.user._id);
+    
+    // Check if user is onsite
+    if (user.workLocationType !== 'onsite') {
       return res.status(400).json({
         success: false,
-        message: 'Please select valid meal preference: "office" or "outside"'
+        message: 'Only onsite users can subscribe to meal service'
       });
     }
     
-    // Check if already has active subscription
-    if (employee.mealSubscription === 'active') {
+    // Check if already has subscription
+    const existingSubscription = await MealSubscription.findOne({
+      user: req.user._id,
+      isDeleted: false
+    });
+    
+    if (existingSubscription && existingSubscription.status === 'active') {
       return res.status(400).json({
         success: false,
         message: 'You already have an active meal subscription'
       });
     }
     
-    // Setup subscription
+    // Create or update subscription
+    let subscription;
     const currentMonth = getCurrentMonth();
     
-    employee.mealSubscription = 'active';
-    employee.mealAutoRenew = autoRenew;
-    employee.mealSubscriptionStartDate = new Date();
-    employee.mealPreference = mealPreference;
+    if (existingSubscription) {
+      // Reactivate cancelled subscription
+      subscription = existingSubscription;
+      subscription.status = 'active';
+      subscription.preference = preference;
+      subscription.autoRenew = autoRenew;
+      subscription.isPaused = false;
+    } else {
+      // Create new subscription
+      subscription = new MealSubscription({
+        user: req.user._id,
+        userInfo: {
+          employeeId: user.employeeId,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          department: user.department || ''
+        },
+        preference: preference,
+        status: 'active',
+        autoRenew: autoRenew,
+        startDate: new Date(),
+        createdBy: req.user._id
+      });
+    }
     
-    // Create first month request
-    employee.monthlyMealRequests.push({
-      month: currentMonth,
-      status: 'requested',
-      preference: mealPreference,
-      requestDate: new Date(),
-      note: 'Initial subscription setup',
-      mealDays: 0 // Will be updated by payroll system
-    });
+    // Add current month approval request
+    subscription.addMonthlyApproval(currentMonth, preference);
     
-    await employee.save();
+    await subscription.save();
     
     // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: "Monthly Subscription Setup",
-      target: employee._id,
+      target: subscription._id,
       details: {
-        mealPreference: mealPreference,
+        preference: preference,
         autoRenew: autoRenew,
         startMonth: currentMonth,
-        employeeId: employee.employeeId,
-        subscriptionType: 'monthly'
+        employeeId: user.employeeId
       },
       ip: req.ip,
       device: req.headers['user-agent']
@@ -1090,11 +371,15 @@ exports.setupMonthlySubscription = async (req, res) => {
       success: true,
       message: 'Monthly meal subscription activated successfully',
       data: {
-        subscription: 'active',
+        subscriptionId: subscription._id,
+        status: 'active',
+        preference: preference,
         autoRenew: autoRenew,
-        mealPreference: mealPreference,
-        startMonth: currentMonth,
-        startDate: employee.mealSubscriptionStartDate
+        startDate: subscription.startDate,
+        currentMonthRequest: {
+          month: currentMonth,
+          status: 'pending'
+        }
       }
     });
     
@@ -1107,49 +392,39 @@ exports.setupMonthlySubscription = async (req, res) => {
   }
 };
 
-// Employee: Cancel monthly subscription
-exports.cancelMonthlySubscription = async (req, res) => {
+// Employee: Cancel subscription
+exports.cancelSubscription = async (req, res) => {
   try {
-    const employee = await User.findById(req.user._id);
     const { reason } = req.body;
     
-    if (employee.mealSubscription !== 'active') {
+    const subscription = await MealSubscription.findOne({
+      user: req.user._id,
+      status: 'active',
+      isDeleted: false
+    });
+    
+    if (!subscription) {
       return res.status(400).json({
         success: false,
         message: 'No active subscription found'
       });
     }
     
-    // Save cancellation details
-    employee.mealSubscription = 'cancelled';
-    employee.mealAutoRenew = false; // Auto-renew off
-    employee.mealSubscriptionEndDate = new Date();
-    employee.mealCancellationReason = reason || '';
-    employee.mealCancelledBy = 'employee';
-    employee.mealCancelledAt = new Date();
+    subscription.status = 'cancelled';
+    subscription.autoRenew = false;
+    subscription.cancelledAt = new Date();
+    subscription.cancellationReason = reason || '';
     
-    // Cancel future month requests
-    const currentMonth = getCurrentMonth();
-    
-    employee.monthlyMealRequests.forEach(request => {
-      if (request.month > currentMonth && request.status !== 'approved') {
-        request.status = 'cancelled';
-        request.note = request.note ? `${request.note} | Subscription cancelled` : 'Subscription cancelled';
-      }
-    });
-    
-    await employee.save();
+    await subscription.save();
     
     // Audit Log
     await AuditLog.create({
       userId: req.user._id,
-      action: "Monthly Subscription Cancelled",
-      target: employee._id,
+      action: "Subscription Cancelled",
+      target: subscription._id,
       details: {
-        employeeId: employee.employeeId,
-        reason: reason || 'No reason provided',
-        cancelledBy: 'employee',
-        endDate: employee.mealSubscriptionEndDate
+        reason: reason,
+        employeeId: req.user.employeeId
       },
       ip: req.ip,
       device: req.headers['user-agent']
@@ -1157,12 +432,11 @@ exports.cancelMonthlySubscription = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: 'Meal subscription cancelled successfully. Auto-renew disabled.',
+      message: 'Meal subscription cancelled successfully',
       data: {
-        subscription: 'cancelled',
-        autoRenew: false,
-        endDate: employee.mealSubscriptionEndDate,
-        cancelledAt: employee.mealCancelledAt
+        subscriptionId: subscription._id,
+        status: 'cancelled',
+        cancelledAt: subscription.cancelledAt
       }
     });
     
@@ -1175,556 +449,58 @@ exports.cancelMonthlySubscription = async (req, res) => {
   }
 };
 
-// Employee: Request meal for specific month (Manual)
-exports.requestMealForMonth = async (req, res) => {
+// Employee: Update subscription preference
+exports.updateSubscriptionPreference = async (req, res) => {
   try {
-    const employee = await User.findById(req.user._id);
-    const { month, mealPreference, note } = req.body;
+    const { preference } = req.body;
     
-    // Check if employee is onsite
-    if (!employee.mealEligibility) {
+    if (!preference || !['office', 'outside'].includes(preference)) {
       return res.status(400).json({
         success: false,
-        message: 'You are not eligible for meal benefits.'
+        message: 'Please select valid meal preference: office or outside'
       });
     }
     
-    // Validate month format (YYYY-MM)
-    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    const subscription = await MealSubscription.findOne({
+      user: req.user._id,
+      status: 'active',
+      isDeleted: false
+    });
+    
+    if (!subscription) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide month in YYYY-MM format'
+        message: 'No active subscription found'
       });
     }
     
-    if (!mealPreference || !['office', 'outside'].includes(mealPreference)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please select valid meal preference'
-      });
-    }
+    const oldPreference = subscription.preference;
+    subscription.preference = preference;
     
-    // Check if already requested for this month
-    const existingRequest = employee.monthlyMealRequests.find(
-      req => req.month === month
-    );
-    
-    if (existingRequest) {
-      return res.status(400).json({
-        success: false,
-        message: `Meal already ${existingRequest.status} for ${month}`
-      });
-    }
-    
-    // Add monthly request
-    employee.monthlyMealRequests.push({
-      month: month,
-      status: 'requested',
-      preference: mealPreference,
-      requestDate: new Date(),
-      note: note || '',
-      mealDays: 0 // Will be updated by payroll system
-    });
-    
-    await employee.save();
-    
-    // Audit Log
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Monthly Meal Request Submitted",
-      target: employee._id,
-      details: {
-        month: month,
-        preference: mealPreference,
-        note: note,
-        employeeId: employee.employeeId
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-    
-    res.status(200).json({
-      success: true,
-      message: `Meal request submitted for ${month}`,
-      data: {
-        month: month,
-        preference: mealPreference,
-        status: 'requested',
-        requestDate: new Date()
-      }
-    });
-    
-  } catch (error) {
-    console.error('Monthly meal request error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// ============================
-// ADMIN FUNCTIONS
-// ============================
-
-// Admin: Get all meal requests (Both single and monthly)
-exports.getAllMealRequests = async (req, res) => {
-  try {
-    // Check if user is admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-    
-    const { type = 'all', status, department, month } = req.query;
-    
-    // UPDATE HERE: সব onsite users (employee, admin, moderator)
-    let query = {
-      workLocationType: 'onsite',
-      $or: [
-        { role: 'employee' },
-        { role: 'admin' },
-        { role: 'moderator' }
-      ]
-    };
-    
-    if (department && department !== 'all') {
-      query.department = department;
-    }
-    
-    const employees = await User.find(query)
-      .select('employeeId firstName lastName email department designation role mealPreference mealRequestStatus mealRequestDate mealApprovedDate mealNote mealSubscription mealAutoRenew mealSubscriptionStartDate monthlyMealRequests')
-      .sort({ mealRequestDate: -1 });
-    
-    let filteredEmployees = [];
-    const currentMonth = month || getCurrentMonth();
-    
-    // Filter based on request type
-    if (type === 'single') {
-      filteredEmployees = employees.filter(emp => 
-        emp.mealRequestStatus !== 'none'
-      );
-    } else if (type === 'monthly') {
-      filteredEmployees = employees.filter(emp => 
-        emp.monthlyMealRequests && emp.monthlyMealRequests.length > 0
-      );
-    } else {
-      filteredEmployees = employees.filter(emp => 
-        emp.mealRequestStatus !== 'none' || 
-        (emp.monthlyMealRequests && emp.monthlyMealRequests.length > 0)
-      );
-    }
-    
-    // Further filter by status if provided
-    if (status && status !== 'all') {
-      if (type === 'single' || type === 'all') {
-        filteredEmployees = filteredEmployees.filter(emp => 
-          emp.mealRequestStatus === status
-        );
-      }
-    }
-    
-    // Format response
-    const formattedEmployees = filteredEmployees.map(emp => {
-      const monthlyRequest = emp.monthlyMealRequests?.find(
-        req => req.month === currentMonth
-      );
-      
-      return {
-        _id: emp._id,
-        employeeId: emp.employeeId,
-        name: `${emp.firstName} ${emp.lastName}`,
-        email: emp.email,
-        department: emp.department,
-        designation: emp.designation,
-        
-        // Single request data
-        singlePreference: emp.mealPreference,
-        singleStatus: emp.mealRequestStatus,
-        singleRequestDate: emp.mealRequestDate,
-        singleApprovedDate: emp.mealApprovedDate,
-        note: emp.mealNote || '',
-        
-        // Monthly subscription data
-        subscription: emp.mealSubscription,
-        autoRenew: emp.mealAutoRenew,
-        subscriptionStart: emp.mealSubscriptionStartDate,
-        subscriptionEnd: emp.mealSubscriptionEndDate,
-        
-        // Current month data
-        currentMonth: currentMonth,
-        monthlyStatus: monthlyRequest?.status || 'none',
-        monthlyPreference: monthlyRequest?.preference || emp.mealPreference,
-        monthlyRequestsCount: emp.monthlyMealRequests?.length || 0,
-        
-        // Combined status (for display)
-        displayStatus: monthlyRequest?.status || emp.mealRequestStatus,
-        displayPreference: monthlyRequest?.preference || emp.mealPreference
-      };
-    });
-    
-    // Statistics (cost removed)
-    const stats = {
-      totalEmployees: employees.length,
-      totalRequests: filteredEmployees.length,
-      singleRequests: employees.filter(e => e.mealRequestStatus !== 'none').length,
-      monthlySubscribers: employees.filter(e => e.mealSubscription === 'active').length,
-      requested: employees.filter(e => e.mealRequestStatus === 'requested').length,
-      approved: employees.filter(e => e.mealRequestStatus === 'approved').length,
-      rejected: employees.filter(e => e.mealRequestStatus === 'rejected').length
-    };
-    
-    res.status(200).json({
-      success: true,
-      stats: stats,
-      currentMonth: currentMonth,
-      employees: formattedEmployees
-    });
-    
-  } catch (error) {
-    console.error('Get meal requests error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Admin: Approve/Reject meal request (Both single and monthly)
-exports.updateMealRequest = async (req, res) => {
-  try {
-    const { employeeId } = req.params;
-    const { action, note, month, requestType = 'monthly' } = req.body; // Default 'monthly' করুন
-    
-    // Check if user is admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-    
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Action must be "approve" or "reject"'
-      });
-    }
-    
-    const employee = await User.findById(employeeId);
-    
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-    
-    // 🎯 IMPORTANT: Check what type of request exists
-    const currentMonth = month || getCurrentMonth();
-    const monthlyRequest = employee.monthlyMealRequests.find(
-      req => req.month === currentMonth
-    );
-    
-    // Determine request type automatically
-    let actualRequestType = requestType;
-    
-    if (requestType === 'single' && employee.mealRequestStatus === 'none' && monthlyRequest) {
-      // User has monthly request but admin selected single type
-      actualRequestType = 'monthly';
-    }
-    
-    if (actualRequestType === 'single') {
-      // Handle single request
-      if (employee.mealRequestStatus !== 'requested') {
-        return res.status(400).json({
-          success: false,
-          message: `Single meal request not found or already ${employee.mealRequestStatus}`
-        });
-      }
-      
-      // ... rest of single request code
-      
-    } else if (actualRequestType === 'monthly') {
-      // Handle monthly request
-      if (!month) {
-        return res.status(400).json({
-          success: false,
-          message: 'Month is required for monthly requests'
-        });
-      }
-      
-      const monthlyRequest = employee.monthlyMealRequests.find(
-        req => req.month === month
-      );
-      
-      if (!monthlyRequest) {
-        return res.status(404).json({
-          success: false,
-          message: `No meal request found for ${month}`
-        });
-      }
-      
-      if (monthlyRequest.status !== 'requested') {
-        return res.status(400).json({
-          success: false,
-          message: `Meal request for ${month} is already ${monthlyRequest.status}`
-        });
-      }
-      
-      const oldStatus = monthlyRequest.status;
-      const newStatus = action === 'approve' ? 'approved' : 'rejected';
-      
-      // Update monthly request
-      monthlyRequest.status = newStatus;
-      monthlyRequest.approvalDate = new Date();
-      monthlyRequest.approvedBy = req.user._id;
-      monthlyRequest.note = note || monthlyRequest.note || '';
-      
-      // If auto-renew is ON and approved, create next month request
-      if (action === 'approve' && employee.mealAutoRenew) {
-        const nextMonth = getNextMonth(month);
-        const existingNextMonth = employee.monthlyMealRequests.find(
-          req => req.month === nextMonth
-        );
-        
-        if (!existingNextMonth) {
-          employee.monthlyMealRequests.push({
-            month: nextMonth,
-            status: 'requested',
-            preference: employee.mealPreference,
-            requestDate: new Date(),
-            note: 'Auto-generated from previous month approval',
-            mealDays: 0
-          });
-        }
-      }
-      
-      await employee.save();
-      
-      // Audit Log
-      await AuditLog.create({
-        userId: req.user._id,
-        action: `Monthly Meal Request ${action === 'approve' ? 'Approved' : 'Rejected'}`,
-        target: employee._id,
-        details: {
-          employeeId: employee.employeeId,
-          month: month,
-          oldStatus: oldStatus,
-          newStatus: newStatus,
-          preference: monthlyRequest.preference,
-          note: note,
-          actionBy: req.user.email,
-          autoRenew: employee.mealAutoRenew
-        },
-        ip: req.ip,
-        device: req.headers['user-agent']
-      });
-      
-      res.status(200).json({
-        success: true,
-        message: `Monthly meal request for ${month} ${action}ed successfully`,
-        data: {
-          employeeId: employee.employeeId,
-          name: `${employee.firstName} ${employee.lastName}`,
-          month: month,
-          preference: monthlyRequest.preference,
-          status: newStatus,
-          approvedDate: monthlyRequest.approvalDate,
-          approvedBy: req.user.email,
-          autoRenew: employee.mealAutoRenew,
-          requestType: 'monthly'
-        }
-      });
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid request type. Use "single" or "monthly"'
-      });
-    }
-    
-  } catch (error) {
-    console.error('Update meal request error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Employee: Get my meal status (Combined)
-exports.getMyMealStatus = async (req, res) => {
-  try {
-    const employee = await User.findById(req.user._id)
-      .select('employeeId firstName lastName mealEligibility mealPreference mealRequestStatus mealRequestDate mealApprovedDate mealNote mealSubscription mealAutoRenew mealSubscriptionStartDate mealSubscriptionEndDate monthlyMealRequests');
-    
-    // Check eligibility (onsite or not)
-    if (!employee.mealEligibility) {
-      return res.status(200).json({
-        success: true,
-        eligible: false,
-        message: 'You are not eligible for meal benefits. Only onsite users can request meals.'
-      });
-    }
-    
+    // Update current month's preference if not approved yet
     const currentMonth = getCurrentMonth();
-    const currentMonthRequest = employee.monthlyMealRequests?.find(
-      req => req.month === currentMonth
+    const currentApproval = subscription.monthlyApprovals.find(
+      a => a.month === currentMonth
     );
     
-    // Check if has any active meal option
-    const hasSingleRequest = employee.mealRequestStatus !== 'none';
-    const hasMonthlySubscription = employee.mealSubscription === 'active';
-    const hasCurrentMonthRequest = currentMonthRequest?.status === 'approved';
+    if (currentApproval && currentApproval.status !== 'approved') {
+      currentApproval.preference = preference;
+    }
     
-    const activeMealStatus = hasCurrentMonthRequest || 
-                            (hasSingleRequest && employee.mealRequestStatus === 'approved') ||
-                            hasMonthlySubscription;
+    await subscription.save();
     
     res.status(200).json({
       success: true,
-      eligible: true,
-      hasActiveMeal: activeMealStatus,
+      message: 'Subscription preference updated successfully',
       data: {
-        // Basic info
-        employeeId: employee.employeeId,
-        name: `${employee.firstName} ${employee.lastName}`,
-        
-        // Single request data
-        singlePreference: employee.mealPreference,
-        singleStatus: employee.mealRequestStatus,
-        singleRequestDate: employee.mealRequestDate,
-        singleApprovedDate: employee.mealApprovedDate,
-        singleNote: employee.mealNote || '',
-        
-        // Monthly subscription data
-        subscription: employee.mealSubscription,
-        autoRenew: employee.mealAutoRenew,
-        subscriptionStart: employee.mealSubscriptionStartDate,
-        subscriptionEnd: employee.mealSubscriptionEndDate,
-        
-        // Current month data
-        currentMonth: currentMonth,
-        monthlyStatus: currentMonthRequest?.status || 'none',
-        monthlyPreference: currentMonthRequest?.preference || employee.mealPreference,
-        monthlyRequestDate: currentMonthRequest?.requestDate,
-        monthlyApprovalDate: currentMonthRequest?.approvalDate,
-        monthlyNote: currentMonthRequest?.note || '',
-        monthlyMealDays: currentMonthRequest?.mealDays || 0,
-        
-        // Display preference (monthly overrides single)
-        displayPreference: currentMonthRequest?.preference || employee.mealPreference,
-        displayStatus: currentMonthRequest?.status || employee.mealRequestStatus,
-        
-        // Monthly history (last 6 months)
-        monthlyHistory: employee.monthlyMealRequests
-          ?.sort((a, b) => b.month.localeCompare(a.month))
-          .slice(0, 6)
-          .map(req => ({
-            month: req.month,
-            status: req.status,
-            preference: req.preference,
-            requestDate: req.requestDate,
-            approvalDate: req.approvalDate,
-            note: req.note,
-            mealDays: req.mealDays || 0
-          })) || []
+        oldPreference: oldPreference,
+        newPreference: preference,
+        updatedAt: new Date()
       }
     });
     
   } catch (error) {
-    console.error('Get meal status error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Admin: Get monthly meal report (Cost calculation removed)
-exports.getMonthlyMealReport = async (req, res) => {
-  try {
-    // Check if user is admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-    
-    const { month, department } = req.query;
-    const reportMonth = month || getCurrentMonth();
-    
-    // UPDATE HERE: সব onsite users
-    const query = { 
-      workLocationType: 'onsite',
-      $or: [
-        { role: 'employee' },
-        { role: 'admin' },
-        { role: 'moderator' }
-      ]
-    };
-    
-    if (department && department !== 'all') {
-      query.department = department;
-    }
-    
-    const employees = await User.find(query)
-      .select('employeeId firstName lastName role department mealSubscription mealAutoRenew monthlyMealRequests');
-    
-    let report = [];
-    
-    employees.forEach(emp => {
-      const monthlyReq = emp.monthlyMealRequests?.find(
-        req => req.month === reportMonth
-      );
-      
-      // Calculate working days for display only
-      let mealDays = 0;
-      
-      if (monthlyReq?.status === 'approved') {
-        mealDays = calculateWorkingDaysForMonth(reportMonth);
-      }
-      
-      report.push({
-        employeeId: emp.employeeId,
-        name: `${emp.firstName} ${emp.lastName}`,
-        department: emp.department,
-        subscription: emp.mealSubscription,
-        autoRenew: emp.mealAutoRenew,
-        month: reportMonth,
-        status: monthlyReq?.status || 'none',
-        preference: monthlyReq?.preference || '-',
-        requestDate: monthlyReq?.requestDate || null,
-        approvalDate: monthlyReq?.approvalDate || null,
-        mealDays: mealDays, // For display only, actual days from payroll
-        // Cost field removed - will be calculated in payroll system
-      });
-    });
-    
-    // Statistics (cost removed)
-    const stats = {
-      totalEmployees: report.length,
-      totalApproved: report.filter(r => r.status === 'approved').length,
-      totalRequested: report.filter(r => r.status === 'requested').length,
-      totalRejected: report.filter(r => r.status === 'rejected').length,
-      totalNone: report.filter(r => r.status === 'none').length,
-      officePreference: report.filter(r => r.preference === 'office').length,
-      outsidePreference: report.filter(r => r.preference === 'outside').length,
-      activeSubscriptions: report.filter(r => r.subscription === 'active').length
-    };
-    
-    res.status(200).json({
-      success: true,
-      month: reportMonth,
-      stats: stats,
-      report: report
-    });
-    
-  } catch (error) {
-    console.error('Monthly meal report error:', error);
+    console.error('Update preference error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -1735,24 +511,35 @@ exports.getMonthlyMealReport = async (req, res) => {
 // Employee: Update auto-renew setting
 exports.updateAutoRenew = async (req, res) => {
   try {
-    const employee = await User.findById(req.user._id);
     const { autoRenew } = req.body;
     
-    if (employee.mealSubscription !== 'active') {
+    if (typeof autoRenew !== 'boolean') {
       return res.status(400).json({
         success: false,
-        message: 'No active subscription found'
+        message: 'Auto-renew must be true or false'
       });
     }
     
-    employee.mealAutoRenew = autoRenew;
-    await employee.save();
+    const subscription = await MealSubscription.findOne({
+      user: req.user._id,
+      isDeleted: false
+    });
+    
+    if (!subscription) {
+      return res.status(400).json({
+        success: false,
+        message: 'No subscription found'
+      });
+    }
+    
+    subscription.autoRenew = autoRenew;
+    await subscription.save();
     
     res.status(200).json({
       success: true,
       message: `Auto-renew ${autoRenew ? 'enabled' : 'disabled'} successfully`,
       data: {
-        autoRenew: employee.mealAutoRenew
+        autoRenew: subscription.autoRenew
       }
     });
     
@@ -1765,66 +552,73 @@ exports.updateAutoRenew = async (req, res) => {
   }
 };
 
-// ============================
-// PAYROLL DATA EXPORT FUNCTION
-// ============================
-
-// Export meal data for payroll calculation
-exports.exportMealDataForPayroll = async (req, res) => {
+// Employee: Get my subscription details
+exports.getMySubscription = async (req, res) => {
   try {
-    // Check if user is admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
+    const subscription = await MealSubscription.findOne({
+      user: req.user._id,
+      isDeleted: false
+    }).populate('user', 'employeeId firstName lastName workLocationType');
+    
+    if (!subscription) {
+      return res.status(200).json({
+        success: true,
+        hasSubscription: false,
+        message: 'No active subscription found'
       });
     }
     
-    const { month } = req.query;
-    if (!month) {
-      return res.status(400).json({
-        success: false,
-        message: 'Month is required'
+    const currentMonth = getCurrentMonth();
+    const currentApproval = subscription.monthlyApprovals.find(
+      a => a.month === currentMonth
+    );
+    
+    // Get monthly stats
+    const monthlyStats = [];
+    for (const approval of subscription.monthlyApprovals.slice(-6)) {
+      const mealCount = await Meal.countDocuments({
+        user: req.user._id,
+        date: {
+          $gte: new Date(`${approval.month}-01`),
+          $lte: new Date(new Date(`${approval.month}-01`).setMonth(new Date(`${approval.month}-01`).getMonth() + 1) - 1)
+        },
+        isDeleted: false,
+        status: { $in: ['approved', 'served'] }
+      });
+      
+      monthlyStats.push({
+        month: approval.month,
+        status: approval.status,
+        preference: approval.preference,
+        mealDays: approval.mealDays || 0,
+        actualMeals: mealCount
       });
     }
-
-    // UPDATE HERE: সব onsite users
-    const employees = await User.find({
-      workLocationType: 'onsite',
-      $or: [
-        { role: 'employee' },
-        { role: 'admin' },
-        { role: 'moderator' }
-      ]
-    }).select('employeeId firstName lastName role department monthlyMealRequests');
-
-    const payrollData = employees.map(emp => {
-      const monthlyReq = emp.monthlyMealRequests?.find(
-        req => req.month === month
-      );
-
-      return {
-        employeeId: emp.employeeId,
-        name: `${emp.firstName} ${emp.lastName}`,
-        department: emp.department,
-        hasMealRequest: monthlyReq?.status === 'approved',
-        mealPreference: monthlyReq?.preference || null,
-        mealStatus: monthlyReq?.status || 'none',
-        approvalDate: monthlyReq?.approvalDate,
-        currentMealDays: monthlyReq?.mealDays || 0,
-        // Payroll system will calculate actual days and cost
-      };
-    });
-
+    
     res.status(200).json({
       success: true,
-      month: month,
-      totalEmployees: payrollData.length,
-      approvedMeals: payrollData.filter(d => d.mealStatus === 'approved').length,
-      data: payrollData
+      hasSubscription: true,
+      data: {
+        subscriptionId: subscription._id,
+        status: subscription.status,
+        preference: subscription.preference,
+        autoRenew: subscription.autoRenew,
+        startDate: subscription.startDate,
+        isPaused: subscription.isPaused,
+        
+        // Current month
+        currentMonth: currentMonth,
+        currentStatus: currentApproval?.status || 'none',
+        currentPreference: currentApproval?.preference || subscription.preference,
+        
+        // History
+        monthlyApprovals: subscription.monthlyApprovals.slice(-12).reverse(),
+        monthlyStats: monthlyStats
+      }
     });
+    
   } catch (error) {
-    console.error('Export error:', error);
+    console.error('Get subscription error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -1832,11 +626,539 @@ exports.exportMealDataForPayroll = async (req, res) => {
   }
 };
 
-// Update meal days from payroll system
+// ============================
+// ADMIN FUNCTIONS
+// ============================
+
+// Admin: Get all subscriptions
+exports.getAllSubscriptions = async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+    
+    const { status, department, month, page = 1, limit = 20 } = req.query;
+    
+    let query = { isDeleted: false };
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    if (department && department !== 'all') {
+      query['userInfo.department'] = department;
+    }
+    
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await MealSubscription.countDocuments(query);
+    
+    const subscriptions = await MealSubscription.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const currentMonth = month || getCurrentMonth();
+    
+    // Add current month approval status
+    const enhancedSubscriptions = subscriptions.map(sub => {
+      const currentApproval = sub.monthlyApprovals.find(
+        a => a.month === currentMonth
+      );
+      
+      return {
+        ...sub.toObject(),
+        currentMonthStatus: currentApproval?.status || 'none',
+        currentMonthPreference: currentApproval?.preference || sub.preference
+      };
+    });
+    
+    res.status(200).json({
+      success: true,
+      currentMonth: currentMonth,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: total,
+        pages: Math.ceil(total / parseInt(limit))
+      },
+      subscriptions: enhancedSubscriptions
+    });
+    
+  } catch (error) {
+    console.error('Get all subscriptions error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Admin: Approve/Reject monthly subscription
+exports.approveMonthlySubscription = async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+    
+    const { subscriptionId, month, action, note } = req.body;
+    
+    if (!subscriptionId || !month || !action) {
+      return res.status(400).json({
+        success: false,
+        message: 'Subscription ID, month and action are required'
+      });
+    }
+    
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action must be "approve" or "reject"'
+      });
+    }
+    
+    const subscription = await MealSubscription.findById(subscriptionId);
+    
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found'
+      });
+    }
+    
+    // Approve for month
+    const approved = subscription.approveForMonth(month, req.user._id, note);
+    
+    if (!approved) {
+      return res.status(400).json({
+        success: false,
+        message: `No pending approval found for ${month}`
+      });
+    }
+    
+    // If approved, create daily meals
+    if (action === 'approve') {
+      const approval = subscription.monthlyApprovals.find(a => a.month === month);
+      
+      // Create daily meals for the month
+      const createdCount = await Meal.createSubscriptionMeals(
+        subscription.user,
+        month,
+        approval.preference,
+        req.user._id
+      );
+      
+      approval.mealDays = calculateWorkingDaysForMonth(month);
+      
+      // If auto-renew is ON, create next month request
+      if (subscription.autoRenew) {
+        const nextMonth = getNextMonth(month);
+        subscription.addMonthlyApproval(nextMonth, subscription.preference);
+      }
+    }
+    
+    await subscription.save();
+    
+    // Audit Log
+    await AuditLog.create({
+      userId: req.user._id,
+      action: `Monthly Subscription ${action === 'approve' ? 'Approved' : 'Rejected'}`,
+      target: subscription._id,
+      details: {
+        month: month,
+        action: action,
+        employeeId: subscription.userInfo.employeeId,
+        note: note,
+        approvedBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: `Subscription ${action}ed successfully for ${month}`,
+      data: {
+        subscriptionId: subscription._id,
+        employeeId: subscription.userInfo.employeeId,
+        month: month,
+        status: action === 'approve' ? 'approved' : 'rejected',
+        approvedBy: req.user.email,
+        approvedAt: new Date()
+      }
+    });
+    
+  } catch (error) {
+    console.error('Approve subscription error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Admin: Get pending approvals for month
+exports.getPendingApprovals = async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+    
+    const { month } = req.query;
+    const currentMonth = month || getCurrentMonth();
+    
+    const pendingSubscriptions = await MealSubscription.getPendingForMonth(currentMonth);
+    
+    // Get user details for each subscription
+    const enhancedSubscriptions = await Promise.all(
+      pendingSubscriptions.map(async (sub) => {
+        const user = await User.findById(sub.user).select('employeeId firstName lastName department designation');
+        return {
+          subscriptionId: sub._id,
+          employeeId: sub.userInfo.employeeId,
+          name: `${sub.userInfo.firstName} ${sub.userInfo.lastName}`,
+          department: sub.userInfo.department,
+          preference: sub.preference,
+          month: currentMonth,
+          requestDate: sub.monthlyApprovals.find(a => a.month === currentMonth)?.requestDate
+        };
+      })
+    );
+    
+    res.status(200).json({
+      success: true,
+      month: currentMonth,
+      count: enhancedSubscriptions.length,
+      subscriptions: enhancedSubscriptions
+    });
+    
+  } catch (error) {
+    console.error('Get pending approvals error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Admin: Get monthly report
+exports.getMonthlyMealReport = async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+    
+    const { month, department } = req.query;
+    const reportMonth = month || getCurrentMonth();
+    
+    // Get approved subscriptions for the month
+    const approvedSubscriptions = await MealSubscription.getApprovedForMonth(reportMonth);
+    
+    // Get all onsite users
+    let userQuery = { 
+      workLocationType: 'onsite',
+      isDeleted: false
+    };
+    
+    if (department && department !== 'all') {
+      userQuery.department = department;
+    }
+    
+    const onsiteUsers = await User.find(userQuery)
+      .select('employeeId firstName lastName department designation');
+    
+    // Create report
+    const report = [];
+    
+    for (const user of onsiteUsers) {
+      // Check if user has approved subscription for the month
+      const subscription = approvedSubscriptions.find(
+        sub => sub.user.toString() === user._id.toString()
+      );
+      
+      if (subscription) {
+        const approval = subscription.monthlyApprovals.find(
+          a => a.month === reportMonth
+        );
+        
+        // Count actual meals served
+        const startDate = new Date(`${reportMonth}-01`);
+        const endDate = new Date(new Date(startDate).setMonth(startDate.getMonth() + 1) - 1);
+        
+        const mealCount = await Meal.countDocuments({
+          user: user._id,
+          date: { $gte: startDate, $lte: endDate },
+          status: { $in: ['approved', 'served'] },
+          isDeleted: false
+        });
+        
+        report.push({
+          employeeId: user.employeeId,
+          name: `${user.firstName} ${user.lastName}`,
+          department: user.department,
+          designation: user.designation,
+          subscription: 'active',
+          month: reportMonth,
+          status: approval?.status || 'approved',
+          preference: approval?.preference || subscription.preference,
+          approvedMeals: mealCount,
+          estimatedDays: approval?.mealDays || calculateWorkingDaysForMonth(reportMonth),
+          approvalDate: approval?.approvalDate
+        });
+      } else {
+        // User doesn't have subscription
+        report.push({
+          employeeId: user.employeeId,
+          name: `${user.firstName} ${user.lastName}`,
+          department: user.department,
+          designation: user.designation,
+          subscription: 'none',
+          month: reportMonth,
+          status: 'none',
+          preference: '-',
+          approvedMeals: 0,
+          estimatedDays: 0
+        });
+      }
+    }
+    
+    // Statistics
+    const stats = {
+      totalEmployees: report.length,
+      withSubscription: report.filter(r => r.subscription === 'active').length,
+      approvedMeals: report.reduce((sum, r) => sum + r.approvedMeals, 0),
+      totalEstimatedDays: report.reduce((sum, r) => sum + r.estimatedDays, 0),
+      officePreference: report.filter(r => r.preference === 'office').length,
+      outsidePreference: report.filter(r => r.preference === 'outside').length
+    };
+    
+    res.status(200).json({
+      success: true,
+      month: reportMonth,
+      stats: stats,
+      report: report
+    });
+    
+  } catch (error) {
+    console.error('Monthly report error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Admin: Create subscription for user
+exports.adminCreateSubscription = async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+    
+    const { employeeId, preference, autoRenew = true, startDate } = req.body;
+    
+    if (!employeeId || !preference) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID and preference are required'
+      });
+    }
+    
+    const user = await User.findOne({ employeeId });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+    
+    // Check if user is onsite
+    if (user.workLocationType !== 'onsite') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only onsite users can have meal subscriptions'
+      });
+    }
+    
+    // Check if already has subscription
+    const existingSubscription = await MealSubscription.findOne({
+      user: user._id,
+      isDeleted: false
+    });
+    
+    if (existingSubscription) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already has a meal subscription'
+      });
+    }
+    
+    // Create subscription
+    const subscription = new MealSubscription({
+      user: user._id,
+      userInfo: {
+        employeeId: user.employeeId,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        department: user.department || ''
+      },
+      preference: preference,
+      status: 'active',
+      autoRenew: autoRenew,
+      startDate: startDate ? new Date(startDate) : new Date(),
+      createdBy: req.user._id
+    });
+    
+    // Add current month approval (auto-approve if admin creates)
+    const currentMonth = getCurrentMonth();
+    subscription.addMonthlyApproval(currentMonth, preference);
+    subscription.approveForMonth(currentMonth, req.user._id, 'Created by admin');
+    
+    await subscription.save();
+    
+    // Create daily meals for current month
+    await Meal.createSubscriptionMeals(
+      user._id,
+      currentMonth,
+      preference,
+      req.user._id
+    );
+    
+    // Audit Log
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Admin Created Subscription",
+      target: subscription._id,
+      details: {
+        adminId: req.user._id,
+        adminEmail: req.user.email,
+        employeeId: user.employeeId,
+        preference: preference,
+        autoRenew: autoRenew,
+        startDate: subscription.startDate
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+    
+    res.status(201).json({
+      success: true,
+      message: `Meal subscription created for ${user.employeeId}`,
+      data: {
+        subscriptionId: subscription._id,
+        employeeId: user.employeeId,
+        name: `${user.firstName} ${user.lastName}`,
+        preference: preference,
+        status: 'active',
+        autoRenew: autoRenew,
+        startDate: subscription.startDate,
+        createdBy: req.user.email
+      }
+    });
+    
+  } catch (error) {
+    console.error('Admin create subscription error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// ============================
+// PAYROLL INTEGRATION
+// ============================
+
+// Export meal data for payroll
+exports.exportMealDataForPayroll = async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+    
+    const { month } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({
+        success: false,
+        message: 'Month is required'
+      });
+    }
+    
+    // Get all approved subscriptions for the month
+    const approvedSubscriptions = await MealSubscription.getApprovedForMonth(month);
+    
+    const payrollData = [];
+    
+    for (const subscription of approvedSubscriptions) {
+      const approval = subscription.monthlyApprovals.find(
+        a => a.month === month
+      );
+      
+      // Count actual served meals
+      const startDate = new Date(`${month}-01`);
+      const endDate = new Date(new Date(startDate).setMonth(startDate.getMonth() + 1) - 1);
+      
+      const servedMeals = await Meal.countDocuments({
+        user: subscription.user,
+        date: { $gte: startDate, $lte: endDate },
+        status: 'served',
+        isDeleted: false
+      });
+      
+      payrollData.push({
+        employeeId: subscription.userInfo.employeeId,
+        name: `${subscription.userInfo.firstName} ${subscription.userInfo.lastName}`,
+        department: subscription.userInfo.department || '',
+        month: month,
+        preference: approval?.preference || subscription.preference,
+        approvedDays: approval?.mealDays || calculateWorkingDaysForMonth(month),
+        servedMeals: servedMeals,
+        subscriptionId: subscription._id,
+        approvalDate: approval?.approvalDate
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      month: month,
+      totalEmployees: payrollData.length,
+      totalServedMeals: payrollData.reduce((sum, d) => sum + d.servedMeals, 0),
+      data: payrollData
+    });
+    
+  } catch (error) {
+    console.error('Export for payroll error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Update meal days from payroll
 exports.updateMealDaysFromPayroll = async (req, res) => {
   try {
-    // Check if user is admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
+    if (!isAdmin(req.user)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Admin only.'
@@ -1852,38 +1174,40 @@ exports.updateMealDaysFromPayroll = async (req, res) => {
       });
     }
     
-    const employee = await User.findOne({ employeeId });
+    const subscription = await MealSubscription.findOne({
+      'userInfo.employeeId': employeeId,
+      isDeleted: false
+    });
     
-    if (!employee) {
+    if (!subscription) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: 'Subscription not found'
       });
     }
     
-    // Find and update the monthly request
-    const monthlyRequest = employee.monthlyMealRequests.find(
-      req => req.month === month
+    const approval = subscription.monthlyApprovals.find(
+      a => a.month === month
     );
     
-    if (!monthlyRequest) {
+    if (!approval) {
       return res.status(404).json({
         success: false,
-        message: `No meal request found for ${month}`
+        message: `No approval found for ${month}`
       });
     }
     
-    monthlyRequest.mealDays = mealDays;
-    await employee.save();
+    approval.mealDays = mealDays;
+    await subscription.save();
     
     // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: "Meal Days Updated from Payroll",
-      target: employee._id,
+      target: subscription._id,
       details: {
-        employeeId: employee.employeeId,
         month: month,
+        employeeId: employeeId,
         mealDays: mealDays,
         updatedBy: req.user.email
       },
@@ -1895,14 +1219,112 @@ exports.updateMealDaysFromPayroll = async (req, res) => {
       success: true,
       message: 'Meal days updated successfully',
       data: {
-        employeeId: employee.employeeId,
+        employeeId: employeeId,
         month: month,
-        mealDays: mealDays
+        mealDays: mealDays,
+        updatedAt: new Date()
       }
     });
     
   } catch (error) {
     console.error('Update meal days error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// ============================
+// DASHBOARD
+// ============================
+
+// Get dashboard statistics
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const currentMonth = getCurrentMonth();
+    const today = new Date();
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    
+    let stats = {};
+    
+    if (isAdmin(req.user)) {
+      // Admin stats
+      const totalSubscriptions = await MealSubscription.countDocuments({
+        status: 'active',
+        isDeleted: false
+      });
+      
+      const pendingApprovals = await MealSubscription.countDocuments({
+        status: 'active',
+        'monthlyApprovals.month': currentMonth,
+        'monthlyApprovals.status': 'pending',
+        isDeleted: false
+      });
+      
+      const todayMeals = await Meal.countDocuments({
+        date: {
+          $gte: new Date(today.setHours(0, 0, 0, 0)),
+          $lte: new Date(today.setHours(23, 59, 59, 999))
+        },
+        isDeleted: false
+      });
+      
+      const monthlyMeals = await Meal.countDocuments({
+        date: { $gte: startOfMonth, $lte: endOfMonth },
+        isDeleted: false
+      });
+      
+      stats = {
+        totalSubscriptions,
+        pendingApprovals,
+        todayMeals,
+        monthlyMeals,
+        currentMonth
+      };
+    } else {
+      // Employee stats
+      const subscription = await MealSubscription.findOne({
+        user: req.user._id,
+        isDeleted: false
+      });
+      
+      const todayMeal = await Meal.findOne({
+        user: req.user._id,
+        date: {
+          $gte: new Date(today.setHours(0, 0, 0, 0)),
+          $lte: new Date(today.setHours(23, 59, 59, 999))
+        },
+        isDeleted: false
+      });
+      
+      const monthlyMeals = await Meal.countDocuments({
+        user: req.user._id,
+        date: { $gte: startOfMonth, $lte: endOfMonth },
+        status: { $in: ['approved', 'served'] },
+        isDeleted: false
+      });
+      
+      stats = {
+        hasSubscription: !!subscription,
+        subscriptionStatus: subscription?.status || 'none',
+        todayMeal: todayMeal ? {
+          status: todayMeal.status,
+          preference: todayMeal.preference
+        } : null,
+        monthlyMeals,
+        currentMonth
+      };
+    }
+    
+    res.status(200).json({
+      success: true,
+      stats: stats
+    });
+    
+  } catch (error) {
+    console.error('Dashboard stats error:', error);
     res.status(500).json({
       success: false,
       message: error.message

@@ -178,133 +178,133 @@ onsiteBenefits: {
   }
 },
 
-// ============ MEAL REQUEST SYSTEM ============ 
-// বর্তমান কোড:
-mealEligibility: {
-  type: Boolean,
-  default: true // সবাইকে ডিফল্ট eligible করে দিন
-}, 
+// // ============ MEAL REQUEST SYSTEM ============ 
+// // বর্তমান কোড:
+// mealEligibility: {
+//   type: Boolean,
+//   default: true // সবাইকে ডিফল্ট eligible করে দিন
+// }, 
 
-mealPreference: {
-  type: String,
-  enum: ['office', 'outside', 'none'],
-  default: 'none'
-},
+// mealPreference: {
+//   type: String,
+//   enum: ['office', 'outside', 'none'],
+//   default: 'none'
+// },
 
-mealRequestStatus: {
-  type: String,
-  enum: ['none', 'requested', 'approved', 'rejected'],
-  default: 'none'
-},
+// mealRequestStatus: {
+//   type: String,
+//   enum: ['none', 'requested', 'approved', 'rejected'],
+//   default: 'none'
+// },
 
-mealRequestDate: {
-  type: Date
-},
+// mealRequestDate: {
+//   type: Date
+// },
 
-mealApprovedDate: {
-  type: Date
-},
+// mealApprovedDate: {
+//   type: Date
+// },
 
-mealApprovedBy: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'User'
-},
+// mealApprovedBy: {
+//   type: mongoose.Schema.Types.ObjectId,
+//   ref: 'User'
+// },
 
-mealNote: {
-  type: String,
-  default: ''
-},
+// mealNote: {
+//   type: String,
+//   default: ''
+// },
 
-// ============ MONTHLY SUBSCRIPTION SYSTEM ============
-mealSubscription: {
-  type: String,
-  enum: ['none', 'active', 'paused', 'cancelled'],
-  default: 'none'
-},
+// // ============ MONTHLY SUBSCRIPTION SYSTEM ============
+// mealSubscription: {
+//   type: String,
+//   enum: ['none', 'active', 'paused', 'cancelled'],
+//   default: 'none'
+// },
 
-mealAutoRenew: {
-  type: Boolean,
-  default: true
-},
+// mealAutoRenew: {
+//   type: Boolean,
+//   default: true
+// },
 
-mealSubscriptionStartDate: {
-  type: Date
-},
+// mealSubscriptionStartDate: {
+//   type: Date
+// },
 
-mealSubscriptionEndDate: {
-  type: Date
-},
+// mealSubscriptionEndDate: {
+//   type: Date
+// },
 
-// Monthly meal requests array (সরলীকৃত)
-monthlyMealRequests: [{
-  month: { // Format: "2024-01"
-    type: String,
-    required: true
-  },
-  status: {
-    type: String,
-    enum: ['none', 'requested', 'approved', 'rejected', 'cancelled'],
-    default: 'none'
-  },
-  preference: {
-    type: String,
-    enum: ['office', 'outside']
-  },
-  requestDate: {
-    type: Date,
-    default: Date.now
-  },
-  approvalDate: {
-    type: Date
-  },
-  approvedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  note: {
-    type: String,
-    default: ''
-  },
-  // Cost calculation payroll system এ হবে
-  mealDays: {
-    type: Number,
-    default: 0  // Payroll থেকে update হবে
-  }
-}],
+// // Monthly meal requests array (সরলীকৃত)
+// monthlyMealRequests: [{
+//   month: { // Format: "2024-01"
+//     type: String,
+//     required: true
+//   },
+//   status: {
+//     type: String,
+//     enum: ['none', 'requested', 'approved', 'rejected', 'cancelled'],
+//     default: 'none'
+//   },
+//   preference: {
+//     type: String,
+//     enum: ['office', 'outside']
+//   },
+//   requestDate: {
+//     type: Date,
+//     default: Date.now
+//   },
+//   approvalDate: {
+//     type: Date
+//   },
+//   approvedBy: {
+//     type: mongoose.Schema.Types.ObjectId,
+//     ref: 'User'
+//   },
+//   note: {
+//     type: String,
+//     default: ''
+//   },
+//   // Cost calculation payroll system এ হবে
+//   mealDays: {
+//     type: Number,
+//     default: 0  // Payroll থেকে update হবে
+//   }
+// }],
 
-// Cancellation details (রেখে দিচ্ছি)
-mealCancellationReason: {
-  type: String,
-  default: ''
-},
+// // Cancellation details (রেখে দিচ্ছি)
+// mealCancellationReason: {
+//   type: String,
+//   default: ''
+// },
 
-mealCancelledBy: {
-  type: String,
-  enum: ['employee', 'admin', 'system'],
-  default: 'employee'
-},
+// mealCancelledBy: {
+//   type: String,
+//   enum: ['employee', 'admin', 'system'],
+//   default: 'employee'
+// },
 
-mealCancelledAt: {
-  type: Date
-},
+// mealCancelledAt: {
+//   type: Date
+// },
 
-// Pause details (রেখে দিচ্ছি)
-mealPauseStartDate: {
-  type: Date
-},
+// // Pause details (রেখে দিচ্ছি)
+// mealPauseStartDate: {
+//   type: Date
+// },
 
-mealPauseEndDate: {
-  type: Date
-},
+// mealPauseEndDate: {
+//   type: Date
+// },
 
-mealPauseReason: {
-  type: String,
-  default: ''
-},
+// mealPauseReason: {
+//   type: String,
+//   default: ''
+// },
 
-mealResumeDate: {
-  type: Date
-}, 
+// mealResumeDate: {
+//   type: Date
+// }, 
 
     // ============ ADMIN-SPECIFIC FIELDS ============
     companyName: {
