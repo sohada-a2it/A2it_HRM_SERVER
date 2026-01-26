@@ -178,33 +178,57 @@ onsiteBenefits: {
   }
 },
 
-// ============ MEAL/FOOD ALLOWANCE FIELDS ============ 
-mealEligibility: {
-  type: Boolean,
-  default: false
-}, 
-    dailyFoodCost: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    hasRequestedMeal: {
+    // ============ MEAL REQUEST SYSTEM ============ 
+    mealEligibility: {
       type: Boolean,
-      default: false
+      default: function() {
+        // শুধু onsite employees এর জন্য eligible
+        return this.role === 'employee' && this.workLocationType === 'onsite';
+      }
     },
+    
+    mealPreference: {
+      type: String,
+      enum: ['office', 'outside', 'none'],
+      default: 'none'
+    },
+    
+    mealRequestStatus: {
+      type: String,
+      enum: ['none', 'requested', 'approved', 'rejected'],
+      default: 'none'
+    },
+    
     mealRequestDate: {
       type: Date
     },
-    mealRequestApproved: {
-      type: Boolean,
-      default: false
+    
+    mealApprovedDate: {
+      type: Date
     },
+    
     mealApprovedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
-    mealApprovedAt: {
-      type: Date
+    
+    mealNote: {
+      type: String,
+      default: ''
+    },
+    
+    mealCostDeduction: {
+      monthlyDeduction: {
+        type: Number,
+        default: 0
+      },
+      lastCalculated: {
+        type: Date
+      },
+      mealDays: {
+        type: Number,
+        default: 0
+      }
     },
 
     // ============ ADMIN-SPECIFIC FIELDS ============

@@ -20,6 +20,7 @@ const foodCostController = require('../controller/foodCostController');
 const softwareSubscriptionController = require('../controller/softwareSubscriptionController');
 const transportExpenseController = require('../controller/transportController');
 const miscellaneousExpense = require('../controller/miscellaneousController');
+const mealController = require('../controller/mealController');
 const upload = require('../middleware/multer');  
 const { protect, adminOnly } = require("../middleware/AuthVerifyMiddleWare"); 
 const SendEmailUtility = require('../utility/SendEmailUtility');
@@ -449,7 +450,9 @@ router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.re
 router.get('/my-payrolls', protect, payrollController.getMyPayrolls);  
 router.put('/payroll/:id/employee-accept', protect, payrollController.employeeAcceptPayroll);
 router.get('/payroll/:id/check-acceptance', protect, payrollController.checkEmployeeAcceptance);
-
+// New food cost integration routes
+router.get('/food-cost/bills',  protect, adminOnly, payrollController.getFoodCostBillsForPayroll);
+ 
 // =================== SalaryRule Routes ==================== 
 router.get('/active', protect, salaryRuleController.getActiveSalaryRules); 
 router.get('/getSalaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);
@@ -575,13 +578,11 @@ router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseS
 
 // // =============== meal Cost ROUTES =============== 
 // Employee routes
-// router.post('/request', protect, mealController.requestMeal);
+router.post('/my-meal-request', protect , mealController.requestMeal);
+router.get('/meal-my-status', protect, mealController.getMyMealStatus);
 
 // Admin routes
-// router.post('/approve', protect, adminOnly, mealController.approveMealRequests);
-// router.post('/calculate-monthly', protect, adminOnly, mealController.calculateMonthlyFoodCostDeduction);
-// router.post('/apply-to-payroll', protect, adminOnly, mealController.applyFoodCostToPayroll);
-// router.post('/bulk-apply', protect, adminOnly, mealController.bulkApplyFoodCostToPayrolls);
-// router.get('/summary', protect, adminOnly, mealController.getMealRequestSummary); 
+router.get('/meal-requests', protect, adminOnly, mealController.getAllMealRequests);
+router.put('/meal:employeeId/update', protect, adminOnly, mealController.updateMealRequest);
 
 module.exports = router;  

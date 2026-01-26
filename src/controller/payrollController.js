@@ -4,7 +4,7 @@ const Attendance = require('../models/AttendanceModel');
 const Leave = require('../models/LeaveModel');
 const Holiday = require('../models/HolidayModel');
 const OfficeSchedule = require('../models/OfficeScheduleModel');
-const foodCost = require('../models/foodCostModel'); 
+const FoodCost = require('../models/foodCostModel'); 
 
 // ========== HELPER FUNCTIONS ==========
 // Helper function for currency formatting
@@ -16,6 +16,162 @@ const formatCurrency = (amount) => {
     maximumFractionDigits: 0
   }).format(amount || 0).replace('BDT', '৳');
 };
+// Helper function: Calculate food cost deduction
+const calculateFoodCostDeduction = async (month, year) => {
+  try {
+    // মাসের প্রথম এবং শেষ তারিখ বের করুন
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    
+    // 1. মাসের সব Food Cost বিল পান
+    const foodCosts = await FoodCost.find({
+      date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    });
+    
+    if (foodCosts.length === 0) {
+      return {
+        totalCost: 0,
+        averagePerDay: 0,
+        totalDays: 0,
+        calculationNote: 'No food costs recorded for this month'
+      };
+    }
+    
+    // 2. মাসের মোট Food Cost বের করুন
+    const totalCost = foodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    const totalDays = foodCosts.length;
+    const averagePerDay = totalCost / totalDays;
+    
+    // 3. Meal-এ অ্যাপ্রুভড onsite employees পান
+    const mealApprovedEmployees = await User.find({
+      role: 'employee',
+      workLocationType: 'onsite',
+      mealRequestStatus: 'approved',
+      mealPreference: 'office'
+    }).select('_id employeeId firstName lastName');
+    
+    const totalMealEmployees = mealApprovedEmployees.length;
+    
+    if (totalMealEmployees === 0) {
+      return {
+        totalCost: totalCost,
+        averagePerDay: averagePerDay,
+        totalDays: totalDays,
+        calculationNote: 'No meal-approved employees found for this month',
+        perEmployeeDeduction: 0,
+        totalMealEmployees: 0
+      };
+    }
+    
+    // 4. প্রতি employee-এর deduction বের করুন
+    const perEmployeeDeduction = Math.round(totalCost / totalMealEmployees);
+    
+    return {
+      totalCost: totalCost,
+      averagePerDay: averagePerDay,
+      totalDays: totalDays,
+      perEmployeeDeduction: perEmployeeDeduction,
+      totalMealEmployees: totalMealEmployees,
+      mealEmployees: mealApprovedEmployees.map(emp => ({
+        id: emp._id,
+        employeeId: emp.employeeId,
+        name: `${emp.firstName} ${emp.lastName}`
+      })),
+      calculationNote: `Food cost: ${totalCost} BDT ÷ ${totalMealEmployees} employees = ${perEmployeeDeduction} BDT per employee`
+    };
+    
+  } catch (error) {
+    console.error('Food cost calculation error:', error);
+    throw error;
+  }
+};
+
+// Get available food cost bills for dropdown
+exports.getFoodCostBillsForPayroll = async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: 'Month and year are required'
+      });
+    }
+    
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    
+    // Food cost bills for the selected month
+    const foodCosts = await FoodCost.find({
+      date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    }).sort({ date: 1 });
+    
+    // Calculate total cost
+    const totalCost = foodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    
+    // Get meal-approved employees
+    const mealApprovedEmployees = await User.find({
+      role: 'employee',
+      workLocationType: 'onsite',
+      mealRequestStatus: 'approved',
+      mealPreference: 'office'
+    }).select('employeeId firstName lastName department');
+    
+    const totalMealEmployees = mealApprovedEmployees.length;
+    const perEmployeeDeduction = totalMealEmployees > 0 ? Math.round(totalCost / totalMealEmployees) : 0;
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        month: month,
+        year: year,
+        monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long' }),
+        
+        foodCosts: foodCosts.map(cost => ({
+          id: cost._id,
+          date: cost.date,
+          cost: cost.cost,
+          note: cost.note || ''
+        })),
+        
+        summary: {
+          totalCost: totalCost,
+          totalDays: foodCosts.length,
+          averagePerDay: foodCosts.length > 0 ? totalCost / foodCosts.length : 0,
+          totalMealEmployees: totalMealEmployees,
+          perEmployeeDeduction: perEmployeeDeduction,
+          totalDeductionAmount: perEmployeeDeduction * totalMealEmployees
+        },
+        
+        mealEmployees: mealApprovedEmployees.map(emp => ({
+          id: emp._id,
+          employeeId: emp.employeeId,
+          name: `${emp.firstName} ${emp.lastName}`,
+          department: emp.department
+        })),
+        
+        calculation: {
+          formula: 'Total Food Cost ÷ Number of Meal-Approved Employees',
+          example: `${totalCost} BDT ÷ ${totalMealEmployees} employees = ${perEmployeeDeduction} BDT each`
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get food cost bills error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // Calculate working days - হলিডে এবং অফডে অটো লোড হবে, কিন্তু ২৩ দিন হিসাবেই গণ্য হবে
 const calculateWorkingDays = async (employeeId, month, year) => {
   try {
@@ -218,8 +374,7 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
     const totalEarnings = basicPay + totalOvertime + totalBonus + totalAllowance;
     
     // OPTION A: Net payable minimum 0
-    const netPayable = Math.max(0, totalEarnings - totalDeductions);
-    
+    const netPayable = Math.max(0, totalEarnings - totalDeductions); 
     // 8. Prepare result
     return {
       employeeDetails: {
@@ -365,7 +520,9 @@ exports.createPayroll = async (req, res) => {
       overtime = 0,
       bonus = 0,
       allowance = 0,
-      notes = ''
+      notes = '',
+      includeFoodCost = false, // নতুন option: Food cost include করবে কিনা
+      foodCostBillIds = [] // Selected food cost bills (dropdown থেকে)
     } = req.body;
     
     // Validation...
@@ -388,7 +545,73 @@ exports.createPayroll = async (req, res) => {
       parseInt(year),
       { overtime, bonus, allowance }
     );
+        // ============ FOOD COST CALCULATION (NEW) ============
+    let foodCostDetails = {
+      included: false,
+      totalMealCost: 0,
+      fixedDeduction: 0,
+      totalFoodDeduction: 0,
+      mealDays: 0,
+      calculationNote: 'Food cost not included'
+    };
     
+    if (includeFoodCost && foodCostBillIds && foodCostBillIds.length > 0) {
+      try {
+        // Get selected food cost bills
+        const selectedFoodCosts = await FoodCost.find({
+          _id: { $in: foodCostBillIds }
+        });
+        
+        if (selectedFoodCosts.length > 0) {
+          const totalFoodCost = selectedFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+          
+          // Get meal-approved employees count
+          const mealApprovedEmployees = await User.find({
+            role: 'employee',
+            workLocationType: 'onsite',
+            mealRequestStatus: 'approved',
+            mealPreference: 'office'
+          });
+          
+          const totalMealEmployees = mealApprovedEmployees.length;
+          
+          if (totalMealEmployees > 0) {
+            const perEmployeeDeduction = Math.round(totalFoodCost / totalMealEmployees);
+            
+            foodCostDetails = {
+              included: true,
+              totalMealCost: totalFoodCost,
+              fixedDeduction: perEmployeeDeduction,
+              totalFoodDeduction: perEmployeeDeduction,
+              mealDays: selectedFoodCosts.length,
+              calculationDate: new Date(),
+              selectedBills: selectedFoodCosts.map(bill => ({
+                id: bill._id,
+                date: bill.date,
+                cost: bill.cost,
+                note: bill.note
+              })),
+              calculationNote: `Food Cost: ${totalFoodCost} BDT ÷ ${totalMealEmployees} employees = ${perEmployeeDeduction} BDT deduction per employee`
+            };
+            
+            // Update employee's meal cost deduction record
+            const employee = await User.findById(employeeId);
+            if (employee && employee.mealRequestStatus === 'approved') {
+              employee.mealCostDeduction = {
+                monthlyDeduction: perEmployeeDeduction,
+                lastCalculated: new Date(),
+                mealDays: selectedFoodCosts.length
+              };
+              await employee.save();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Food cost calculation failed:', error);
+        // Continue without food cost if calculation fails
+      }
+    }
+    // ============ END FOOD COST CALCULATION ============
     // ============ ONSITE BENEFITS CALCULATION (UPDATED - SEPARATE) ============
     let onsiteBenefitsDetails = {
       serviceCharge: 0,
@@ -499,7 +722,9 @@ exports.createPayroll = async (req, res) => {
       year: parseInt(year),
       
       status: 'Pending',
-      
+      // Add food cost details to payroll
+      foodCostDetails: foodCostDetails,
+
       salaryDetails: {
         monthlySalary: calculation.rates.monthlySalary,
         dailyRate: calculation.rates.dailyRate,
@@ -576,7 +801,8 @@ exports.createPayroll = async (req, res) => {
         loanDeduction: 0,
         serviceCharge: onsiteBenefitsDetails.serviceCharge, // সার্ভিস চার্জ আলাদাভাবে
         otherDeductions: onsiteBenefitsDetails.serviceCharge, // পুরানো ফিল্ডে রাখা
-        
+        foodCostDeduction: foodCostDetails.totalFoodDeduction || 0, 
+      
         deductionRules: {
           lateRule: "3 days late = 1 day salary deduction",
           absentRule: "1 day absent = 1 day salary deduction",
@@ -610,7 +836,10 @@ exports.createPayroll = async (req, res) => {
         onsiteBreakdown: {
           teaAllowance: onsiteBenefitsDetails.teaAllowance,
           serviceCharge: onsiteBenefitsDetails.serviceCharge,
-          netOnsiteEffect: onsiteBenefitsDetails.netEffect
+          netOnsiteEffect: onsiteBenefitsDetails.netEffect,
+          foodCostIncluded: foodCostDetails.included,
+        foodCostDeduction: foodCostDetails.totalFoodDeduction || 0,
+        netPayable: (existingNetPayable || 0) - (foodCostDetails.totalFoodDeduction || 0)
         }
       },
       
@@ -656,11 +885,14 @@ exports.createPayroll = async (req, res) => {
         version: '3.2', // Updated version for onsite benefits
         safetyRules: ['Deduction cap = monthly salary', 'Net payable minimum 0'],
         onsiteBenefitsIncluded: employee.workLocationType === 'onsite',
-        workLocationType: employee.workLocationType
+        workLocationType: employee.workLocationType,
+        foodCostIncluded: foodCostDetails.included,
+        foodCostBillsCount: foodCostDetails.selectedBills?.length || 0
       },
+      notes: (notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (23 days fixed + Deduction Cap + Onsite Benefits)`) + 
+  (foodCostDetails.included ? ` | Food Cost Deduction: ${foodCostDetails.totalFoodDeduction} BDT` : ''),
       
-      createdBy: req.user._id,
-      notes: notes || `Payroll for ${new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long' })} ${year} (23 days fixed + Deduction Cap + Onsite Benefits)`
+      createdBy: req.user._id, 
     });
     
     await payroll.save();
@@ -676,7 +908,8 @@ exports.createPayroll = async (req, res) => {
       message: 'Payroll created successfully',
       data: {
         payrollId: payroll._id,
-        employee: payroll.employeeName,
+        employee: payroll.employeeName, 
+        foodCostDetails: foodCostDetails, 
         netPayable: payroll.summary.netPayable,
         onsiteBenefits: {
           serviceCharge: onsiteBenefitsDetails.serviceCharge,
@@ -1068,7 +1301,19 @@ exports.getMyPayrolls = async (req, res) => {
 exports.bulkGeneratePayrolls = async (req, res) => {
   try {
     const { month, year, department } = req.body;
+        // Calculate food cost deduction for all employees
+    let foodCostDeductionMap = {};
     
+    if (includeFoodCost && foodCostBillIds && foodCostBillIds.length > 0) {
+      const foodCostData = await calculateFoodCostDeduction(month, year);
+      
+      if (foodCostData.perEmployeeDeduction > 0) {
+        // Create a map of employee ID to food cost deduction
+        foodCostData.mealEmployees.forEach(emp => {
+          foodCostDeductionMap[emp.id] = foodCostData.perEmployeeDeduction;
+        });
+      }
+    }
     if (!month || !year) {
       return res.status(400).json({
         status: 'fail',
@@ -1780,4 +2025,5 @@ exports.calculateOnsiteBenefitsForPayroll = async (employeeId, month, year, atte
       calculationNote: 'Error in calculation'
     };
   }
-};
+}; 
+module.exports = exports;

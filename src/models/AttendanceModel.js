@@ -9,8 +9,7 @@ const attendanceSchema = new mongoose.Schema({
     index: true
   },
     employeeId: {
-    type: String,
-    required: true
+    type: String, 
   },
   date: { 
     type: Date, 
