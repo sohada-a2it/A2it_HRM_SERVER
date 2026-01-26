@@ -527,7 +527,7 @@ exports.getAllMealRequests = async (req, res) => {
 exports.updateMealRequest = async (req, res) => {
   try {
     const { employeeId } = req.params;
-    const { action, note, month, requestType = 'single' } = req.body;
+    const { action, note, month, requestType = 'monthly' } = req.body; // Default 'monthly' করুন
     
     // Check if user is admin
     if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
@@ -553,57 +553,32 @@ exports.updateMealRequest = async (req, res) => {
       });
     }
     
-    if (requestType === 'single') {
+    // 🎯 IMPORTANT: Check what type of request exists
+    const currentMonth = month || getCurrentMonth();
+    const monthlyRequest = employee.monthlyMealRequests.find(
+      req => req.month === currentMonth
+    );
+    
+    // Determine request type automatically
+    let actualRequestType = requestType;
+    
+    if (requestType === 'single' && employee.mealRequestStatus === 'none' && monthlyRequest) {
+      // User has monthly request but admin selected single type
+      actualRequestType = 'monthly';
+    }
+    
+    if (actualRequestType === 'single') {
       // Handle single request
       if (employee.mealRequestStatus !== 'requested') {
         return res.status(400).json({
           success: false,
-          message: `Employee has not requested meal or request is already ${employee.mealRequestStatus}`
+          message: `Single meal request not found or already ${employee.mealRequestStatus}`
         });
       }
       
-      const oldStatus = employee.mealRequestStatus;
-      const newStatus = action === 'approve' ? 'approved' : 'rejected';
+      // ... rest of single request code
       
-      employee.mealRequestStatus = newStatus;
-      employee.mealApprovedDate = new Date();
-      employee.mealApprovedBy = req.user._id;
-      employee.mealNote = note || employee.mealNote || '';
-      
-      await employee.save();
-      
-      // Audit Log
-      await AuditLog.create({
-        userId: req.user._id,
-        action: `Single Meal Request ${action === 'approve' ? 'Approved' : 'Rejected'}`,
-        target: employee._id,
-        details: {
-          employeeId: employee.employeeId,
-          oldStatus: oldStatus,
-          newStatus: newStatus,
-          mealPreference: employee.mealPreference,
-          note: note,
-          actionBy: req.user.email
-        },
-        ip: req.ip,
-        device: req.headers['user-agent']
-      });
-      
-      res.status(200).json({
-        success: true,
-        message: `Single meal request ${action}ed successfully`,
-        data: {
-          employeeId: employee.employeeId,
-          name: `${employee.firstName} ${employee.lastName}`,
-          mealPreference: employee.mealPreference,
-          status: employee.mealRequestStatus,
-          approvedDate: employee.mealApprovedDate,
-          approvedBy: req.user.email,
-          requestType: 'single'
-        }
-      });
-      
-    } else if (requestType === 'monthly') {
+    } else if (actualRequestType === 'monthly') {
       // Handle monthly request
       if (!month) {
         return res.status(400).json({
