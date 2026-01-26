@@ -1,7 +1,7 @@
 // controllers/mealController.js
 const Meal = require('../models/mealModel');
-const MealSubscription = require('../models/MealSubscriptionModel');
-const User = require('../models/UserModel');
+const MealSubscription = require('../models/subscriptionMealModel');
+const User = require('../models/UsersModel');
 const AuditLog = require('../models/AuditModel');
 
 // ============================
