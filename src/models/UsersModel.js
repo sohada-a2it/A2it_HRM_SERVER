@@ -179,9 +179,27 @@ onsiteBenefits: {
 },
 
 // ============ MEAL REQUEST SYSTEM ============ 
+// বর্তমান কোড:
 mealEligibility: {
   type: Boolean,
   default: true // সবাইকে ডিফল্ট eligible করে দিন
+},
+
+// পরিবর্তিত কোড:
+mealEligibility: {
+  type: Boolean,
+  default: true,
+  get: function(value) {
+    // Always return true if onsite, regardless of stored value
+    return this.workLocationType === 'onsite';
+  },
+  set: function(value) {
+    // Don't allow setting false if user is onsite
+    if (this.workLocationType === 'onsite') {
+      return true;
+    }
+    return value;
+  }
 },
 
 mealPreference: {
@@ -707,12 +725,11 @@ userSchema.pre('save', function(next) {
  // 3. Automatically update mealEligibility based on workLocationType
   if (this.isModified('workLocationType')) {
     this.mealEligibility = this.workLocationType === 'onsite';
-    
-    // যদি onsite না হয়, তাহলে meal subscription বন্ধ করুন
-    if (this.workLocationType !== 'onsite') {
-      this.mealSubscription = 'none';
-      this.mealRequestStatus = 'none';
-    }
+  }
+  
+  // Ensure onsite users always have mealEligibility true
+  if (this.workLocationType === 'onsite') {
+    this.mealEligibility = true;
   }
   next();
 });
