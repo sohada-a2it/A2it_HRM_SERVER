@@ -1,6 +1,6 @@
 // controllers/mealController.js
 const User = require('../models/UsersModel');
-const AuditLog = require('../models/AuditModel');
+const AuditLog = require('../models/AuditModel'); 
 
 // ============================
 // HELPER FUNCTIONS

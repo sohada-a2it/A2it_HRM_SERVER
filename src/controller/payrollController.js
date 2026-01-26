@@ -640,8 +640,6 @@ exports.createPayroll = async (req, res) => {
       onsiteBenefitsDetails = {
         serviceCharge: serviceChargeDeduction,
         teaAllowance: teaAllowance,
-        allowance: teaAllowance, // ✅ এই লাইন যোগ করুন
-        deduction: serviceChargeDeduction, // ✅ এই লাইন যোগ করুন
         totalAllowance: teaAllowance,
         totalDeduction: serviceChargeDeduction,
         presentDays: eligibleDays,
@@ -692,7 +690,6 @@ exports.createPayroll = async (req, res) => {
     const totalDeductions = calculation.calculations.deductions.actualTotal;
     
     const netPayable = Math.max(0, totalEarnings - totalDeductions);
-    const existingNetPayable = netPayable;
     // Check if net payable is 0 or negative (with safety check)
     if (netPayable <= 0) {
       return res.status(400).json({
@@ -936,9 +933,9 @@ exports.createPayroll = async (req, res) => {
       response.warnings.push('Deductions capped at monthly salary');
       response.warnings.push(`Excess deduction not applied: ${formatCurrency(calculation.calculations.deductions.cappedAmount)}`);
     }
-     
+    
     if (employee.workLocationType === 'onsite') {
-      response.warnings.push(`Onsite benefits applied: ${onsiteBenefitsDetails.teaAllowance} BDT tea allowance - ${onsiteBenefitsDetails.serviceCharge} BDT service charge = ${onsiteBenefitsDetails.netEffect} BDT net effect`);
+      response.warnings.push(`Onsite benefits applied: ${onsiteBenefitsDetails.allowance} BDT allowance - ${onsiteBenefitsDetails.deduction} BDT deduction = ${onsiteBenefitsDetails.netEffect} BDT net effect`);
     }
     
     res.status(201).json(response);

@@ -183,24 +183,7 @@ onsiteBenefits: {
 mealEligibility: {
   type: Boolean,
   default: true // সবাইকে ডিফল্ট eligible করে দিন
-},
-
-// পরিবর্তিত কোড:
-mealEligibility: {
-  type: Boolean,
-  default: true,
-  get: function(value) {
-    // Always return true if onsite, regardless of stored value
-    return this.workLocationType === 'onsite';
-  },
-  set: function(value) {
-    // Don't allow setting false if user is onsite
-    if (this.workLocationType === 'onsite') {
-      return true;
-    }
-    return value;
-  }
-},
+}, 
 
 mealPreference: {
   type: String,
