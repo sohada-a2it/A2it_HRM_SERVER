@@ -692,6 +692,7 @@ exports.createPayroll = async (req, res) => {
     const totalDeductions = calculation.calculations.deductions.actualTotal;
     
     const netPayable = Math.max(0, totalEarnings - totalDeductions);
+    const existingNetPayable = netPayable;
     // Check if net payable is 0 or negative (with safety check)
     if (netPayable <= 0) {
       return res.status(400).json({
