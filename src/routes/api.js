@@ -576,18 +576,31 @@ router.delete('/delete-miscellaneous/:id',protect, miscellaneousExpense.deleteEx
 router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseStats);
 
 
-// // =============== meal Cost ROUTES =============== 
-// Employee routes (only request management)
+// EMPLOYEE ROUTES
+// ======================
 router.post('/meal-request', protect, mealController.requestMeal);
+router.get('/meal-my-status', protect, mealController.getMyMealStatus);
+router.get('/meal-my-requests', protect, mealController.getMyAllMealRequests);
+router.delete('/meal-my-request', protect, mealController.deleteMyMealRequest);
+
+// Monthly Subscription
 router.post('/meal-subscription/setup', protect, mealController.setupMonthlySubscription);
 router.post('/meal-subscription/cancel', protect, mealController.cancelMonthlySubscription);
-router.post('/meal-monthly/request', protect, mealController.requestMealForMonth);
-router.put('/meal-auto-renew', protect, mealController.updateAutoRenew);
-router.get('/meal-my-status', protect, mealController.getMyMealStatus);
+router.put('/meal-subscription/auto-renew', protect, mealController.updateAutoRenew);
+router.post('/meal-request-monthly', protect, mealController.requestMealForMonth);
 
-// Admin routes (only approval management)
-router.get('/admin/meal-requests', protect,adminOnly, mealController.getAllMealRequests);
-router.get('/admin/meal-monthly-report', protect,adminOnly, mealController.getMonthlyMealReport);
-router.patch('/admin/meal-update/:employeeId', protect,adminOnly, mealController.updateMealRequest);
+// ======================
+// ADMIN ROUTES
+// ======================
+router.get('/meal-all', protect, mealController.getAllMealRequests);
+router.post('/meal-admin/create', protect, mealController.adminCreateMealForUser);
+router.delete('/meal-admin/delete', protect, mealController.adminDeleteMealRequest);
+router.put('/meal-admin/update', protect, mealController.adminUpdateMealRequest);
+router.put('/meal-admin/approve-reject/:employeeId', protect, mealController.updateMealRequest);
+
+// Reports
+router.get('/meal-monthly-report', protect, mealController.getMonthlyMealReport);
+router.get('/meal-payroll-export', protect, mealController.exportMealDataForPayroll);
+router.post('/meal-update-meal-days', protect, mealController.updateMealDaysFromPayroll);
 
 module.exports = router;  
