@@ -305,47 +305,7 @@ mealPauseReason: {
 
 mealResumeDate: {
   type: Date
-},
-  
-  // Monthly meal requests array
-  monthlyMealRequests: [{
-    month: { // Format: "2024-01"
-      type: String,
-      required: true
-    },
-    status: {
-      type: String,
-      enum: ['requested', 'approved', 'rejected', 'cancelled', 'none'],
-      default: 'none'
-    },
-    preference: {
-      type: String,
-      enum: ['office', 'outside']
-    },
-    requestDate: {
-      type: Date,
-      default: Date.now
-    },
-    approvalDate: {
-      type: Date
-    },
-    approvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    note: {
-      type: String,
-      default: ''
-    },
-    costDeduction: {
-      type: Number,
-      default: 0
-    },
-    mealDays: {
-      type: Number,
-      default: 0
-    }
-  }],
+}, 
 
     // ============ ADMIN-SPECIFIC FIELDS ============
     companyName: {

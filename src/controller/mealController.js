@@ -46,7 +46,7 @@ const calculateWorkingDaysForMonth = (month) => {
 // SINGLE REQUEST SYSTEM
 // ============================
 
-// Employee: Request meal (Office/Outside) - One-time request
+// Controller-এ পরিবর্তন করুন:
 exports.requestMeal = async (req, res) => {
   try {
     const employee = await User.findById(req.user._id);
@@ -59,16 +59,50 @@ exports.requestMeal = async (req, res) => {
       });
     }
     
-    const { mealPreference, note } = req.body;
+    const { mealPreference, note, month } = req.body; // month add করুন
     
-    if (!mealPreference || !['office', 'outside'].includes(mealPreference)) {
+    if (!mealPreference || !['office', 'outside','none'].includes(mealPreference)) {
       return res.status(400).json({
         success: false,
-        message: 'Please select meal preference: "office" or "outside"'
+        message: 'Please select meal preference: "office", "outside", or "none"'
       });
     }
     
-    // Update employee meal request
+    // Check if user has active subscription
+    if (employee.mealSubscription === 'active') {
+      return res.status(400).json({
+        success: false,
+        message: 'You have an active subscription. Please manage your meal requests from subscription section.'
+      });
+    }
+    
+    // Use provided month or current month
+    const requestMonth = month || getCurrentMonth();
+    
+    // Check if already has a request for this month
+    const existingMonthlyReq = employee.monthlyMealRequests?.find(
+      req => req.month === requestMonth
+    );
+    
+    if (existingMonthlyReq) {
+      return res.status(400).json({
+        success: false,
+        message: `You already have a ${existingMonthlyReq.status} meal request for ${requestMonth}`
+      });
+    }
+    
+    // Add as monthly request (not as single request)
+    employee.monthlyMealRequests.push({
+      month: requestMonth,
+      status: 'requested',
+      preference: mealPreference,
+      requestDate: new Date(),
+      note: note || '',
+      mealDays: 0,
+      requestType: 'single' // Mark as single request
+    });
+    
+    // Also update single request fields for backward compatibility
     employee.mealPreference = mealPreference;
     employee.mealRequestStatus = 'requested';
     employee.mealRequestDate = new Date();
@@ -79,11 +113,12 @@ exports.requestMeal = async (req, res) => {
     // Audit Log
     await AuditLog.create({
       userId: req.user._id,
-      action: "Single Meal Request Submitted",
+      action: "Meal Request Submitted",
       target: employee._id,
       details: {
         mealPreference: mealPreference,
         note: note,
+        month: requestMonth,
         employeeId: employee.employeeId,
         requestType: 'single'
       },
@@ -93,11 +128,12 @@ exports.requestMeal = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: `Meal request submitted successfully (Preference: ${mealPreference})`,
+      message: `Meal request submitted successfully for ${requestMonth} (Preference: ${mealPreference})`,
       data: {
         mealPreference: mealPreference,
         status: 'requested',
-        requestDate: employee.mealRequestDate,
+        month: requestMonth,
+        requestDate: new Date(),
         requestType: 'single'
       }
     });
