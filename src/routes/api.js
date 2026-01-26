@@ -577,12 +577,17 @@ router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseS
 
 
 // // =============== meal Cost ROUTES =============== 
-// Employee routes
-router.post('/my-meal-request', protect , mealController.requestMeal);
+// Employee routes (only request management)
+router.post('/meal-request', protect, mealController.requestMeal);
+router.post('/meal-subscription/setup', protect, mealController.setupMonthlySubscription);
+router.post('/meal-subscription/cancel', protect, mealController.cancelMonthlySubscription);
+router.post('/meal-monthly/request', protect, mealController.requestMealForMonth);
+router.put('/meal-auto-renew', protect, mealController.updateAutoRenew);
 router.get('/meal-my-status', protect, mealController.getMyMealStatus);
 
-// Admin routes
-router.get('/meal-requests', protect, adminOnly, mealController.getAllMealRequests);
-router.put('/meal:employeeId/update', protect, adminOnly, mealController.updateMealRequest);
+// Admin routes (only approval management)
+router.get('/admin/meal-requests', protect, mealController.getAllMealRequests);
+router.get('/admin/meal-monthly-report', protect, mealController.getMonthlyMealReport);
+router.patch('/admin/meal-update/:employeeId', protect, mealController.updateMealRequest);
 
 module.exports = router;  

@@ -178,58 +178,174 @@ onsiteBenefits: {
   }
 },
 
-    // ============ MEAL REQUEST SYSTEM ============ 
-    mealEligibility: {
-      type: Boolean,
-      default: function() {
-        // শুধু onsite employees এর জন্য eligible
-        return this.role === 'employee' && this.workLocationType === 'onsite';
-      }
-    },
-    
-    mealPreference: {
+// ============ MEAL REQUEST SYSTEM ============ 
+mealEligibility: {
+  type: Boolean,
+  default: function() { 
+    return (this.role === 'employee' || this.role === 'admin' || this.role === 'moderator') && this.workLocationType === 'onsite';
+  }
+},
+
+mealPreference: {
+  type: String,
+  enum: ['office', 'outside', 'none'],
+  default: 'none'
+},
+
+mealRequestStatus: {
+  type: String,
+  enum: ['none', 'requested', 'approved', 'rejected'],
+  default: 'none'
+},
+
+mealRequestDate: {
+  type: Date
+},
+
+mealApprovedDate: {
+  type: Date
+},
+
+mealApprovedBy: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User'
+},
+
+mealNote: {
+  type: String,
+  default: ''
+},
+
+// ============ MONTHLY SUBSCRIPTION SYSTEM ============
+mealSubscription: {
+  type: String,
+  enum: ['none', 'active', 'paused', 'cancelled'],
+  default: 'none'
+},
+
+mealAutoRenew: {
+  type: Boolean,
+  default: true
+},
+
+mealSubscriptionStartDate: {
+  type: Date
+},
+
+mealSubscriptionEndDate: {
+  type: Date
+},
+
+// Monthly meal requests array (সরলীকৃত)
+monthlyMealRequests: [{
+  month: { // Format: "2024-01"
+    type: String,
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['none', 'requested', 'approved', 'rejected', 'cancelled'],
+    default: 'none'
+  },
+  preference: {
+    type: String,
+    enum: ['office', 'outside']
+  },
+  requestDate: {
+    type: Date,
+    default: Date.now
+  },
+  approvalDate: {
+    type: Date
+  },
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  note: {
+    type: String,
+    default: ''
+  },
+  // Cost calculation payroll system এ হবে
+  mealDays: {
+    type: Number,
+    default: 0  // Payroll থেকে update হবে
+  }
+}],
+
+// Cancellation details (রেখে দিচ্ছি)
+mealCancellationReason: {
+  type: String,
+  default: ''
+},
+
+mealCancelledBy: {
+  type: String,
+  enum: ['employee', 'admin', 'system'],
+  default: 'employee'
+},
+
+mealCancelledAt: {
+  type: Date
+},
+
+// Pause details (রেখে দিচ্ছি)
+mealPauseStartDate: {
+  type: Date
+},
+
+mealPauseEndDate: {
+  type: Date
+},
+
+mealPauseReason: {
+  type: String,
+  default: ''
+},
+
+mealResumeDate: {
+  type: Date
+},
+  
+  // Monthly meal requests array
+  monthlyMealRequests: [{
+    month: { // Format: "2024-01"
       type: String,
-      enum: ['office', 'outside', 'none'],
+      required: true
+    },
+    status: {
+      type: String,
+      enum: ['requested', 'approved', 'rejected', 'cancelled', 'none'],
       default: 'none'
     },
-    
-    mealRequestStatus: {
+    preference: {
       type: String,
-      enum: ['none', 'requested', 'approved', 'rejected'],
-      default: 'none'
+      enum: ['office', 'outside']
     },
-    
-    mealRequestDate: {
+    requestDate: {
+      type: Date,
+      default: Date.now
+    },
+    approvalDate: {
       type: Date
     },
-    
-    mealApprovedDate: {
-      type: Date
-    },
-    
-    mealApprovedBy: {
+    approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
-    
-    mealNote: {
+    note: {
       type: String,
       default: ''
     },
-    
-    mealCostDeduction: {
-      monthlyDeduction: {
-        type: Number,
-        default: 0
-      },
-      lastCalculated: {
-        type: Date
-      },
-      mealDays: {
-        type: Number,
-        default: 0
-      }
+    costDeduction: {
+      type: Number,
+      default: 0
     },
+    mealDays: {
+      type: Number,
+      default: 0
+    }
+  }],
 
     // ============ ADMIN-SPECIFIC FIELDS ============
     companyName: {
