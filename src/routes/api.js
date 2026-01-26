@@ -586,8 +586,8 @@ router.put('/meal-auto-renew', protect, mealController.updateAutoRenew);
 router.get('/meal-my-status', protect, mealController.getMyMealStatus);
 
 // Admin routes (only approval management)
-router.get('/admin/meal-requests', protect, mealController.getAllMealRequests);
-router.get('/admin/meal-monthly-report', protect, mealController.getMonthlyMealReport);
-router.patch('/admin/meal-update/:employeeId', protect, mealController.updateMealRequest);
+router.get('/admin/meal-requests', protect,adminOnly, mealController.getAllMealRequests);
+router.get('/admin/meal-monthly-report', protect,adminOnly, mealController.getMonthlyMealReport);
+router.patch('/admin/meal-update/:employeeId', protect,adminOnly, mealController.updateMealRequest);
 
 module.exports = router;  

@@ -55,7 +55,7 @@ exports.requestMeal = async (req, res) => {
     if (!employee.mealEligibility) {
       return res.status(400).json({
         success: false,
-        message: 'You are not eligible for meal benefits. Only onsite employees can request meals.'
+        message: 'You are not eligible for meal benefits. Only onsite users can request meals.'
       });
     }
     
@@ -161,7 +161,7 @@ exports.setupMonthlySubscription = async (req, res) => {
     if (!employee.mealEligibility) {
       return res.status(400).json({
         success: false,
-        message: 'You are not eligible for meal benefits. Only onsite employees can request meals.'
+        message: 'You are not eligible for meal benefits. Only onsite users can request meals.'
       });
     }
     
@@ -721,7 +721,7 @@ exports.getMyMealStatus = async (req, res) => {
       return res.status(200).json({
         success: true,
         eligible: false,
-        message: 'You are not eligible for meal benefits. Only onsite employees can request meals.'
+        message: 'You are not eligible for meal benefits. Only onsite users can request meals.'
       });
     }
     

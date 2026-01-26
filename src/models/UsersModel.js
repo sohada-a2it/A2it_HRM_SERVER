@@ -181,10 +181,7 @@ onsiteBenefits: {
 // ============ MEAL REQUEST SYSTEM ============ 
 mealEligibility: {
   type: Boolean,
-  default: function() { 
-    // সবাই (employee, admin, moderator) onsite হলে eligible
-    return this.workLocationType === 'onsite';
-  }
+  default: true // সবাইকে ডিফল্ট eligible করে দিন
 },
 
 mealPreference: {
@@ -707,7 +704,16 @@ userSchema.pre('save', function(next) {
       this.basicSalary = this.rate;
     }
   }
-
+ // 3. Automatically update mealEligibility based on workLocationType
+  if (this.isModified('workLocationType')) {
+    this.mealEligibility = this.workLocationType === 'onsite';
+    
+    // যদি onsite না হয়, তাহলে meal subscription বন্ধ করুন
+    if (this.workLocationType !== 'onsite') {
+      this.mealSubscription = 'none';
+      this.mealRequestStatus = 'none';
+    }
+  }
   next();
 });
 
