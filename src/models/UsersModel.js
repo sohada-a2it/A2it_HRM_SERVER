@@ -150,7 +150,7 @@ onsiteBenefits: {
   isActive: {
     type: Boolean,
     default: function() {
-      // শুধু onsite employees এর জন্য
+      // সব onsite employees/admins/moderators এর জন্য
       return this.workLocationType === 'onsite';
     }
   },
@@ -182,7 +182,8 @@ onsiteBenefits: {
 mealEligibility: {
   type: Boolean,
   default: function() { 
-    return (this.role === 'employee' || this.role === 'admin' || this.role === 'moderator') && this.workLocationType === 'onsite';
+    // সবাই (employee, admin, moderator) onsite হলে eligible
+    return this.workLocationType === 'onsite';
   }
 },
 
@@ -463,24 +464,25 @@ mealResumeDate: {
   }
 );
 
-// ✅ **সঠিক Password Hashing (একবারই রাখুন)**
+// ✅ **সঠিক Password Hashing (একবারই রাখুন)** 
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
+  // 1. Password hashing
+  if (this.isModified("password")) {
+    try {
+      const salt = await bcrypt.genSalt(10);
+      this.password = await bcrypt.hash(this.password, salt);
+    } catch (error) {
+      return next(error);
+    }
   }
-    // Auto-set onsite benefits for onsite employees
-  if (this.role === 'employee' && this.workLocationType === 'onsite') {
+  
+  // 2. Auto-set onsite benefits for ALL onsite users (employee, admin, moderator)
+  if (this.workLocationType === 'onsite') {
     if (!this.onsiteBenefits) {
       this.onsiteBenefits = {};
     }
     
-    // Set default onsite benefits
+    // Set default onsite benefits for everyone
     this.onsiteBenefits.fixedDeduction = this.onsiteBenefits.fixedDeduction || 500;
     this.onsiteBenefits.dailyAllowanceRate = this.onsiteBenefits.dailyAllowanceRate || 10;
     this.onsiteBenefits.isActive = true;
@@ -488,16 +490,14 @@ userSchema.pre("save", async function (next) {
       this.onsiteBenefits.includeHalfDays : true;
     
     if (!this.onsiteBenefits.startDate) {
-      this.onsiteBenefits.startDate = this.joiningDate;
+      this.onsiteBenefits.startDate = this.joiningDate || new Date();
     }
-  }
-  
-  // Clear onsite benefits for non-onsite employees
-  if (this.role === 'employee' && this.workLocationType !== 'onsite') {
+  } else {
+    // Clear onsite benefits for non-onsite users
     this.onsiteBenefits = undefined;
   }
   
-  next();
+  next(); // ✅ শুধু একবার next() call করুন
 });
 
 // ✅ **সঠিক Password Comparison Method (একবারই রাখুন)**
@@ -522,12 +522,12 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
     return false;
   }
 };
-// Method to check onsite benefits eligibility
+// Method to check onsite benefits eligibility 
 userSchema.methods.getOnsiteBenefitsInfo = function() {
-  if (this.workLocationType !== 'onsite' || this.role !== 'employee') {
+  if (this.workLocationType !== 'onsite') {
     return {
       isEligible: false,
-      reason: 'Only onsite employees are eligible'
+      reason: 'Only onsite users are eligible'
     };
   }
   
@@ -537,13 +537,16 @@ userSchema.methods.getOnsiteBenefitsInfo = function() {
     dailyAllowanceRate: this.onsiteBenefits?.dailyAllowanceRate || 10,
     includeHalfDays: this.onsiteBenefits?.includeHalfDays || true,
     startDate: this.onsiteBenefits?.startDate || this.joiningDate,
-    description: '500 BDT deduction + 10 BDT per present day allowance'
+    description: '500 BDT deduction + 10 BDT per present day allowance',
+    eligibleFor: 'All onsite users (employee, admin, moderator)'
   };
 };
 
-// Method to calculate onsite benefits
+// Method to calculate onsite benefits 
 userSchema.methods.calculateOnsiteBenefits = function(presentDays) {
-  if (!this.getOnsiteBenefitsInfo().isEligible) {
+  const benefitsInfo = this.getOnsiteBenefitsInfo();
+  
+  if (!benefitsInfo.isEligible) {
     return null;
   }
   
@@ -557,7 +560,9 @@ userSchema.methods.calculateOnsiteBenefits = function(presentDays) {
     presentDays: presentDays,
     netEffect: netEffect,
     calculation: `${presentDays} days × ${this.onsiteBenefits?.dailyAllowanceRate || 10} = ${allowance} - ${deduction} = ${netEffect}`,
-    description: `Onsite Benefits: ${allowance} BDT allowance - ${deduction} BDT deduction = ${netEffect} BDT net`
+    description: `Onsite Benefits: ${allowance} BDT allowance - ${deduction} BDT deduction = ${netEffect} BDT net`,
+    userType: this.role,
+    workLocation: this.workLocationType
   };
 };
 // Virtual for full name
@@ -881,13 +886,17 @@ userSchema.statics.getByDepartment = function(department) {
     isDeleted: false 
   }).select('-password -__v');
 };
-// Static method to get all onsite employees
-userSchema.statics.getAllOnsiteEmployees = function() {
+// Static method to get all onsite employees 
+userSchema.statics.getAllOnsiteUsers = function() {
   return this.find({ 
-    role: 'employee', 
     workLocationType: 'onsite',
     isDeleted: false,
-    isActive: true 
+    isActive: true,
+    $or: [
+      { role: 'employee' },
+      { role: 'admin' },
+      { role: 'moderator' }
+    ]
   }).select('-password -__v');
 };
 

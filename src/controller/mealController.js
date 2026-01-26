@@ -411,9 +411,14 @@ exports.getAllMealRequests = async (req, res) => {
     
     const { type = 'all', status, department, month } = req.query;
     
+    // UPDATE HERE: সব onsite users (employee, admin, moderator)
     let query = {
-      role: 'employee',
-      workLocationType: 'onsite'
+      workLocationType: 'onsite',
+      $or: [
+        { role: 'employee' },
+        { role: 'admin' },
+        { role: 'moderator' }
+      ]
     };
     
     if (department && department !== 'all') {
@@ -421,7 +426,7 @@ exports.getAllMealRequests = async (req, res) => {
     }
     
     const employees = await User.find(query)
-      .select('employeeId firstName lastName email department designation mealPreference mealRequestStatus mealRequestDate mealApprovedDate mealNote mealSubscription mealAutoRenew mealSubscriptionStartDate monthlyMealRequests')
+      .select('employeeId firstName lastName email department designation role mealPreference mealRequestStatus mealRequestDate mealApprovedDate mealNote mealSubscription mealAutoRenew mealSubscriptionStartDate monthlyMealRequests')
       .sort({ mealRequestDate: -1 });
     
     let filteredEmployees = [];
@@ -808,9 +813,14 @@ exports.getMonthlyMealReport = async (req, res) => {
     const { month, department } = req.query;
     const reportMonth = month || getCurrentMonth();
     
+    // UPDATE HERE: সব onsite users
     const query = { 
-      role: 'employee',
-      workLocationType: 'onsite'
+      workLocationType: 'onsite',
+      $or: [
+        { role: 'employee' },
+        { role: 'admin' },
+        { role: 'moderator' }
+      ]
     };
     
     if (department && department !== 'all') {
@@ -818,7 +828,7 @@ exports.getMonthlyMealReport = async (req, res) => {
     }
     
     const employees = await User.find(query)
-      .select('employeeId firstName lastName department mealSubscription mealAutoRenew monthlyMealRequests');
+      .select('employeeId firstName lastName role department mealSubscription mealAutoRenew monthlyMealRequests');
     
     let report = [];
     
@@ -934,10 +944,15 @@ exports.exportMealDataForPayroll = async (req, res) => {
       });
     }
 
+    // UPDATE HERE: সব onsite users
     const employees = await User.find({
-      role: 'employee',
-      workLocationType: 'onsite'
-    }).select('employeeId firstName lastName department monthlyMealRequests');
+      workLocationType: 'onsite',
+      $or: [
+        { role: 'employee' },
+        { role: 'admin' },
+        { role: 'moderator' }
+      ]
+    }).select('employeeId firstName lastName role department monthlyMealRequests');
 
     const payrollData = employees.map(emp => {
       const monthlyReq = emp.monthlyMealRequests?.find(
