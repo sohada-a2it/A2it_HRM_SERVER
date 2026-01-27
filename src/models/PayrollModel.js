@@ -548,28 +548,157 @@ const payrollSchema = new mongoose.Schema({
     }
   },
   // Payroll Model-এ
-// ========== FOOD COST DEDUCTION ==========
-foodCostDetails: {
-  totalMealCost: {
-    type: Number,
-    default: 0
+  // ========== FOOD COST DEDUCTION ==========
+  foodCostDetails: {
+    totalMealCost: {
+      type: Number,
+      default: 0
+    },
+    fixedDeduction: {
+      type: Number,
+      default: 0
+    },
+    totalFoodDeduction: {
+      type: Number,
+      default: 0
+    },
+    mealDays: {
+      type: Number,
+      default: 0
+    },
+    calculationDate: {
+      type: Date
+    },
+    selectedBills: [{
+      id: mongoose.Schema.Types.ObjectId,
+      date: Date,
+      cost: Number,
+      note: String
+    }],
+    calculationNote: {
+      type: String,
+      default: ''
+    }
   },
-  fixedDeduction: {
-    type: Number,
-    default: 0
+  // ========== MEAL DEDUCTION SYSTEM ==========
+  mealDeduction: {
+    deductionType: {
+      type: String,
+      enum: ['monthly_subscription', 'daily_meal', 'none'],
+      default: 'none'
+    },
+    
+    // Monthly Subscription (Auto)
+    subscriptionAuto: {
+      hasSubscription: Boolean,
+      subscriptionId: mongoose.Schema.Types.ObjectId,
+      monthlyApprovalStatus: String,
+      preference: String,
+      approvedMealDays: Number,
+      totalMonthlyFoodCost: Number,
+      totalActiveSubscribers: Number,
+      deductionPerEmployee: Number,
+      calculationNote: String,
+      foodCostBills: [{
+        id: mongoose.Schema.Types.ObjectId,
+        date: Date,
+        cost: Number,
+        note: String
+      }]
+    },
+    
+    // Daily Meal (Manual)
+    dailyMealManual: {
+      totalMealDays: Number,
+      dailyRate: Number,
+      totalAmount: Number,
+      adminNote: String,
+      enteredBy: mongoose.Schema.Types.ObjectId,
+      enteredAt: Date,
+      mealDetails: [{
+        date: Date,
+        preference: String,
+        status: String
+      }]
+    },
+    
+    totalDeductionAmount: {
+      type: Number,
+      default: 0
+    }
   },
-  totalFoodDeduction: {
-    type: Number,
-    default: 0
+  
+  // ========== MEAL SYSTEM DATA ==========
+  mealSystemData: {
+    subscriptionStatus: Boolean,
+    dailyMealDays: Number,
+    hasDailyMeals: Boolean,
+    totalMonthlyFoodCost: Number,
+    foodCostDays: Number,
+    averageDailyCost: Number,
+    activeSubscribers: Number,
+    mealDeduction: {
+      type: {
+        type: String,
+        enum: ['monthly_subscription', 'daily_meal', 'none']
+      },
+      amount: Number,
+      calculationNote: String,
+      details: mongoose.Schema.Types.Mixed
+    }
   },
-  mealDays: {
-    type: Number,
-    default: 0
+    // ========== ONSITE BENEFITS DETAILS ==========
+  onsiteBenefitsDetails: {
+    serviceCharge: {
+      type: Number,
+      default: 0
+    },
+    teaAllowance: {
+      type: Number,
+      default: 0
+    },
+    totalAllowance: {
+      type: Number,
+      default: 0
+    },
+    totalDeduction: {
+      type: Number,
+      default: 0
+    },
+    presentDays: {
+      type: Number,
+      default: 0
+    },
+    netEffect: {
+      type: Number,
+      default: 0
+    },
+    calculationNote: {
+      type: String,
+      default: ''
+    },
+    details: mongoose.Schema.Types.Mixed,
+    breakdown: mongoose.Schema.Types.Mixed
   },
-  calculationDate: {
-    type: Date
-  }
-},
+  
+  // ========== ONSITE BREAKDOWN ==========
+  onsiteBreakdown: {
+    teaAllowance: Number,
+    serviceCharge: Number,
+    netOnsiteEffect: Number,
+    foodCostIncluded: Boolean,
+    foodCostDeduction: Number,
+    netPayable: Number
+  },
+  
+  // ========== MEAL SYSTEM SUMMARY ==========
+  mealSystemSummary: {
+    type: String,
+    deduction: Number,
+    calculation: String,
+    details: mongoose.Schema.Types.Mixed
+  },
+
   // ========== AUDIT TRAIL ==========
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -620,6 +749,138 @@ employeeAccepted: {
   default: false
 },
   
+  // ========== UPDATED SUMMARY ==========
+  summary: {
+    grossEarnings: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    totalDeductions: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    netPayable: {
+      type: Number,
+      required: true,
+      min: 0
+    },
+    inWords: {
+      type: String,
+      default: ''
+    },
+    payableDays: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    deductionCapApplied: Boolean,
+    rulesApplied: String,
+    onsiteBenefitsApplied: Boolean,
+    onsiteBenefitsDetails: mongoose.Schema.Types.Mixed,
+    onsiteBreakdown: mongoose.Schema.Types.Mixed,
+    mealSystemSummary: mongoose.Schema.Types.Mixed
+  },
+  
+  // ========== UPDATED CALCULATION NOTES ==========
+  calculationNotes: {
+    holidayNote: String,
+    weeklyOffNote: String,
+    calculationNote: String,
+    deductionNote: String,
+    onsiteBenefitsNote: String,
+    mealDeductionNote: String
+  },
+  
+  // ========== UPDATED MANUAL INPUTS ==========
+  manualInputs: {
+    overtime: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    overtimeHours: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    bonus: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    allowance: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    dailyMealRate: {
+      type: Number,
+      default: 0
+    },
+    enteredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    enteredAt: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  
+  // ========== UPDATED CALCULATION ==========
+  calculation: {
+    method: {
+      type: String,
+      enum: ['auto_backend', 'manual', 'hybrid'],
+      default: 'auto_backend'
+    },
+    calculatedDate: {
+      type: Date,
+      default: Date.now
+    },
+    calculatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    dataSources: [{
+      type: String,
+      enum: [
+        'attendance', 
+        'leaves', 
+        'holidays', 
+        'office_schedule', 
+        'manual_input',
+        'meal_system',
+        'food_cost_system'
+      ]
+    }],
+    calculationNotes: {
+      type: String,
+      default: ''
+    }
+  },
+  
+  // ========== UPDATED METADATA ==========
+  metadata: {
+    isAutoGenerated: Boolean,
+    hasManualInputs: Boolean,
+    deductionRulesApplied: Boolean,
+    deductionCapApplied: Boolean,
+    attendanceBased: Boolean,
+    fixed23Days: Boolean,
+    version: String,
+    batchId: String,
+    safetyRules: [String],
+    onsiteBenefitsIncluded: Boolean,
+    workLocationType: String,
+    mealSystemIncluded: Boolean,
+    foodCostIncluded: Boolean,
+    foodCostBillsCount: Number,
+    activeSubscribersCount: Number,
+    mealType: String
+  },
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
@@ -653,6 +914,7 @@ payrollSchema.virtual('monthName').get(function() {
 
 // ========== PRE-SAVE MIDDLEWARE ==========
 payrollSchema.pre('save', function(next) {
+
   // Auto-calculate earnings total
   this.earnings.total = 
     (this.earnings.basicPay || 0) +
@@ -676,12 +938,13 @@ payrollSchema.pre('save', function(next) {
     (this.deductions.advanceSalary || 0) +
     (this.deductions.loanDeduction || 0) +
     (this.deductions.otherDeductions || 0);
-  
-  // Auto-calculate summary
-  this.summary.grossEarnings = this.earnings.total;
-  this.summary.totalDeductions = this.deductions.total;
-  this.summary.netPayable = this.earnings.total - this.deductions.total;
-  
+    (this.mealDeduction?.totalDeductionAmount || 0) + // ADD MEAL DEDUCTION
+    (this.onsiteBenefitsDetails?.serviceCharge || 0); // ADD ONSITE SERVICE CHARGE
+    // Auto-calculate summary
+    this.summary.grossEarnings = this.earnings.total;
+    this.summary.totalDeductions = this.deductions.total;
+    this.summary.netPayable = this.earnings.total - this.deductions.total; 
+
   // Calculate attendance percentage - 23 দিনের ভিত্তিতে
   if (this.attendance.totalWorkingDays > 0) {
     this.attendance.attendancePercentage = Math.round(
@@ -718,7 +981,10 @@ payrollSchema.pre('save', function(next) {
     (this.manualInputs.overtime > 0) ||
     (this.manualInputs.bonus > 0) ||
     (this.manualInputs.allowance > 0);
+      (this.manualInputs.dailyMealRate > 0);
   
+  this.metadata.mealSystemIncluded = this.mealDeduction?.deductionType !== 'none';
+  this.metadata.mealType = this.mealDeduction?.deductionType || 'none';
   this.metadata.deductionRulesApplied = 
     (this.deductions.lateDeduction > 0) ||
     (this.deductions.absentDeduction > 0) ||
