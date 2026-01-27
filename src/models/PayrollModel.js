@@ -927,7 +927,18 @@ payrollSchema.pre('save', function(next) {
     (this.earnings.incentives || 0) +
     (this.earnings.otherAllowances || 0);
   
-  // Auto-calculate deductions total
+  // **FIX 1: ADD MEAL DEDUCTION AMOUNT TO DEDUCTIONS OBJECT**
+  const mealDeductionAmount = this.mealDeduction?.totalDeductionAmount || 0;
+  const foodCostDeduction = this.foodCostDetails?.totalFoodDeduction || 0;
+  
+  // Use whichever is applicable
+  const actualMealDeduction = mealDeductionAmount > 0 ? mealDeductionAmount : foodCostDeduction;
+  
+  // **FIX 2: ADD MEAL DEDUCTION FIELD TO DEDUCTIONS**
+  this.deductions.mealDeduction = actualMealDeduction;
+  this.deductions.foodCostDeduction = foodCostDeduction;
+  
+  // Auto-calculate deductions total (INCLUDING MEAL DEDUCTION)
   this.deductions.total = 
     (this.deductions.lateDeduction || 0) +
     (this.deductions.absentDeduction || 0) +
@@ -937,14 +948,15 @@ payrollSchema.pre('save', function(next) {
     (this.deductions.providentFund || 0) +
     (this.deductions.advanceSalary || 0) +
     (this.deductions.loanDeduction || 0) +
-    (this.deductions.otherDeductions || 0);
-    (this.mealDeduction?.totalDeductionAmount || 0) + // ADD MEAL DEDUCTION
-    (this.onsiteBenefitsDetails?.serviceCharge || 0); // ADD ONSITE SERVICE CHARGE
-    // Auto-calculate summary
-    this.summary.grossEarnings = this.earnings.total;
-    this.summary.totalDeductions = this.deductions.total;
-    this.summary.netPayable = this.earnings.total - this.deductions.total; 
-
+    (this.deductions.otherDeductions || 0) +
+    actualMealDeduction + // **ADD MEAL DEDUCTION HERE**
+    (this.onsiteBenefitsDetails?.serviceCharge || 0); // **ADD ONSITE SERVICE CHARGE**
+  
+  // Auto-calculate summary
+  this.summary.grossEarnings = this.earnings.total;
+  this.summary.totalDeductions = this.deductions.total;
+  this.summary.netPayable = this.earnings.total - this.deductions.total;
+  
   // Calculate attendance percentage - 23 দিনের ভিত্তিতে
   if (this.attendance.totalWorkingDays > 0) {
     this.attendance.attendancePercentage = Math.round(
@@ -980,11 +992,9 @@ payrollSchema.pre('save', function(next) {
   this.metadata.hasManualInputs = 
     (this.manualInputs.overtime > 0) ||
     (this.manualInputs.bonus > 0) ||
-    (this.manualInputs.allowance > 0);
-      (this.manualInputs.dailyMealRate > 0);
+    (this.manualInputs.allowance > 0) ||
+    (this.manualInputs.dailyMealRate > 0);
   
-  this.metadata.mealSystemIncluded = this.mealDeduction?.deductionType !== 'none';
-  this.metadata.mealType = this.mealDeduction?.deductionType || 'none';
   this.metadata.deductionRulesApplied = 
     (this.deductions.lateDeduction > 0) ||
     (this.deductions.absentDeduction > 0) ||
@@ -1009,6 +1019,13 @@ payrollSchema.pre('save', function(next) {
   
   // Set fixed23Days metadata
   this.metadata.fixed23Days = true;
+  
+  // **FIX 3: UPDATE MEAL SYSTEM METADATA**
+  this.metadata.mealSystemIncluded = actualMealDeduction > 0;
+  this.metadata.mealType = this.mealDeduction?.deductionType || 
+                          (foodCostDeduction > 0 ? 'monthly_subscription' : 'none');
+  this.metadata.foodCostIncluded = foodCostDeduction > 0;
+  this.metadata.foodCostBillsCount = this.foodCostDetails?.selectedBills?.length || 0;
   
   next();
 });
