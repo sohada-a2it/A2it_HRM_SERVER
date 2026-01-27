@@ -948,7 +948,7 @@ payrollSchema.pre('save', function(next) {
     (this.deductions.providentFund || 0) +
     (this.deductions.advanceSalary || 0) +
     (this.deductions.loanDeduction || 0) +
-    (this.deductions.otherDeductions || 0) +
+    // (this.deductions.otherDeductions || 0) +
     actualMealDeduction + // **ADD MEAL DEDUCTION HERE**
     (this.onsiteBenefitsDetails?.serviceCharge || 0); // **ADD ONSITE SERVICE CHARGE**
   
