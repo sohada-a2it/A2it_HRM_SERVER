@@ -657,10 +657,10 @@ const payrollSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
-    // totalAllowance: {
-    //   type: Number,
-    //   default: 0
-    // },
+    totalAllowance: {
+      type: Number,
+      default: 0
+    },
     totalDeduction: {
       type: Number,
       default: 0
@@ -1123,7 +1123,7 @@ payrollSchema.statics.getEmployeeYearlySummary = async function(employeeId, year
         totalBasicPay: { $sum: '$earnings.basicPay' },
         totalOvertime: { $sum: '$earnings.overtime.amount' },
         totalBonus: { $sum: '$earnings.bonus.amount' },
-        // totalAllowance: { $sum: '$earnings.allowance.amount' },
+        totalAllowance: { $sum: '$earnings.allowance.amount' },
         months: { $addToSet: '$month' }
       }
     },
@@ -1136,7 +1136,7 @@ payrollSchema.statics.getEmployeeYearlySummary = async function(employeeId, year
         totalBasicPay: 1,
         totalOvertime: 1,
         totalBonus: 1,
-        // totalAllowance: 1,
+        totalAllowance: 1,
         monthsCount: { $size: '$months' },
         averageMonthly: { $divide: ['$totalNetPayable', { $size: '$months' }] }
       }
