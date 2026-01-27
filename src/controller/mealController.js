@@ -1,4 +1,3 @@
-// controllers/mealController.js
 const Meal = require('../models/mealModel');
 const MealSubscription = require('../models/subscriptionMealModel');
 const User = require('../models/UsersModel');
@@ -8,23 +7,23 @@ const AuditLog = require('../models/AuditModel');
 // HELPER FUNCTIONS
 // ============================
 
-// Helper: Check if user is admin
 const isAdmin = (user) => {
   return user.role === 'admin' || user.role === 'superAdmin';
 };
 
-// Helper: Get current month in YYYY-MM format
+const isModerator = (user) => {
+  return user.role === 'moderator';
+};
+
 const getCurrentMonth = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
 
-// Helper: Format date to YYYY-MM-DD
 const formatDate = (date) => {
   return date.toISOString().split('T')[0];
 };
 
-// Helper: Calculate working days for a month
 const calculateWorkingDaysForMonth = (month) => {
   const [year, monthNum] = month.split('-').map(Number);
   const daysInMonth = new Date(year, monthNum, 0).getDate();
@@ -39,6 +38,19 @@ const calculateWorkingDaysForMonth = (month) => {
   }
   
   return workingDays;
+};
+
+const getNextMonth = (currentMonth) => {
+  const [year, month] = currentMonth.split('-').map(Number);
+  let nextYear = year;
+  let nextMonth = month + 1;
+  
+  if (nextMonth > 12) {
+    nextMonth = 1;
+    nextYear++;
+  }
+  
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
 };
 
 // ============================
@@ -65,8 +77,8 @@ exports.requestDailyMeal = async (req, res) => {
     }
     
     const mealDate = new Date(date);
+    mealDate.setHours(0, 0, 0, 0);
     
-    // Check if user is onsite
     const user = await User.findById(req.user._id);
     if (user.workLocationType !== 'onsite') {
       return res.status(400).json({
@@ -79,10 +91,11 @@ exports.requestDailyMeal = async (req, res) => {
     const existingMeal = await Meal.findOne({
       user: req.user._id,
       date: {
-        $gte: new Date(mealDate.setHours(0, 0, 0, 0)),
-        $lte: new Date(mealDate.setHours(23, 59, 59, 999))
+        $gte: mealDate,
+        $lte: new Date(mealDate.getTime() + 24 * 60 * 60 * 1000 - 1)
       },
-      isDeleted: false
+      isDeleted: false,
+      status: { $nin: ['cancelled', 'rejected'] }
     });
     
     if (existingMeal) {
@@ -199,7 +212,7 @@ exports.getMyDailyMeals = async (req, res) => {
         total: total,
         pages: Math.ceil(total / parseInt(limit))
       },
-      meals: meals
+      data: meals
     });
     
   } catch (error) {
@@ -216,6 +229,13 @@ exports.cancelDailyMeal = async (req, res) => {
   try {
     const { mealId, reason } = req.body;
     
+    if (!mealId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Meal ID is required'
+      });
+    }
+    
     const meal = await Meal.findById(mealId);
     
     if (!meal) {
@@ -225,7 +245,6 @@ exports.cancelDailyMeal = async (req, res) => {
       });
     }
     
-    // Check permission
     if (meal.user.toString() !== req.user._id.toString() && !isAdmin(req.user)) {
       return res.status(403).json({
         success: false,
@@ -233,7 +252,6 @@ exports.cancelDailyMeal = async (req, res) => {
       });
     }
     
-    // Check if can be cancelled
     if (!meal.canCancel()) {
       return res.status(400).json({
         success: false,
@@ -245,11 +263,9 @@ exports.cancelDailyMeal = async (req, res) => {
     meal.cancelledBy = req.user._id;
     meal.cancelledAt = new Date();
     meal.cancellationReason = reason || '';
-    meal.notes = meal.notes ? `${meal.notes} | Cancelled: ${reason}` : `Cancelled: ${reason}`;
     
     await meal.save();
     
-    // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: "Daily Meal Cancelled",
@@ -296,7 +312,6 @@ exports.setupMonthlySubscription = async (req, res) => {
     
     const user = await User.findById(req.user._id);
     
-    // Check if user is onsite
     if (user.workLocationType !== 'onsite') {
       return res.status(400).json({
         success: false,
@@ -304,7 +319,6 @@ exports.setupMonthlySubscription = async (req, res) => {
       });
     }
     
-    // Check if already has subscription
     const existingSubscription = await MealSubscription.findOne({
       user: req.user._id,
       isDeleted: false
@@ -317,19 +331,18 @@ exports.setupMonthlySubscription = async (req, res) => {
       });
     }
     
-    // Create or update subscription
     let subscription;
     const currentMonth = getCurrentMonth();
     
     if (existingSubscription) {
-      // Reactivate cancelled subscription
       subscription = existingSubscription;
       subscription.status = 'active';
       subscription.preference = preference;
       subscription.autoRenew = autoRenew;
       subscription.isPaused = false;
+      subscription.cancelledAt = null;
+      subscription.cancellationReason = '';
     } else {
-      // Create new subscription
       subscription = new MealSubscription({
         user: req.user._id,
         userInfo: {
@@ -347,12 +360,10 @@ exports.setupMonthlySubscription = async (req, res) => {
       });
     }
     
-    // Add current month approval request
     subscription.addMonthlyApproval(currentMonth, preference);
     
     await subscription.save();
     
-    // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: "Monthly Subscription Setup",
@@ -399,14 +410,13 @@ exports.cancelSubscription = async (req, res) => {
     
     const subscription = await MealSubscription.findOne({
       user: req.user._id,
-      status: 'active',
       isDeleted: false
     });
     
     if (!subscription) {
       return res.status(400).json({
         success: false,
-        message: 'No active subscription found'
+        message: 'No subscription found'
       });
     }
     
@@ -417,7 +427,6 @@ exports.cancelSubscription = async (req, res) => {
     
     await subscription.save();
     
-    // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: "Subscription Cancelled",
@@ -463,21 +472,19 @@ exports.updateSubscriptionPreference = async (req, res) => {
     
     const subscription = await MealSubscription.findOne({
       user: req.user._id,
-      status: 'active',
       isDeleted: false
     });
     
     if (!subscription) {
       return res.status(400).json({
         success: false,
-        message: 'No active subscription found'
+        message: 'No subscription found'
       });
     }
     
     const oldPreference = subscription.preference;
     subscription.preference = preference;
     
-    // Update current month's preference if not approved yet
     const currentMonth = getCurrentMonth();
     const currentApproval = subscription.monthlyApprovals.find(
       a => a.month === currentMonth
@@ -558,13 +565,13 @@ exports.getMySubscription = async (req, res) => {
     const subscription = await MealSubscription.findOne({
       user: req.user._id,
       isDeleted: false
-    }).populate('user', 'employeeId firstName lastName workLocationType');
+    });
     
     if (!subscription) {
       return res.status(200).json({
         success: true,
         hasSubscription: false,
-        message: 'No active subscription found'
+        message: 'No subscription found'
       });
     }
     
@@ -573,15 +580,14 @@ exports.getMySubscription = async (req, res) => {
       a => a.month === currentMonth
     );
     
-    // Get monthly stats
     const monthlyStats = [];
     for (const approval of subscription.monthlyApprovals.slice(-6)) {
+      const startDate = new Date(`${approval.month}-01`);
+      const endDate = new Date(new Date(startDate).setMonth(startDate.getMonth() + 1) - 1);
+      
       const mealCount = await Meal.countDocuments({
         user: req.user._id,
-        date: {
-          $gte: new Date(`${approval.month}-01`),
-          $lte: new Date(new Date(`${approval.month}-01`).setMonth(new Date(`${approval.month}-01`).getMonth() + 1) - 1)
-        },
+        date: { $gte: startDate, $lte: endDate },
         isDeleted: false,
         status: { $in: ['approved', 'served'] }
       });
@@ -605,13 +611,9 @@ exports.getMySubscription = async (req, res) => {
         autoRenew: subscription.autoRenew,
         startDate: subscription.startDate,
         isPaused: subscription.isPaused,
-        
-        // Current month
         currentMonth: currentMonth,
         currentStatus: currentApproval?.status || 'none',
         currentPreference: currentApproval?.preference || subscription.preference,
-        
-        // History
         monthlyApprovals: subscription.monthlyApprovals.slice(-12).reverse(),
         monthlyStats: monthlyStats
       }
@@ -633,14 +635,14 @@ exports.getMySubscription = async (req, res) => {
 // Admin: Get all subscriptions
 exports.getAllSubscriptions = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
-    const { status, department, month, page = 1, limit = 20 } = req.query;
+    const { status, department, month, page = 1, limit = 20, search } = req.query;
     
     let query = { isDeleted: false };
     
@@ -650,6 +652,15 @@ exports.getAllSubscriptions = async (req, res) => {
     
     if (department && department !== 'all') {
       query['userInfo.department'] = department;
+    }
+    
+    if (search) {
+      query.$or = [
+        { 'userInfo.employeeId': { $regex: search, $options: 'i' } },
+        { 'userInfo.firstName': { $regex: search, $options: 'i' } },
+        { 'userInfo.lastName': { $regex: search, $options: 'i' } },
+        { 'userInfo.email': { $regex: search, $options: 'i' } }
+      ];
     }
     
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -662,7 +673,6 @@ exports.getAllSubscriptions = async (req, res) => {
     
     const currentMonth = month || getCurrentMonth();
     
-    // Add current month approval status
     const enhancedSubscriptions = subscriptions.map(sub => {
       const currentApproval = sub.monthlyApprovals.find(
         a => a.month === currentMonth
@@ -699,10 +709,10 @@ exports.getAllSubscriptions = async (req, res) => {
 // Admin: Approve/Reject monthly subscription
 exports.approveMonthlySubscription = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
@@ -731,29 +741,63 @@ exports.approveMonthlySubscription = async (req, res) => {
       });
     }
     
-    // Approve for month
-    const approved = subscription.approveForMonth(month, req.user._id, note);
-    
-    if (!approved) {
+    const approval = subscription.monthlyApprovals.find(a => a.month === month);
+    if (!approval) {
       return res.status(400).json({
         success: false,
-        message: `No pending approval found for ${month}`
+        message: `No approval found for ${month}`
       });
     }
     
-    // If approved, create daily meals
+    approval.status = action === 'approve' ? 'approved' : 'rejected';
+    approval.approvalDate = new Date();
+    approval.approvedBy = req.user._id;
+    approval.note = note || '';
+    
     if (action === 'approve') {
-      const approval = subscription.monthlyApprovals.find(a => a.month === month);
+      approval.mealDays = calculateWorkingDaysForMonth(month);
       
       // Create daily meals for the month
-      const createdCount = await Meal.createSubscriptionMeals(
-        subscription.user,
-        month,
-        approval.preference,
-        req.user._id
-      );
+      const [year, monthNum] = month.split('-').map(Number);
+      const startDate = new Date(year, monthNum - 1, 1);
+      const endDate = new Date(year, monthNum, 0);
       
-      approval.mealDays = calculateWorkingDaysForMonth(month);
+      const daysInMonth = endDate.getDate();
+      const meals = [];
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = new Date(year, monthNum - 1, day);
+        const dayOfWeek = date.getDay();
+        
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+          const existingMeal = await Meal.findOne({
+            user: subscription.user,
+            date: {
+              $gte: new Date(date.setHours(0, 0, 0, 0)),
+              $lte: new Date(date.setHours(23, 59, 59, 999))
+            },
+            isDeleted: false
+          });
+          
+          if (!existingMeal) {
+            meals.push({
+              user: subscription.user,
+              mealType: 'lunch',
+              preference: approval.preference || subscription.preference,
+              date: date,
+              status: 'approved',
+              paymentMethod: 'salary_deduction',
+              createdBy: req.user._id,
+              approvedBy: req.user._id,
+              approvedAt: new Date()
+            });
+          }
+        }
+      }
+      
+      if (meals.length > 0) {
+        await Meal.insertMany(meals);
+      }
       
       // If auto-renew is ON, create next month request
       if (subscription.autoRenew) {
@@ -764,7 +808,6 @@ exports.approveMonthlySubscription = async (req, res) => {
     
     await subscription.save();
     
-    // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: `Monthly Subscription ${action === 'approve' ? 'Approved' : 'Rejected'}`,
@@ -805,39 +848,47 @@ exports.approveMonthlySubscription = async (req, res) => {
 // Admin: Get pending approvals for month
 exports.getPendingApprovals = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
     const { month } = req.query;
     const currentMonth = month || getCurrentMonth();
     
-    const pendingSubscriptions = await MealSubscription.getPendingForMonth(currentMonth);
+    const subscriptions = await MealSubscription.find({
+      status: 'active',
+      isPaused: false,
+      isDeleted: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'pending'
+    });
     
-    // Get user details for each subscription
-    const enhancedSubscriptions = await Promise.all(
-      pendingSubscriptions.map(async (sub) => {
-        const user = await User.findById(sub.user).select('employeeId firstName lastName department designation');
-        return {
+    const pendingSubscriptions = [];
+    
+    for (const sub of subscriptions) {
+      const approval = sub.monthlyApprovals.find(a => a.month === currentMonth);
+      if (approval && approval.status === 'pending') {
+        pendingSubscriptions.push({
           subscriptionId: sub._id,
           employeeId: sub.userInfo.employeeId,
           name: `${sub.userInfo.firstName} ${sub.userInfo.lastName}`,
           department: sub.userInfo.department,
-          preference: sub.preference,
+          preference: approval.preference || sub.preference,
           month: currentMonth,
-          requestDate: sub.monthlyApprovals.find(a => a.month === currentMonth)?.requestDate
-        };
-      })
-    );
+          requestDate: approval.requestDate,
+          subscriptionCreated: sub.createdAt
+        });
+      }
+    }
     
     res.status(200).json({
       success: true,
       month: currentMonth,
-      count: enhancedSubscriptions.length,
-      subscriptions: enhancedSubscriptions
+      count: pendingSubscriptions.length,
+      data: pendingSubscriptions
     });
     
   } catch (error) {
@@ -852,20 +903,24 @@ exports.getPendingApprovals = async (req, res) => {
 // Admin: Get monthly report
 exports.getMonthlyMealReport = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
     const { month, department } = req.query;
     const reportMonth = month || getCurrentMonth();
     
-    // Get approved subscriptions for the month
-    const approvedSubscriptions = await MealSubscription.getApprovedForMonth(reportMonth);
+    const approvedSubscriptions = await MealSubscription.find({
+      status: 'active',
+      isPaused: false,
+      isDeleted: false,
+      'monthlyApprovals.month': reportMonth,
+      'monthlyApprovals.status': 'approved'
+    });
     
-    // Get all onsite users
     let userQuery = { 
       workLocationType: 'onsite',
       isDeleted: false
@@ -878,11 +933,9 @@ exports.getMonthlyMealReport = async (req, res) => {
     const onsiteUsers = await User.find(userQuery)
       .select('employeeId firstName lastName department designation');
     
-    // Create report
     const report = [];
     
     for (const user of onsiteUsers) {
-      // Check if user has approved subscription for the month
       const subscription = approvedSubscriptions.find(
         sub => sub.user.toString() === user._id.toString()
       );
@@ -892,7 +945,6 @@ exports.getMonthlyMealReport = async (req, res) => {
           a => a.month === reportMonth
         );
         
-        // Count actual meals served
         const startDate = new Date(`${reportMonth}-01`);
         const endDate = new Date(new Date(startDate).setMonth(startDate.getMonth() + 1) - 1);
         
@@ -917,7 +969,6 @@ exports.getMonthlyMealReport = async (req, res) => {
           approvalDate: approval?.approvalDate
         });
       } else {
-        // User doesn't have subscription
         report.push({
           employeeId: user.employeeId,
           name: `${user.firstName} ${user.lastName}`,
@@ -933,7 +984,6 @@ exports.getMonthlyMealReport = async (req, res) => {
       }
     }
     
-    // Statistics
     const stats = {
       totalEmployees: report.length,
       withSubscription: report.filter(r => r.subscription === 'active').length,
@@ -947,7 +997,7 @@ exports.getMonthlyMealReport = async (req, res) => {
       success: true,
       month: reportMonth,
       stats: stats,
-      report: report
+      data: report
     });
     
   } catch (error) {
@@ -962,14 +1012,14 @@ exports.getMonthlyMealReport = async (req, res) => {
 // Admin: Create subscription for user
 exports.adminCreateSubscription = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
-    const { employeeId, preference, autoRenew = true, startDate } = req.body;
+    const { employeeId, preference, autoRenew = true, startDate, month, note } = req.body;
     
     if (!employeeId || !preference) {
       return res.status(400).json({
@@ -987,7 +1037,6 @@ exports.adminCreateSubscription = async (req, res) => {
       });
     }
     
-    // Check if user is onsite
     if (user.workLocationType !== 'onsite') {
       return res.status(400).json({
         success: false,
@@ -995,52 +1044,102 @@ exports.adminCreateSubscription = async (req, res) => {
       });
     }
     
-    // Check if already has subscription
     const existingSubscription = await MealSubscription.findOne({
       user: user._id,
       isDeleted: false
     });
     
-    if (existingSubscription) {
+    if (existingSubscription && existingSubscription.status === 'active') {
       return res.status(400).json({
         success: false,
-        message: 'User already has a meal subscription'
+        message: 'User already has an active meal subscription'
       });
     }
     
-    // Create subscription
-    const subscription = new MealSubscription({
-      user: user._id,
-      userInfo: {
-        employeeId: user.employeeId,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        department: user.department || ''
-      },
-      preference: preference,
-      status: 'active',
-      autoRenew: autoRenew,
-      startDate: startDate ? new Date(startDate) : new Date(),
-      createdBy: req.user._id
-    });
+    let subscription;
+    const currentMonth = month || getCurrentMonth();
     
-    // Add current month approval (auto-approve if admin creates)
-    const currentMonth = getCurrentMonth();
+    if (existingSubscription) {
+      subscription = existingSubscription;
+      subscription.status = 'active';
+      subscription.preference = preference;
+      subscription.autoRenew = autoRenew;
+      subscription.isPaused = false;
+      subscription.cancelledAt = null;
+      subscription.cancellationReason = '';
+    } else {
+      subscription = new MealSubscription({
+        user: user._id,
+        userInfo: {
+          employeeId: user.employeeId,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          department: user.department || ''
+        },
+        preference: preference,
+        status: 'active',
+        autoRenew: autoRenew,
+        startDate: startDate ? new Date(startDate) : new Date(),
+        createdBy: req.user._id
+      });
+    }
+    
     subscription.addMonthlyApproval(currentMonth, preference);
-    subscription.approveForMonth(currentMonth, req.user._id, 'Created by admin');
+    
+    const approval = subscription.monthlyApprovals.find(a => a.month === currentMonth);
+    if (approval) {
+      approval.status = 'approved';
+      approval.approvalDate = new Date();
+      approval.approvedBy = req.user._id;
+      approval.note = note || 'Created by admin';
+      approval.mealDays = calculateWorkingDaysForMonth(currentMonth);
+    }
     
     await subscription.save();
     
     // Create daily meals for current month
-    await Meal.createSubscriptionMeals(
-      user._id,
-      currentMonth,
-      preference,
-      req.user._id
-    );
+    const [year, monthNum] = currentMonth.split('-').map(Number);
+    const start = new Date(year, monthNum - 1, 1);
+    const end = new Date(year, monthNum, 0);
     
-    // Audit Log
+    const daysInMonth = end.getDate();
+    const meals = [];
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, monthNum - 1, day);
+      const dayOfWeek = date.getDay();
+      
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        const existingMeal = await Meal.findOne({
+          user: user._id,
+          date: {
+            $gte: new Date(date.setHours(0, 0, 0, 0)),
+            $lte: new Date(date.setHours(23, 59, 59, 999))
+          },
+          isDeleted: false
+        });
+        
+        if (!existingMeal) {
+          meals.push({
+            user: user._id,
+            mealType: 'lunch',
+            preference: preference,
+            date: date,
+            status: 'approved',
+            paymentMethod: 'salary_deduction',
+            createdBy: req.user._id,
+            approvedBy: req.user._id,
+            approvedAt: new Date()
+          });
+        }
+      }
+    }
+    
+    if (meals.length > 0) {
+      await Meal.insertMany(meals);
+    }
+    
     await AuditLog.create({
       userId: req.user._id,
       action: "Admin Created Subscription",
@@ -1081,6 +1180,70 @@ exports.adminCreateSubscription = async (req, res) => {
   }
 };
 
+// Admin: Delete subscription
+exports.deleteSubscription = async (req, res) => {
+  try {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin/Moderator only.'
+      });
+    }
+    
+    const { id } = req.params;
+    
+    const subscription = await MealSubscription.findById(id);
+    
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found'
+      });
+    }
+    
+    subscription.isDeleted = true;
+    await subscription.save();
+    
+    await Meal.updateMany(
+      { 
+        user: subscription.user,
+        date: { $gte: new Date() },
+        status: { $in: ['pending', 'approved'] }
+      },
+      { 
+        status: 'cancelled',
+        cancelledBy: req.user._id,
+        cancelledAt: new Date(),
+        cancellationReason: 'Deleted by admin'
+      }
+    );
+    
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Subscription Deleted",
+      target: subscription._id,
+      details: {
+        employeeId: subscription.userInfo.employeeId,
+        deletedBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Subscription deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('Delete subscription error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // ============================
 // PAYROLL INTEGRATION
 // ============================
@@ -1088,10 +1251,10 @@ exports.adminCreateSubscription = async (req, res) => {
 // Export meal data for payroll
 exports.exportMealDataForPayroll = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
@@ -1104,17 +1267,21 @@ exports.exportMealDataForPayroll = async (req, res) => {
       });
     }
     
-    // Get all approved subscriptions for the month
-    const approvedSubscriptions = await MealSubscription.getApprovedForMonth(month);
+    const subscriptions = await MealSubscription.find({
+      status: 'active',
+      isPaused: false,
+      isDeleted: false,
+      'monthlyApprovals.month': month,
+      'monthlyApprovals.status': 'approved'
+    });
     
     const payrollData = [];
     
-    for (const subscription of approvedSubscriptions) {
+    for (const subscription of subscriptions) {
       const approval = subscription.monthlyApprovals.find(
         a => a.month === month
       );
       
-      // Count actual served meals
       const startDate = new Date(`${month}-01`);
       const endDate = new Date(new Date(startDate).setMonth(startDate.getMonth() + 1) - 1);
       
@@ -1158,10 +1325,10 @@ exports.exportMealDataForPayroll = async (req, res) => {
 // Update meal days from payroll
 exports.updateMealDaysFromPayroll = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied. Admin only.'
+        message: 'Access denied. Admin/Moderator only.'
       });
     }
     
@@ -1200,7 +1367,6 @@ exports.updateMealDaysFromPayroll = async (req, res) => {
     approval.mealDays = mealDays;
     await subscription.save();
     
-    // Audit Log
     await AuditLog.create({
       userId: req.user._id,
       action: "Meal Days Updated from Payroll",
@@ -1249,7 +1415,7 @@ exports.getDashboardStats = async (req, res) => {
     
     let stats = {};
     
-    if (isAdmin(req.user)) {
+    if (isAdmin(req.user) || isModerator(req.user)) {
       // Admin stats
       const totalSubscriptions = await MealSubscription.countDocuments({
         status: 'active',
@@ -1263,11 +1429,13 @@ exports.getDashboardStats = async (req, res) => {
         isDeleted: false
       });
       
+      const todayStart = new Date(today);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+      
       const todayMeals = await Meal.countDocuments({
-        date: {
-          $gte: new Date(today.setHours(0, 0, 0, 0)),
-          $lte: new Date(today.setHours(23, 59, 59, 999))
-        },
+        date: { $gte: todayStart, $lte: todayEnd },
         isDeleted: false
       });
       
@@ -1276,11 +1444,17 @@ exports.getDashboardStats = async (req, res) => {
         isDeleted: false
       });
       
+      const totalEmployees = await User.countDocuments({
+        workLocationType: 'onsite',
+        isDeleted: false
+      });
+      
       stats = {
         totalSubscriptions,
         pendingApprovals,
         todayMeals,
         monthlyMeals,
+        totalEmployees,
         currentMonth
       };
     } else {
@@ -1290,12 +1464,14 @@ exports.getDashboardStats = async (req, res) => {
         isDeleted: false
       });
       
+      const todayStart = new Date(today);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+      
       const todayMeal = await Meal.findOne({
         user: req.user._id,
-        date: {
-          $gte: new Date(today.setHours(0, 0, 0, 0)),
-          $lte: new Date(today.setHours(23, 59, 59, 999))
-        },
+        date: { $gte: todayStart, $lte: todayEnd },
         isDeleted: false
       });
       
@@ -1320,11 +1496,111 @@ exports.getDashboardStats = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      stats: stats
+      data: stats
     });
     
   } catch (error) {
     console.error('Dashboard stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// ============================
+// UTILITY FUNCTIONS
+// ============================
+
+// Get departments list
+exports.getDepartments = async (req, res) => {
+  try {
+    const departments = await User.distinct('department', { 
+      department: { $ne: null, $ne: '' },
+      isDeleted: false 
+    }).sort();
+    
+    res.status(200).json({
+      success: true,
+      data: departments
+    });
+    
+  } catch (error) {
+    console.error('Get departments error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Update subscription details
+exports.updateSubscription = async (req, res) => {
+  try {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin/Moderator only.'
+      });
+    }
+    
+    const { id } = req.params;
+    const { status, preference, autoRenew, isPaused, pauseReason } = req.body;
+    
+    const subscription = await MealSubscription.findById(id);
+    
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found'
+      });
+    }
+    
+    if (status && ['active', 'paused', 'cancelled'].includes(status)) {
+      subscription.status = status;
+    }
+    
+    if (preference && ['office', 'outside'].includes(preference)) {
+      subscription.preference = preference;
+    }
+    
+    if (typeof autoRenew === 'boolean') {
+      subscription.autoRenew = autoRenew;
+    }
+    
+    if (typeof isPaused === 'boolean') {
+      subscription.isPaused = isPaused;
+      if (isPaused) {
+        subscription.pauseStartDate = new Date();
+        subscription.pauseReason = pauseReason || '';
+      } else {
+        subscription.pauseEndDate = new Date();
+      }
+    }
+    
+    await subscription.save();
+    
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Subscription Updated",
+      target: subscription._id,
+      details: {
+        employeeId: subscription.userInfo.employeeId,
+        updates: req.body,
+        updatedBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Subscription updated successfully',
+      data: subscription
+    });
+    
+  } catch (error) {
+    console.error('Update subscription error:', error);
     res.status(500).json({
       success: false,
       message: error.message

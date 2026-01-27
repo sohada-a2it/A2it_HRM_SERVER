@@ -576,40 +576,81 @@ router.delete('/delete-miscellaneous/:id',protect, miscellaneousExpense.deleteEx
 router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseStats);
 
 
-// ============================
-// EMPLOYEE ROUTES
-// ============================
+// // ============================
+// // EMPLOYEE ROUTES
+// // ============================
 
-// Daily Meal Routes
+// // Daily Meal Routes
+// router.post('/daily/request', protect, mealController.requestDailyMeal);
+// router.get('/daily/my-meals', protect, mealController.getMyDailyMeals);
+// router.put('/daily/cancel', protect, mealController.cancelDailyMeal);
+
+// // Subscription Routes
+// router.post('/subscription/setup', protect, mealController.setupMonthlySubscription);
+// router.post('/subscription/cancel', protect, mealController.cancelSubscription);
+// router.put('/subscription/update-preference', protect, mealController.updateSubscriptionPreference);
+// router.put('/subscription/update-auto-renew', protect, mealController.updateAutoRenew);
+// router.get('/subscription/my-details', protect, mealController.getMySubscription);
+
+// // Dashboard
+// router.get('/dashboard/stats', protect, mealController.getDashboardStats);
+
+
+// // ============================
+// // ADMIN ROUTES
+// // ============================
+
+// // Subscription Management
+// router.get('/admin/subscriptions/all', protect, adminOnly, mealController.getAllSubscriptions);
+// router.post('/admin/subscription/create', protect, adminOnly, mealController.adminCreateSubscription);
+// router.put('/admin/subscription/approve', protect, adminOnly, mealController.approveMonthlySubscription);
+
+// // Approval Management
+// router.get('/admin/pending-approvals', protect, adminOnly, mealController.getPendingApprovals);
+// // Reports
+// router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport);
+
+// // Payroll Integration
+// router.get('/admin/payroll-export', protect, adminOnly, mealController.exportMealDataForPayroll);
+// router.put('/admin/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
+
+// ============================
+// DAILY MEAL ROUTES
+// ============================
 router.post('/daily/request', protect, mealController.requestDailyMeal);
 router.get('/daily/my-meals', protect, mealController.getMyDailyMeals);
-router.put('/daily/cancel', protect, mealController.cancelDailyMeal);
+router.post('/daily/cancel', protect, mealController.cancelDailyMeal);
 
-// Subscription Routes
+// ============================
+// SUBSCRIPTION ROUTES (EMPLOYEE)
+// ============================
 router.post('/subscription/setup', protect, mealController.setupMonthlySubscription);
 router.post('/subscription/cancel', protect, mealController.cancelSubscription);
 router.put('/subscription/update-preference', protect, mealController.updateSubscriptionPreference);
 router.put('/subscription/update-auto-renew', protect, mealController.updateAutoRenew);
 router.get('/subscription/my-details', protect, mealController.getMySubscription);
 
-// Dashboard
-router.get('/dashboard/stats', protect, mealController.getDashboardStats);
-
 // ============================
-// ADMIN ROUTES
+// ADMIN/MODERATOR ROUTES
 // ============================
-
-// Subscription Management
 router.get('/admin/subscriptions/all', protect, adminOnly, mealController.getAllSubscriptions);
+router.get('/admin/subscriptions/pending', protect, adminOnly, mealController.getPendingApprovals);
 router.post('/admin/subscription/create', protect, adminOnly, mealController.adminCreateSubscription);
 router.put('/admin/subscription/approve', protect, adminOnly, mealController.approveMonthlySubscription);
+router.put('/admin/subscription/update/:id', protect, adminOnly, mealController.updateSubscription);
+router.delete('/admin/subscription/:id', protect, adminOnly, mealController.deleteSubscription);
 
-// Approval Management
-router.get('/admin/pending-approvals', protect, adminOnly, mealController.getPendingApprovals);
-// Reports
+// ============================
+// REPORT ROUTES
+// ============================
 router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport);
+router.get('/export/payroll', protect, adminOnly, mealController.exportMealDataForPayroll);
+router.put('/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
 
-// Payroll Integration
-router.get('/admin/payroll-export', protect, adminOnly, mealController.exportMealDataForPayroll);
-router.put('/admin/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
+// ============================
+// UTILITY ROUTES
+// ============================
+router.get('/dashboard/stats', protect, mealController.getDashboardStats);
+router.get('/departments', protect, mealController.getDepartments);
+
 module.exports = router;  
