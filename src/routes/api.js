@@ -649,8 +649,8 @@ router.post('/admin/create-meal', protect, adminOnly, mealController.adminCreate
 // REPORT ROUTES
 // ============================
 router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport);
-router.get('/export/payroll', protect, adminOnly, mealController.exportMealDataForPayroll);
-router.put('/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
+// router.get('/export/payroll', protect, adminOnly, mealController.exportMealDataForPayroll);
+// router.put('/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
 
 // ============================
 // UTILITY ROUTES
