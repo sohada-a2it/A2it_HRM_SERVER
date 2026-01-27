@@ -1337,13 +1337,18 @@ exports.createUser = async (req, res) => {
       workLocationType: newUser.workLocationType,
       workArrangement: newUser.workArrangement,
       contractType: newUser.contractType || 'N/A',
-      hasBankDetails: !!newUser.bankDetails
+      hasBankDetails: !!newUser.bankDetails,
+      bankDetails: newUser.bankDetails || 'N/A'
     });
 
     // Remove password from response
     const userResponse = newUser.toObject();
     delete userResponse.password;
-
+// ✅ Add bank details to response if exists
+if (newUser.bankDetails) {
+  userResponse.bankDetails = newUser.bankDetails;
+}
+ 
     // Add display work type for frontend
     userResponse.workTypeDisplay = `${userResponse.workArrangement} • ${userResponse.workLocationType}`;
 
@@ -1451,7 +1456,15 @@ exports.getAllUsers = async (req, res) => {
     // Format response with onsite benefits info
     const formattedUsers = users.map(user => {
       const userObj = user.toObject();
-
+  // ✅ Add bank details if exists
+  if (user.bankDetails) {
+    userObj.bankDetails = user.bankDetails;
+  }
+  
+  // ✅ Add contract type if exists
+  if (user.contractType) {
+    userObj.contractType = user.contractType;
+  }
       // Add onsite benefits info
       if (user.role === 'employee' && user.workLocationType === 'onsite') {
         userObj.onsiteBenefitsInfo = {
@@ -2326,8 +2339,8 @@ exports.getProfile = async (req, res) => {
         startDate: user.onsiteBenefits?.startDate || user.joiningDate,
         lastCalculated: user.onsiteBenefits?.lastCalculated,
         notes: user.onsiteBenefits?.notes || '',
-        description: '500 BDT fixed deduction + 10 BDT per present day allowance',
-        calculation: 'Salary Effect: (Present Days × 10) - 500 BDT'
+        // description: '500 BDT fixed deduction + 10 BDT per present day allowance',
+        // calculation: 'Salary Effect: (Present Days × 10) - 500 BDT'
       };
     }
     // ✅ Session activity
@@ -2360,6 +2373,9 @@ exports.getProfile = async (req, res) => {
       isActive: user.isActive,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+       // ✅ Add bank details
+  bankDetails: user.bankDetails || null,
+  contractType: user.contractType || null,
       // Role-based fields
       ...(user.role === 'admin' && {
         companyName: user.companyName,
@@ -2383,7 +2399,9 @@ exports.getProfile = async (req, res) => {
       ...(user.role === 'employee' && {
         managerId: user.managerId,
         attendanceId: user.attendanceId,
-        shiftTiming: user.shiftTiming
+        shiftTiming: user.shiftTiming,
+            bankDetails: user.bankDetails,  // ✅ Ensure this is included
+    contractType: user.contractType
       }),
       // Onsite Benefits Info (NEW)
       onsiteBenefitsInfo: onsiteBenefitsInfo,
@@ -2549,8 +2567,10 @@ exports.updateProfile = async (req, res) => {
       'firstName', 'lastName', 'phone', 'address',
       'department', 'designation', 'employeeId',
       'picture', 'status', 'isActive',
-      // ✅ WORK TYPE FIELDS
-      'workLocationType', 'workArrangement',
+       // ✅ WORK TYPE FIELDS
+  'workLocationType', 'workArrangement',
+  // ✅ Add contractType and bankDetails to common fields
+  'contractType', 
       // Salary fields
       'salaryType', 'rate', 'basicSalary', 'salary',
       'joiningDate'
@@ -2696,7 +2716,17 @@ exports.updateProfile = async (req, res) => {
     } catch (sessionError) {
       console.error('Session activity error:', sessionError);
     }
-
+// Handle bankDetails separately (structured object)
+if (req.body.bankDetails) {
+  console.log('  - Updating bank details');
+  user.bankDetails = {
+    bankName: req.body.bankDetails.bankName?.trim() || user.bankDetails?.bankName || '',
+    accountNumber: req.body.bankDetails.accountNumber?.toString() || user.bankDetails?.accountNumber || '',
+    accountHolderName: req.body.bankDetails.accountHolderName?.trim() || user.bankDetails?.accountHolderName || '',
+    branchName: req.body.bankDetails.branchName?.trim() || user.bankDetails?.branchName || '',
+    routingNumber: req.body.bankDetails.routingNumber?.toString() || user.bankDetails?.routingNumber || ''
+  };
+}
     // ============ PREPARE RESPONSE ============
     const responseData = {
       // Basic info
@@ -2707,7 +2737,9 @@ exports.updateProfile = async (req, res) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
-      
+        // ✅ Add bank details and contract type
+  bankDetails: user.bankDetails || null,
+  contractType: user.contractType || null,
       // Profile info
       picture: user.picture,
       address: user.address,
@@ -3096,7 +3128,9 @@ exports.getUserById = async (req, res) => {
       phone: user.phone,
       address: user.address,
       role: user.role,
-      
+        // ✅ Add bank details and contract type
+  bankDetails: user.bankDetails || null,
+  contractType: user.contractType || null,
       // Profile
       picture: user.picture,
       department: user.department,
@@ -3146,7 +3180,9 @@ exports.getUserById = async (req, res) => {
       ...(user.role === 'employee' && {
         managerId: user.managerId,
         attendanceId: user.attendanceId,
-        shiftTiming: user.shiftTiming || { start: '09:00', end: '18:00' }
+        shiftTiming: user.shiftTiming || { start: '09:00', end: '18:00' },
+            bankDetails: user.bankDetails, // ✅ Include bank details
+    contractType: user.contractType // ✅ Include contract type
       })
     };
 
