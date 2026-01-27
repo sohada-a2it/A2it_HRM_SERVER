@@ -1136,7 +1136,7 @@ payrollSchema.statics.getEmployeeYearlySummary = async function(employeeId, year
         totalBasicPay: 1,
         totalOvertime: 1,
         totalBonus: 1,
-        totalAllowance: 1,
+        // totalAllowance: 1,
         monthsCount: { $size: '$months' },
         averageMonthly: { $divide: ['$totalNetPayable', { $size: '$months' }] }
       }
