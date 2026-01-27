@@ -1607,3 +1607,179 @@ exports.updateSubscription = async (req, res) => {
     });
   }
 };
+// User controller এ যোগ করুন:
+exports.getAllOnsiteUsers = async (req, res) => {
+  try {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin/Moderator only.'
+      });
+    }
+    
+    const users = await User.find({
+      workLocationType: 'onsite',
+      isDeleted: false
+    }).select('_id employeeId firstName lastName email department designation');
+    
+    res.status(200).json({
+      success: true,
+      users
+    });
+  } catch (error) {
+    console.error('Error fetching onsite users:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Meal controller এ যোগ করুন:
+exports.getAllMeals = async (req, res) => {
+  try {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin/Moderator only.'
+      });
+    }
+    
+    const { startDate, endDate, department, status } = req.query;
+    
+    let query = { isDeleted: false };
+    
+    if (startDate && endDate) {
+      query.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+    
+    if (department && department !== 'all') {
+      query['userInfo.department'] = department;
+    }
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    const meals = await Meal.find(query)
+      .sort({ date: -1 })
+      .populate('user', 'firstName lastName email')
+      .populate('approvedBy', 'firstName lastName');
+    
+    res.status(200).json({
+      success: true,
+      meals
+    });
+  } catch (error) {
+    console.error('Error fetching all meals:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Admin create meal for user
+exports.adminCreateMeal = async (req, res) => {
+  try {
+    if (!isAdmin(req.user) && !isModerator(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin/Moderator only.'
+      });
+    }
+    
+    const { userId, mealPreference, date, note } = req.body;
+    
+    if (!userId || !mealPreference || !date) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID, preference and date are required'
+      });
+    }
+    
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    if (user.workLocationType !== 'onsite') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only onsite users can have meal requests'
+      });
+    }
+    
+    const mealDate = new Date(date);
+    mealDate.setHours(0, 0, 0, 0);
+    
+    // Check if already has meal for this date
+    const existingMeal = await Meal.findOne({
+      user: userId,
+      date: {
+        $gte: mealDate,
+        $lte: new Date(mealDate.getTime() + 24 * 60 * 60 * 1000 - 1)
+      },
+      isDeleted: false,
+      status: { $nin: ['cancelled', 'rejected'] }
+    });
+    
+    if (existingMeal) {
+      return res.status(400).json({
+        success: false,
+        message: `User already has a ${existingMeal.status} meal request for ${formatDate(new Date(date))}`
+      });
+    }
+    
+    // Create meal
+    const meal = new Meal({
+      user: userId,
+      mealType: 'lunch',
+      preference: mealPreference,
+      date: new Date(date),
+      status: 'approved', // Auto-approve when admin creates
+      notes: note || '',
+      paymentMethod: 'salary_deduction',
+      createdBy: req.user._id,
+      approvedBy: req.user._id,
+      approvedAt: new Date()
+    });
+    
+    await meal.save();
+    
+    // Audit Log
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Admin Created Meal",
+      target: meal._id,
+      details: {
+        employeeId: user.employeeId,
+        date: date,
+        preference: mealPreference,
+        createdBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Meal created successfully',
+      data: meal
+    });
+    
+  } catch (error) {
+    console.error('Admin create meal error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
