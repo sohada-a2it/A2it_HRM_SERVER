@@ -694,7 +694,7 @@ exports.createPayroll = async (req, res) => {
         breakdown: {
           teaAllowance: `${eligibleDays} days × ${teaAllowanceRate} BDT = ${teaAllowance} BDT`,
           serviceCharge: `Fixed ${serviceChargeDeduction} BDT`,
-          calculation: `Tea Allowance ${teaAllowance} - Service Charge ${serviceChargeDeduction} = Net ${netOnsiteEffect} BDT`
+          calculation: `Service Charge ${serviceChargeDeduction} - Tea Allowance ${teaAllowance}  = Net ${netOnsiteEffect} BDT`
         }
       };
       
