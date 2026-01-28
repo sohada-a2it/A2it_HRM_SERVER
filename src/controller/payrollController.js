@@ -2158,4 +2158,242 @@ exports.calculateOnsiteBenefitsForPayroll = async (employeeId, month, year, atte
     };
   }
 }; 
+// controllers/payrollController.js
+
+// Employee acceptance এর জন্য নতুন ফাংশন
+const handleEmployeeAcceptance = async (payrollId, employeeId, userData) => {
+  try {
+    const payroll = await Payroll.findById(payrollId);
+    if (!payroll) {
+      throw new Error('Payroll not found');
+    }
+    
+    // Verify ownership
+    if (payroll.employee.toString() !== employeeId.toString()) {
+      throw new Error('You can only accept your own payroll');
+    }
+    
+    // Check if already accepted
+    if (payroll.employeeAccepted?.accepted) {
+      throw new Error('Payroll already accepted');
+    }
+    
+    // Update payroll status and acceptance info
+    payroll.status = 'Paid';
+    payroll.employeeAccepted = {
+      accepted: true,
+      acceptedAt: new Date(),
+      acceptedBy: employeeId,
+      employeeName: userData.name || `${userData.firstName} ${userData.lastName}`,
+      employeeId: userData.employeeId
+    };
+    
+    // Add payment info
+    payroll.payment = {
+      paymentDate: new Date(),
+      paymentMethod: 'Employee Accepted',
+      transactionId: `EMP_ACCEPT_${Date.now()}_${employeeId}`,
+      bankAccount: 'Employee Acceptance',
+      paidBy: employeeId,
+      paymentNotes: 'Payroll accepted by employee'
+    };
+    
+    // Update metadata
+    payroll.metadata.employeeAccepted = true;
+    payroll.metadata.acceptedVia = 'employee_portal';
+    payroll.metadata.acceptedAt = new Date();
+    
+    // Mark as modified and save
+    payroll.markModified('employeeAccepted');
+    payroll.markModified('payment');
+    payroll.markModified('metadata');
+    
+    await payroll.save();
+    
+    return payroll;
+  } catch (error) {
+    console.error('Employee acceptance error:', error);
+    throw error;
+  }
+};
+
+// Employee acceptance API endpoint আপডেট করুন
+exports.employeeAcceptPayroll = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const employeeId = req.user._id;
+    
+    // Get employee data
+    const employee = await User.findById(employeeId).select('firstName lastName employeeId');
+    if (!employee) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Employee not found'
+      });
+    }
+    
+    // Process acceptance
+    const updatedPayroll = await handleEmployeeAcceptance(
+      id, 
+      employeeId, 
+      {
+        name: `${employee.firstName} ${employee.lastName}`,
+        employeeId: employee.employeeId,
+        firstName: employee.firstName,
+        lastName: employee.lastName
+      }
+    );
+    
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll accepted successfully! Status updated to "Paid".',
+      data: {
+        payrollId: updatedPayroll._id,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        employeeId: employee.employeeId,
+        month: updatedPayroll.month,
+        year: updatedPayroll.year,
+        monthName: getMonthName(updatedPayroll.month),
+        netPayable: updatedPayroll.summary.netPayable,
+        acceptedAt: updatedPayroll.employeeAccepted.acceptedAt,
+        previousStatus: 'Pending',
+        newStatus: 'Paid',
+        acceptedBy: updatedPayroll.employeeAccepted.employeeName
+      }
+    });
+    
+  } catch (error) {
+    console.error('Employee accept payroll error:', error);
+    
+    if (error.message.includes('only accept your own')) {
+      return res.status(403).json({
+        status: 'fail',
+        message: error.message
+      });
+    }
+    
+    if (error.message.includes('already accepted')) {
+      return res.status(400).json({
+        status: 'fail',
+        message: error.message
+      });
+    }
+    
+    res.status(500).json({
+      status: 'fail',
+      message: error.message || 'Failed to accept payroll'
+    });
+  }
+};
+
+// Get payroll details for employee - নতুন ফাংশন
+exports.getEmployeePayrollDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const employeeId = req.user._id;
+    
+    // Find payroll
+    const payroll = await Payroll.findById(id)
+      .select('employee employeeName employeeId department designation month year status summary deductions earnings attendance salaryDetails periodStart periodEnd employeeAccepted payment metadata calculationNotes')
+      .lean();
+    
+    if (!payroll) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+    
+    // Verify ownership (employee can only see their own payroll)
+    if (payroll.employee.toString() !== employeeId.toString() && req.user.role === 'employee') {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'You can only view your own payroll details'
+      });
+    }
+    
+    // Format the response for employee view
+    const response = {
+      status: 'success',
+      data: {
+        payrollId: payroll._id,
+        employee: {
+          name: payroll.employeeName,
+          employeeId: payroll.employeeId,
+          department: payroll.department,
+          designation: payroll.designation
+        },
+        period: {
+          month: payroll.month,
+          year: payroll.year,
+          monthName: getMonthName(payroll.month),
+          startDate: payroll.periodStart,
+          endDate: payroll.periodEnd,
+          formattedPeriod: `${getMonthName(payroll.month)} ${payroll.year}`
+        },
+        salary: {
+          monthly: payroll.salaryDetails?.monthlySalary || 0,
+          daily: payroll.salaryDetails?.dailyRate || 0,
+          hourly: payroll.salaryDetails?.hourlyRate || 0
+        },
+        attendance: {
+          totalDays: payroll.attendance?.totalWorkingDays || 23,
+          presentDays: payroll.attendance?.presentDays || 0,
+          absentDays: payroll.attendance?.absentDays || 0,
+          leaveDays: payroll.attendance?.leaveDays || 0,
+          lateDays: payroll.attendance?.lateDays || 0,
+          halfDays: payroll.attendance?.halfDays || 0,
+          attendancePercentage: payroll.attendance?.attendancePercentage || 0
+        },
+        earnings: {
+          basicPay: payroll.earnings?.basicPay || 0,
+          overtime: payroll.earnings?.overtime?.amount || 0,
+          bonus: payroll.earnings?.bonus?.amount || 0,
+          allowance: payroll.earnings?.allowance?.amount || 0,
+          total: payroll.summary?.grossEarnings || 0
+        },
+        deductions: {
+          late: payroll.deductions?.lateDeduction || 0,
+          absent: payroll.deductions?.absentDeduction || 0,
+          leave: payroll.deductions?.leaveDeduction || 0,
+          halfDay: payroll.deductions?.halfDayDeduction || 0,
+          total: payroll.deductions?.total || 0
+        },
+        summary: {
+          grossEarnings: payroll.summary?.grossEarnings || 0,
+          totalDeductions: payroll.deductions?.total || 0,
+          netPayable: payroll.summary?.netPayable || 0,
+          netPayableInWords: payroll.summary?.inWords || ''
+        },
+        status: {
+          current: payroll.status,
+          employeeAccepted: payroll.employeeAccepted?.accepted || false,
+          acceptedAt: payroll.employeeAccepted?.acceptedAt,
+          payment: payroll.payment ? {
+            date: payroll.payment.paymentDate,
+            method: payroll.payment.paymentMethod,
+            transactionId: payroll.payment.transactionId
+          } : null
+        },
+        metadata: {
+          calculationBasis: payroll.salaryDetails?.calculationBasis || '23 days fixed',
+          fixed23Days: payroll.metadata?.fixed23Days || true,
+          version: payroll.metadata?.version || '1.0',
+          createdDate: payroll.createdAt,
+          lastUpdated: payroll.updatedAt
+        },
+        notes: payroll.calculationNotes || {}
+      }
+    };
+    
+    res.status(200).json(response);
+    
+  } catch (error) {
+    console.error('Get employee payroll details error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message || 'Failed to get payroll details'
+    });
+  }
+};
 module.exports = exports;

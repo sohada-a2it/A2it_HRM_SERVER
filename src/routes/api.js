@@ -453,7 +453,11 @@ router.put('/payroll/:id/employee-accept', protect, payrollController.employeeAc
 router.get('/payroll/:id/check-acceptance', protect, payrollController.checkEmployeeAcceptance);
 // New food cost integration routes
 router.get('/food-cost/bills',  protect, adminOnly, payrollController.getFoodCostBillsForPayroll);
- 
+ // Employee acceptance routes
+router.put('/:id/employee-accept', protect, payrollController.employeeAcceptPayroll);
+router.get('/:id/employee-details', protect, payrollController.getEmployeePayrollDetails);
+
+
 // =================== SalaryRule Routes ==================== 
 router.get('/active', protect, salaryRuleController.getActiveSalaryRules); 
 router.get('/getSalaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);

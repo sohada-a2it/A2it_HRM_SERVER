@@ -881,6 +881,31 @@ employeeAccepted: {
     activeSubscribersCount: Number,
     mealType: String
   },
+    employeeAccepted: {
+    accepted: {
+      type: Boolean,
+      default: false
+    },
+    acceptedAt: {
+      type: Date
+    },
+    acceptedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    employeeName: {
+      type: String
+    },
+    employeeId: {
+      type: String
+    },
+    ipAddress: {
+      type: String
+    },
+    userAgent: {
+      type: String
+    }
+  },
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
