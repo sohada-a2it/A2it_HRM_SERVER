@@ -939,91 +939,129 @@ exports.createPayroll = async (req, res) => {
       });
     }
     
-    // ============ 3. AUTO LOAD MEAL DATA ============
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
-    const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
-    
-    // A. Check Monthly Subscription (Auto)
-    const subscription = await MealSubscription.findOne({
-      user: employeeId,
-      isDeleted: false,
-      'monthlyApprovals.month': currentMonth,
-      'monthlyApprovals.status': 'approved'
-    });
-    
-    const hasSubscription = !!subscription;
-    
-    // B. Count Daily Meals (Auto)
-    const dailyMeals = await Meal.find({
-      user: employeeId,
-      date: { $gte: startDate, $lte: endDate },
-      status: { $in: ['approved', 'served'] },
-      isDeleted: false
-    });
-    
-    const dailyMealDays = dailyMeals.length;
-    const hasDailyMeals = dailyMealDays > 0;
-    
-    // C. AUTO: Calculate Total Monthly Food Cost
-    const monthlyFoodCosts = await FoodCost.find({
-      date: { $gte: startDate, $lte: endDate }
-    });
-    
-    const totalMonthlyFoodCost = monthlyFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
-    const foodCostDays = monthlyFoodCosts.length;
-    const averageDailyCost = foodCostDays > 0 ? totalMonthlyFoodCost / foodCostDays : 0;
-    
-    // D. AUTO: Count Active Subscribers
-    const activeSubscribers = await MealSubscription.countDocuments({
-      status: 'active',
-      isDeleted: false,
-      isPaused: false,
-      'monthlyApprovals.month': currentMonth,
-      'monthlyApprovals.status': 'approved'
-    });
-    
-    // ============ 4. AUTO MEAL DEDUCTION CALCULATION ============
-    let mealDeduction = {
-      type: 'none',
-      amount: 0,
-      calculationNote: 'No meal deduction',
-      details: {}
-    };
-    
-    // Case 1: Monthly Subscription (AUTO CALCULATION)
-    if (hasSubscription) {
-      const deductionPerEmployee = activeSubscribers > 0 ? 
-        Math.round(totalMonthlyFoodCost / activeSubscribers) : 0;
-      
-      mealDeduction = {
-        type: 'monthly_subscription',
-        amount: deductionPerEmployee,
-        calculationNote: `Food Cost: ${totalMonthlyFoodCost} BDT ÷ ${activeSubscribers} subscribers = ${deductionPerEmployee} BDT`,
-        details: {
-          totalMonthlyFoodCost,
-          foodCostDays,
-          averageDailyCost,
-          activeSubscribers,
-          calculation: `${totalMonthlyFoodCost} ÷ ${activeSubscribers}`
-        }
-      };
+    // ============ 3. AUTO LOAD MEAL DATA ============ 
+const startDate = new Date(year, month - 1, 1);
+const endDate = new Date(year, month, 0);
+const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
+
+// A. Check Monthly Subscription FIRST (Priority)
+const subscription = await MealSubscription.findOne({
+  user: employeeId,
+  isDeleted: false,
+  'monthlyApprovals.month': currentMonth,
+  'monthlyApprovals.status': 'approved'
+});
+
+const hasSubscription = !!subscription;
+
+// B. Daily Meals - ONLY query if NO monthly subscription ✅ OPTIMIZED
+let dailyMeals = [];
+let dailyMealDays = 0;
+let hasDailyMeals = false;
+
+if (!hasSubscription) {
+  // শুধুমাত্র যখন monthly subscription নেই, তখনই daily meal query করো
+  dailyMeals = await Meal.find({
+    user: employeeId,
+    date: { $gte: startDate, $lte: endDate },
+    status: { $in: ['approved', 'served'] },
+    isDeleted: false
+  });
+  
+  dailyMealDays = dailyMeals.length;
+  hasDailyMeals = dailyMealDays > 0;
+} else {
+  // Monthly subscription থাকলে daily meal query করবেনা
+  console.log(`[PAYROLL] Employee ${employeeId} has monthly subscription - skipping daily meal query`);
+}
+
+// C. Monthly Food Cost (always needed for calculation)
+const monthlyFoodCosts = await FoodCost.find({
+  date: { $gte: startDate, $lte: endDate }
+});
+
+const totalMonthlyFoodCost = monthlyFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+const foodCostDays = monthlyFoodCosts.length;
+const averageDailyCost = foodCostDays > 0 ? totalMonthlyFoodCost / foodCostDays : 0;
+
+// D. Active Subscribers count (for monthly subscription calculation)
+const activeSubscribers = await MealSubscription.countDocuments({
+  status: 'active',
+  isDeleted: false,
+  isPaused: false,
+  'monthlyApprovals.month': currentMonth,
+  'monthlyApprovals.status': 'approved'
+});
+     
+// ============ 4. AUTO MEAL DEDUCTION CALCULATION ============
+let mealDeduction = {
+  type: 'none',
+  amount: 0,
+  calculationNote: 'No meal deduction',
+  details: {}
+};
+
+// ✅ FIXED: EXCLUSIVE LOGIC - Monthly subscription takes priority
+if (hasSubscription) {
+  // Case 1: Monthly Subscription (EXCLUSIVE)
+  const deductionPerEmployee = activeSubscribers > 0 ? 
+    Math.round(totalMonthlyFoodCost / activeSubscribers) : 0;
+  
+  mealDeduction = {
+    type: 'monthly_subscription',
+    amount: deductionPerEmployee,
+    calculationNote: `Monthly Subscription: ${totalMonthlyFoodCost} BDT ÷ ${activeSubscribers} subscribers = ${deductionPerEmployee} BDT`,
+    details: {
+      totalMonthlyFoodCost,
+      foodCostDays,
+      averageDailyCost,
+      activeSubscribers,
+      // ✅ IMPORTANT: Daily meals ignored when monthly subscription exists
+      dailyMealsIgnored: hasDailyMeals,
+      ignoredDailyMealDays: dailyMealDays,
+      note: hasDailyMeals ? 
+        `Daily meals (${dailyMealDays} days) ignored due to monthly subscription` : 
+        'No daily meals to ignore'
     }
-    // Case 2: Daily Meal (SEMI-AUTO)
-    else if (hasDailyMeals && dailyMealRate > 0) {
-      const totalAmount = dailyMealDays * parseFloat(dailyMealRate);
-      
-      mealDeduction = {
-        type: 'daily_meal',
-        amount: totalAmount,
-        calculationNote: `${dailyMealDays} days × ${dailyMealRate} BDT = ${totalAmount} BDT`,
-        details: {
-          mealDays: dailyMealDays,
-          dailyRate: dailyMealRate,
-          calculation: `${dailyMealDays} × ${dailyMealRate}`
-        }
-      };
+  };
+  
+  // ✅ Important: Add warning if daily meals exist but ignored
+  if (hasDailyMeals) {
+    console.warn(`Employee ${employeeId} has monthly subscription (${deductionPerEmployee} BDT) - ${dailyMealDays} daily meals ignored`);
+  }
+} 
+else if (hasDailyMeals && dailyMealRate > 0) {
+  // Case 2: Daily Meal (ONLY when NO monthly subscription)
+  const totalAmount = dailyMealDays * parseFloat(dailyMealRate);
+  
+  mealDeduction = {
+    type: 'daily_meal',
+    amount: totalAmount,
+    calculationNote: `Daily Meal: ${dailyMealDays} days × ${dailyMealRate} BDT = ${totalAmount} BDT`,
+    details: {
+      mealDays: dailyMealDays,
+      dailyRate: dailyMealRate,
+      calculation: `${dailyMealDays} × ${dailyMealRate}`,
+      monthlySubscriptionExists: false,
+      note: 'Applied because no monthly subscription'
     }
+  };
+} 
+else {
+  // Case 3: No meal system at all
+  mealDeduction = {
+    type: 'none',
+    amount: 0,
+    calculationNote: 'No meal subscription or daily meals',
+    details: {
+      monthlySubscriptionExists: hasSubscription,
+      dailyMealsExist: hasDailyMeals,
+      note: hasSubscription ? 'Monthly subscription found but no active approval' : 
+            hasDailyMeals ? 'Daily meals found but no rate provided' : 
+            'No meal records found'
+    }
+  };
+}
     
     // ============ 5. ONSITE BENEFITS CALCULATION ============
     let onsiteBenefitsDetails = {
