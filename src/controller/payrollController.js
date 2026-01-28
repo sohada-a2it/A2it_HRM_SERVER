@@ -3133,8 +3133,11 @@ exports.updatePayroll = async (req, res) => {
     const {
       monthlySalary,
       overtime,
+      overtimeHours,
       bonus,
+      bonusType = 'other_edit',
       allowance,
+      allowanceType = 'other_edit',
       dailyMealRate,
       manualMealAmount,
       mealDeduction,
@@ -3145,20 +3148,42 @@ exports.updatePayroll = async (req, res) => {
 
     console.log(`🔄 Updating payroll: ${id}`, req.body);
 
+    // Validate ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid payroll ID'
+      });
+    }
+
     const payroll = await Payroll.findById(id);
     
-    if (!payroll || payroll.isDeleted) {
+    if (!payroll) {
       return res.status(404).json({
         status: 'fail',
         message: 'Payroll not found'
       });
     }
 
+    if (payroll.isDeleted) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll has been deleted'
+      });
+    }
+
     // Check if payroll is already paid/accepted
-    if (payroll.status === 'Paid' || payroll.employeeAccepted?.accepted) {
+    if (payroll.status === 'Paid') {
       return res.status(400).json({
         status: 'fail',
-        message: 'Cannot edit paid or accepted payroll'
+        message: 'Cannot edit paid payroll'
+      });
+    }
+
+    if (payroll.employeeAccepted?.accepted) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Cannot edit accepted payroll'
       });
     }
 
@@ -3166,136 +3191,178 @@ exports.updatePayroll = async (req, res) => {
     const originalData = {
       salary: payroll.salaryDetails?.monthlySalary || 0,
       overtime: payroll.earnings?.overtime?.amount || 0,
+      overtimeHours: payroll.earnings?.overtime?.hours || 0,
       bonus: payroll.earnings?.bonus?.amount || 0,
+      bonusType: payroll.earnings?.bonus?.type || 'none',
       allowance: payroll.earnings?.allowance?.amount || 0,
-      mealDeduction: payroll.mealSystemData?.mealDeduction?.amount || 0
+      allowanceType: payroll.earnings?.allowance?.type || 'none',
+      mealDeduction: payroll.mealDeduction?.totalDeductionAmount || 
+                    payroll.foodCostDetails?.totalFoodDeduction || 0
     };
 
-    // Update manual inputs
+    // Parse input values
     const updates = {
-      monthlySalary: parseInt(monthlySalary) || originalData.salary,
-      overtime: parseInt(overtime) || 0,
-      bonus: parseInt(bonus) || 0,
-      allowance: parseInt(allowance) || 0,
-      dailyMealRate: parseFloat(dailyMealRate) || 0,
-      manualMealAmount: parseFloat(manualMealAmount) || 0,
-      mealDeduction: parseFloat(mealDeduction) || 0,
+      monthlySalary: monthlySalary !== undefined ? parseInt(monthlySalary) : payroll.salaryDetails?.monthlySalary,
+      overtime: overtime !== undefined ? parseInt(overtime) : 0,
+      overtimeHours: overtimeHours !== undefined ? parseInt(overtimeHours) : 0,
+      bonus: bonus !== undefined ? parseInt(bonus) : 0,
+      bonusType: bonusType || 'other_edit',
+      allowance: allowance !== undefined ? parseInt(allowance) : 0,
+      allowanceType: allowanceType || 'other_edit',
+      dailyMealRate: dailyMealRate !== undefined ? parseFloat(dailyMealRate) : 0,
+      manualMealAmount: manualMealAmount !== undefined ? parseFloat(manualMealAmount) : 0,
+      mealDeduction: mealDeduction !== undefined ? parseFloat(mealDeduction) : 0,
       mealDeductionType: mealDeductionType || 'none',
       notes: notes || payroll.notes
     };
 
-    // Ensure salary details exist
+    // Ensure all required objects exist
     if (!payroll.salaryDetails) payroll.salaryDetails = {};
     if (!payroll.earnings) payroll.earnings = {};
+    if (!payroll.earnings.overtime) payroll.earnings.overtime = {};
+    if (!payroll.earnings.bonus) payroll.earnings.bonus = {};
+    if (!payroll.earnings.allowance) payroll.earnings.allowance = {};
     if (!payroll.manualInputs) payroll.manualInputs = {};
+    if (!payroll.mealDeduction) payroll.mealDeduction = {};
     if (!payroll.mealSystemData) payroll.mealSystemData = {};
+    if (!payroll.foodCostDetails) payroll.foodCostDetails = {};
+    if (!payroll.auditTrail) payroll.auditTrail = [];
+    if (!payroll.metadata) payroll.metadata = {};
 
-    // Update payroll document
-    payroll.salaryDetails.monthlySalary = updates.monthlySalary;
-    
-    // Update earnings
-    payroll.earnings.overtime = payroll.earnings.overtime || {};
-    payroll.earnings.overtime.amount = updates.overtime;
-    payroll.earnings.overtime.source = updates.overtime > 0 ? 'manual' : 'none';
-    payroll.earnings.overtime.description = updates.overtime > 0 ? 'Updated by admin' : '';
-    
-    payroll.earnings.bonus = payroll.earnings.bonus || {};
-    payroll.earnings.bonus.amount = updates.bonus;
-    payroll.earnings.bonus.type = updates.bonus > 0 ? 'other_edit' : 'none';
-    payroll.earnings.bonus.description = updates.bonus > 0 ? 'Updated by admin' : '';
-    
-    payroll.earnings.allowance = payroll.earnings.allowance || {};
-    payroll.earnings.allowance.amount = updates.allowance;
-    payroll.earnings.allowance.type = updates.allowance > 0 ? 'other_edit' : 'none';
-    payroll.earnings.allowance.description = updates.allowance > 0 ? 'Updated by admin' : '';
+    // Update salary details
+    if (updates.monthlySalary !== undefined) {
+      payroll.salaryDetails.monthlySalary = updates.monthlySalary;
+    }
 
-    // Update meal system data if provided
-    if (updates.mealDeduction > 0 || updates.mealDeductionType !== 'none') {
-      payroll.mealSystemData.mealDeduction = {
-        type: updates.mealDeductionType,
-        amount: updates.mealDeduction,
-        calculationNote: `Manual update by admin: ${formatCurrency(updates.mealDeduction)}`,
-        details: {
-          ...(payroll.mealSystemData.mealDeduction?.details || {}),
-          manuallyUpdated: true,
-          originalAmount: originalData.mealDeduction,
-          updatedBy: req.user._id,
-          updatedAt: new Date()
-        }
-      };
+    // Update overtime
+    if (updates.overtime !== undefined || updates.overtimeHours !== undefined) {
+      payroll.earnings.overtime.amount = updates.overtime || 0;
+      payroll.earnings.overtime.hours = updates.overtimeHours || 0;
+      payroll.earnings.overtime.source = updates.overtime > 0 ? 'manual' : 'none';
+      payroll.earnings.overtime.description = updates.overtime > 0 ? 'Updated by admin' : '';
+      
+      // Update manual inputs
+      payroll.manualInputs.overtime = updates.overtime || 0;
+      payroll.manualInputs.overtimeHours = updates.overtimeHours || 0;
+    }
+
+    // Update bonus
+    if (updates.bonus !== undefined) {
+      payroll.earnings.bonus.amount = updates.bonus || 0;
+      payroll.earnings.bonus.type = updates.bonus > 0 ? updates.bonusType : 'none';
+      payroll.earnings.bonus.description = updates.bonus > 0 ? 'Updated by admin' : '';
+      payroll.manualInputs.bonus = updates.bonus || 0;
+    }
+
+    // Update allowance
+    if (updates.allowance !== undefined) {
+      payroll.earnings.allowance.amount = updates.allowance || 0;
+      payroll.earnings.allowance.type = updates.allowance > 0 ? updates.allowanceType : 'none';
+      payroll.earnings.allowance.description = updates.allowance > 0 ? 'Updated by admin' : '';
+      payroll.manualInputs.allowance = updates.allowance || 0;
+    }
+
+    // Update meal details
+    if (updates.dailyMealRate !== undefined) {
+      payroll.manualInputs.dailyMealRate = updates.dailyMealRate;
+    }
+
+    // Update meal deduction
+    if (updates.mealDeduction !== undefined || updates.mealDeductionType !== undefined) {
+      payroll.mealDeduction.totalDeductionAmount = updates.mealDeduction || 0;
+      payroll.mealDeduction.deductionType = updates.mealDeductionType;
       
       if (payroll.foodCostDetails) {
-        payroll.foodCostDetails.fixedDeduction = updates.mealDeduction;
-        payroll.foodCostDetails.totalFoodDeduction = updates.mealDeduction;
-        payroll.foodCostDetails.calculationNote = `Manually updated to ${formatCurrency(updates.mealDeduction)} by admin`;
+        payroll.foodCostDetails.fixedDeduction = updates.mealDeduction || 0;
+        payroll.foodCostDetails.totalFoodDeduction = updates.mealDeduction || 0;
+        payroll.foodCostDetails.calculationNote = updates.mealDeduction > 0 
+          ? `Manually updated to ${formatCurrency(updates.mealDeduction)} by admin`
+          : 'Manual adjustment removed';
       }
     }
 
     // Update notes
-    if (updates.notes) {
+    if (updates.notes !== undefined) {
       payroll.notes = updates.notes;
     }
 
-    // Update manual inputs
-    payroll.manualInputs.overtime = updates.overtime;
-    payroll.manualInputs.bonus = updates.bonus;
-    payroll.manualInputs.allowance = updates.allowance;
-    payroll.manualInputs.dailyMealRate = updates.dailyMealRate;
-    payroll.manualInputs.manualMealAmount = updates.manualMealAmount;
+    // Update manual inputs metadata
     payroll.manualInputs.editedBy = req.user._id;
     payroll.manualInputs.editedAt = new Date();
     payroll.manualInputs.editCount = (payroll.manualInputs.editCount || 0) + 1;
 
     // Recalculate if requested
     if (recalculate) {
-      await recalculatePayrollTotals(payroll, req);
+      await recalculatePayrollTotals(payroll);
     } else {
-      // Just update totals manually
-      await updatePayrollTotals(payroll);
+      updatePayrollTotals(payroll);
     }
 
-    // Add audit trail
-    payroll.auditTrail = payroll.auditTrail || [];
+    // Add audit trail entry
     payroll.auditTrail.push({
       action: 'update',
       performedBy: req.user._id,
       performedAt: new Date(),
       changes: {
-        salary: { from: originalData.salary, to: updates.monthlySalary },
-        overtime: { from: originalData.overtime, to: updates.overtime },
-        bonus: { from: originalData.bonus, to: updates.bonus },
-        allowance: { from: originalData.allowance, to: updates.allowance },
-        mealDeduction: { from: originalData.mealDeduction, to: updates.mealDeduction }
+        salary: { 
+          from: originalData.salary, 
+          to: payroll.salaryDetails.monthlySalary 
+        },
+        overtime: { 
+          from: originalData.overtime, 
+          to: payroll.earnings.overtime.amount 
+        },
+        bonus: { 
+          from: originalData.bonus, 
+          to: payroll.earnings.bonus.amount 
+        },
+        allowance: { 
+          from: originalData.allowance, 
+          to: payroll.earnings.allowance.amount 
+        },
+        mealDeduction: { 
+          from: originalData.mealDeduction, 
+          to: payroll.mealDeduction.totalDeductionAmount 
+        }
       },
-      notes: 'Manual update by admin'
+      notes: 'Manual update by admin',
+      recalculated: recalculate
     });
 
     // Update metadata
-    payroll.metadata = payroll.metadata || {};
     payroll.metadata.lastEdited = new Date();
     payroll.metadata.editedBy = req.user._id;
     payroll.metadata.isEdited = true;
 
     await payroll.save();
 
-    console.log('✅ Payroll updated successfully');
+    console.log('✅ Payroll updated successfully:', payroll._id);
 
     res.status(200).json({
       status: 'success',
       message: 'Payroll updated successfully',
       data: {
         payrollId: payroll._id,
+        employee: {
+          name: payroll.employeeName,
+          id: payroll.employeeId
+        },
+        period: {
+          month: payroll.month,
+          year: payroll.year
+        },
         changes: {
-          salary: updates.monthlySalary,
-          overtime: updates.overtime,
-          bonus: updates.bonus,
-          allowance: updates.allowance,
-          mealDeduction: updates.mealDeduction
+          salary: payroll.salaryDetails.monthlySalary,
+          overtime: payroll.earnings.overtime.amount,
+          bonus: payroll.earnings.bonus.amount,
+          allowance: payroll.earnings.allowance.amount,
+          mealDeduction: payroll.mealDeduction.totalDeductionAmount
         },
         summary: {
-          grossEarnings: payroll.summary?.grossEarnings || 0,
-          totalDeductions: payroll.summary?.totalDeductions || 0,
-          netPayable: payroll.summary?.netPayable || 0
+          grossEarnings: payroll.summary.grossEarnings,
+          totalDeductions: payroll.summary.totalDeductions,
+          netPayable: payroll.summary.netPayable,
+          payableDays: payroll.summary.payableDays
         }
       }
     });

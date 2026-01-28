@@ -743,7 +743,11 @@ const payrollSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
- 
+  // Metadata-এ employeeAccepted field যোগ করুন:
+employeeAccepted: {
+  type: Boolean,
+  default: false
+},
   
   // ========== UPDATED SUMMARY ==========
   summary: {
