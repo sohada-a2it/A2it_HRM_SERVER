@@ -268,7 +268,7 @@ const payrollSchema = new mongoose.Schema({
       },
       type: {
         type: String,
-        enum: ['festival', 'performance', 'special', 'other', 'none'],
+        enum: ['festival', 'performance', 'special', 'other', 'none','other_edit', 'admin_edit'],
         default: 'none'
       },
       description: {
@@ -286,7 +286,7 @@ const payrollSchema = new mongoose.Schema({
       },
       type: {
         type: String,
-        enum: ['travel', 'food', 'housing', 'medical', 'other', 'none'],
+        enum: ['travel', 'food', 'housing', 'medical', 'other', 'none','other_edit'],
         default: 'none'
       },
       description: {
