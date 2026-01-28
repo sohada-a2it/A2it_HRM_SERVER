@@ -7,7 +7,9 @@ const OfficeSchedule = require('../models/OfficeScheduleModel');
 const FoodCost = require('../models/foodCostModel'); 
 const Meal = require('../models/mealModel');
 const MealSubscription = require('../models/subscriptionMealModel');
+
 // ========== HELPER FUNCTIONS ==========
+
 // Helper function for currency formatting
 const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-BD', {
@@ -17,6 +19,16 @@ const formatCurrency = (amount) => {
     maximumFractionDigits: 0
   }).format(amount || 0).replace('BDT', '৳');
 };
+
+// Get month name
+const getMonthName = (month) => {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return months[month - 1] || '';
+};
+
 // Helper function: Calculate food cost deduction
 const calculateFoodCostDeduction = async (month, year) => {
   try {
@@ -376,6 +388,7 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
     
     // OPTION A: Net payable minimum 0
     const netPayable = Math.max(0, totalEarnings - totalDeductions); 
+    
     // 8. Prepare result
     return {
       employeeDetails: {
@@ -470,6 +483,188 @@ const calculatePayroll = async (employeeId, monthlySalary, month, year, manualIn
   }
 };
 
+// Pre-calculation display function
+const displayCalculationDetails = (calculationData) => {
+  return {
+    preview: true,
+    calculationDetails: {
+      employee: {
+        name: calculationData.employeeDetails?.name,
+        employeeId: calculationData.employeeDetails?.employeeId,
+        department: calculationData.employeeDetails?.department,
+        designation: calculationData.employeeDetails?.designation
+      },
+      period: {
+        month: calculationData.period?.month,
+        year: calculationData.period?.year,
+        monthName: getMonthName(calculationData.period?.month),
+        startDate: calculationData.period?.startDate,
+        endDate: calculationData.period?.endDate
+      },
+      salary: {
+        monthly: calculationData.rates?.monthlySalary,
+        dailyRate: calculationData.rates?.dailyRate,
+        hourlyRate: calculationData.rates?.hourlyRate,
+        overtimeRate: calculationData.rates?.overtimeRate
+      },
+      attendance: {
+        totalWorkingDays: calculationData.attendance?.totalWorkingDays,
+        presentDays: calculationData.attendance?.presentDays,
+        absentDays: calculationData.attendance?.absentDays,
+        leaveDays: calculationData.attendance?.leaveDays,
+        lateDays: calculationData.attendance?.lateDays,
+        halfDays: calculationData.attendance?.halfDays,
+        holidays: calculationData.attendance?.holidays,
+        weeklyOffs: calculationData.attendance?.weeklyOffs
+      },
+      earnings: {
+        basicPay: calculationData.calculations?.basicPay,
+        overtime: calculationData.calculations?.overtime?.amount || 0,
+        bonus: calculationData.manualInputs?.bonus || 0,
+        allowance: calculationData.manualInputs?.allowance || 0,
+        total: calculationData.calculations?.totals?.earnings
+      },
+      deductions: {
+        late: calculationData.calculations?.deductions?.late?.amount || 0,
+        absent: calculationData.calculations?.deductions?.absent?.amount || 0,
+        leave: calculationData.calculations?.deductions?.leave?.amount || 0,
+        halfDay: calculationData.calculations?.deductions?.halfDay?.amount || 0,
+        total: calculationData.calculations?.deductions?.actualTotal || 0,
+        capped: calculationData.calculations?.deductions?.isCapped || false,
+        cappedAmount: calculationData.calculations?.deductions?.cappedAmount || 0
+      },
+      mealDeduction: {
+        type: 'none',
+        amount: 0
+      },
+      onsiteBenefits: {
+        included: false,
+        serviceCharge: 0,
+        teaAllowance: 0,
+        netEffect: 0
+      },
+      summary: {
+        grossEarnings: calculationData.calculations?.totals?.earnings,
+        totalDeductions: calculationData.calculations?.deductions?.actualTotal,
+        netPayable: calculationData.calculations?.totals?.netPayable
+      },
+      calculationNotes: {
+        basis: calculationData.period?.calculationBasis || '23 days fixed calculation',
+        deductionRules: '3 lates = 1 day deduction, 1 absent/leave = 1 day deduction',
+        holidayRule: 'Holidays and weekly offs not deducted'
+      }
+    }
+  };
+};
+
+// Employee acceptance এর জন্য নতুন ফাংশন
+const handleEmployeeAcceptance = async (payrollId, employeeId, userData) => {
+  try {
+    const payroll = await Payroll.findById(payrollId);
+    if (!payroll) {
+      throw new Error('Payroll not found');
+    }
+    
+    // Verify ownership
+    if (payroll.employee.toString() !== employeeId.toString()) {
+      throw new Error('You can only accept your own payroll');
+    }
+    
+    // Check if already accepted
+    if (payroll.employeeAccepted?.accepted) {
+      throw new Error('Payroll already accepted');
+    }
+    
+    // Update payroll status and acceptance info
+    payroll.status = 'Paid';
+    payroll.employeeAccepted = {
+      accepted: true,
+      acceptedAt: new Date(),
+      acceptedBy: employeeId,
+      employeeName: userData.name || `${userData.firstName} ${userData.lastName}`,
+      employeeId: userData.employeeId
+    };
+    
+    // Add payment info
+    payroll.payment = {
+      paymentDate: new Date(),
+      paymentMethod: 'Employee Accepted',
+      transactionId: `EMP_ACCEPT_${Date.now()}_${employeeId}`,
+      bankAccount: 'Employee Acceptance',
+      paidBy: employeeId,
+      paymentNotes: 'Payroll accepted by employee'
+    };
+    
+    // Update metadata
+    payroll.metadata.employeeAccepted = true;
+    payroll.metadata.acceptedVia = 'employee_portal';
+    payroll.metadata.acceptedAt = new Date();
+    
+    // Mark as modified and save
+    payroll.markModified('employeeAccepted');
+    payroll.markModified('payment');
+    payroll.markModified('metadata');
+    
+    await payroll.save();
+    
+    return payroll;
+  } catch (error) {
+    console.error('Employee acceptance error:', error);
+    throw error;
+  }
+};
+
+// Calculate onsite benefits for payroll
+exports.calculateOnsiteBenefitsForPayroll = async (employeeId, month, year, attendanceData) => {
+  try {
+    const employee = await User.findById(employeeId);
+    
+    // Check if employee is onsite
+    if (employee.workLocationType !== 'onsite') {
+      return {
+        deduction: 0,
+        allowance: 0,
+        presentDays: 0,
+        netEffect: 0,
+        calculationNote: 'Not an onsite employee'
+      };
+    }
+    
+    const presentDays = attendanceData.presentDays || 0;
+    const halfDays = attendanceData.halfDays || 0;
+    
+    // Calculate eligible days
+    const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
+    const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(halfDays / 2) : 0);
+    
+    // Get rates from employee data
+    const fixedDeduction = employee.onsiteBenefits?.fixedDeduction || 500;
+    const dailyRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;
+    
+    // Calculate benefits
+    const allowance = eligibleDays * dailyRate;
+    const deduction = fixedDeduction;
+    const netEffect = allowance - deduction;
+    
+    return {
+      deduction: deduction,
+      allowance: allowance,
+      presentDays: eligibleDays,
+      netEffect: netEffect,
+      calculationNote: `Onsite Benefits: ${eligibleDays} days × ${dailyRate} BDT = ${allowance} - ${deduction} deduction = ${netEffect} BDT`
+    };
+  } catch (error) {
+    console.error('Error calculating onsite benefits:', error);
+    return {
+      deduction: 0,
+      allowance: 0,
+      presentDays: 0,
+      netEffect: 0,
+      calculationNote: 'Error in calculation'
+    };
+  }
+};
+
 // ========== CONTROLLER FUNCTIONS ==========
 
 // 1. Calculate Payroll (Preview)
@@ -508,10 +703,8 @@ exports.calculatePayroll = async (req, res) => {
   }
 };
 
-// 2. Create Payroll
-// controllers/payrollController.js - এই function-এ updates করুন
-
-exports.createPayroll = async (req, res) => {
+// 2. Preview Payroll Calculation
+exports.previewPayroll = async (req, res) => {
   try {
     const {
       employeeId,
@@ -521,31 +714,14 @@ exports.createPayroll = async (req, res) => {
       overtime = 0,
       bonus = 0,
       allowance = 0,
-      notes = '',
-      // Meal System - নতুন fields
-      dailyMealRate = 0 // শুধু daily meal এর জন্য
+      dailyMealRate = 0
     } = req.body;
     
-    // ============ 1. VALIDATION ============
+    // Validation
     if (!employeeId || !month || !year || !monthlySalary) {
       return res.status(400).json({
         status: 'fail',
         message: 'Employee ID, month, year, and monthly salary are required'
-      });
-    }
-    
-    // Check if payroll exists
-    const existingPayroll = await Payroll.findOne({
-      employee: employeeId,
-      month: parseInt(month),
-      year: parseInt(year),
-      isDeleted: false
-    });
-    
-    if (existingPayroll) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Payroll already exists for this employee and month'
       });
     }
     
@@ -558,7 +734,212 @@ exports.createPayroll = async (req, res) => {
       });
     }
     
-    // ============ 2. AUTO LOAD MEAL DATA ============
+    // Calculate payroll
+    const calculation = await calculatePayroll(
+      employeeId,
+      parseInt(monthlySalary),
+      parseInt(month),
+      parseInt(year),
+      { overtime, bonus, allowance }
+    );
+    
+    // Check meal system
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
+    
+    // Meal system check
+    const subscription = await MealSubscription.findOne({
+      user: employeeId,
+      isDeleted: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'approved'
+    });
+    
+    const hasSubscription = !!subscription;
+    
+    const dailyMeals = await Meal.find({
+      user: employeeId,
+      date: { $gte: startDate, $lte: endDate },
+      status: { $in: ['approved', 'served'] },
+      isDeleted: false
+    });
+    
+    const dailyMealDays = dailyMeals.length;
+    const hasDailyMeals = dailyMealDays > 0;
+    
+    // Food cost calculation
+    const monthlyFoodCosts = await FoodCost.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    
+    const totalMonthlyFoodCost = monthlyFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    const activeSubscribers = await MealSubscription.countDocuments({
+      status: 'active',
+      isDeleted: false,
+      isPaused: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'approved'
+    });
+    
+    // Meal deduction
+    let mealDeduction = { type: 'none', amount: 0 };
+    
+    if (hasSubscription) {
+      const deductionPerEmployee = activeSubscribers > 0 ? 
+        Math.round(totalMonthlyFoodCost / activeSubscribers) : 0;
+      mealDeduction = { type: 'monthly_subscription', amount: deductionPerEmployee };
+    } else if (hasDailyMeals && dailyMealRate > 0) {
+      const totalAmount = dailyMealDays * parseFloat(dailyMealRate);
+      mealDeduction = { type: 'daily_meal', amount: totalAmount };
+    }
+    
+    // Onsite benefits
+    let onsiteBenefits = { included: false, serviceCharge: 0, teaAllowance: 0, netEffect: 0 };
+    
+    if (employee.workLocationType === 'onsite' && employee.role === 'employee') {
+      const presentDays = calculation.attendance.presentDays || 0;
+      const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
+      const serviceCharge = employee.onsiteBenefits?.serviceCharge || 500;
+      const teaAllowanceRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;
+      
+      const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(calculation.attendance.halfDays / 2) : 0);
+      const teaAllowance = eligibleDays * teaAllowanceRate;
+      const netOnsiteEffect = teaAllowance - serviceCharge;
+      
+      onsiteBenefits = {
+        included: true,
+        serviceCharge,
+        teaAllowance,
+        netEffect: netOnsiteEffect
+      };
+    }
+    
+    // Final calculation
+    const totalEarnings = calculation.calculations.basicPay + 
+                         parseInt(overtime) + 
+                         parseInt(bonus) + 
+                         parseInt(allowance) +
+                         onsiteBenefits.teaAllowance;
+    
+    const totalDeductions = calculation.calculations.deductions.actualTotal + 
+                           mealDeduction.amount +
+                           onsiteBenefits.serviceCharge;
+    
+    const netPayable = Math.max(0, totalEarnings - totalDeductions);
+    
+    const previewData = {
+      ...displayCalculationDetails(calculation).calculationDetails,
+      mealDeduction,
+      onsiteBenefits,
+      finalSummary: {
+        grossEarnings: totalEarnings,
+        totalDeductions,
+        netPayable,
+        status: netPayable <= 0 ? 'INVALID - Zero or Negative' : 'VALID'
+      },
+      warnings: []
+    };
+    
+    if (calculation.calculations.deductions.isCapped) {
+      previewData.warnings.push(`Deductions capped at ${formatCurrency(calculation.rates.monthlySalary)}`);
+    }
+    
+    if (onsiteBenefits.included) {
+      previewData.warnings.push(`Onsite benefits: ${onsiteBenefits.teaAllowance} - ${onsiteBenefits.serviceCharge} = ${onsiteBenefits.netEffect} BDT net`);
+    }
+    
+    if (mealDeduction.type !== 'none') {
+      previewData.warnings.push(`Meal deduction: ${mealDeduction.amount} BDT (${mealDeduction.type})`);
+    }
+    
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll calculation preview',
+      preview: true,
+      data: previewData
+    });
+    
+  } catch (error) {
+    console.error('Preview payroll error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
+
+// 3. Create Payroll 
+exports.createPayroll = async (req, res) => {
+  try {
+    const {
+      employeeId,
+      month,
+      year,
+      monthlySalary,
+      overtime = 0,
+      bonus = 0,
+      allowance = 0,
+      notes = '',
+      dailyMealRate = 0,
+      preview = false
+    } = req.body;
+    
+    // ============ 1. VALIDATION ============
+    if (!employeeId || !month || !year || !monthlySalary) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Employee ID, month, year, and monthly salary are required'
+      });
+    }
+    
+    // Check if payroll exists (preview mode হলে skip করুন)
+    if (!preview) {
+      const existingPayroll = await Payroll.findOne({
+        employee: employeeId,
+        month: parseInt(month),
+        year: parseInt(year),
+        isDeleted: false
+      });
+      
+      if (existingPayroll) {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'Payroll already exists for this employee and month'
+        });
+      }
+    }
+    
+    // Get employee
+    const employee = await User.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Employee not found'
+      });
+    }
+    
+    // ============ 2. CALCULATION PREVIEW (মিডলওয়্যার) ============
+    // First calculate without saving
+    const calculation = await calculatePayroll(
+      employeeId,
+      parseInt(monthlySalary),
+      parseInt(month),
+      parseInt(year),
+      { overtime, bonus, allowance }
+    );
+    
+    // If preview mode, return calculation details only
+    if (preview) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'Payroll calculation preview',
+        preview: true,
+        data: displayCalculationDetails(calculation)
+      });
+    }
+    
+    // ============ 3. AUTO LOAD MEAL DATA ============
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
     const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
@@ -602,7 +983,7 @@ exports.createPayroll = async (req, res) => {
       'monthlyApprovals.status': 'approved'
     });
     
-    // ============ 3. AUTO MEAL DEDUCTION CALCULATION ============
+    // ============ 4. AUTO MEAL DEDUCTION CALCULATION ============
     let mealDeduction = {
       type: 'none',
       amount: 0,
@@ -643,15 +1024,6 @@ exports.createPayroll = async (req, res) => {
         }
       };
     }
-    
-    // ============ 4. REGULAR PAYROLL CALCULATION ============
-    const calculation = await calculatePayroll(
-      employeeId,
-      parseInt(monthlySalary),
-      parseInt(month),
-      parseInt(year),
-      { overtime, bonus, allowance }
-    );
     
     // ============ 5. ONSITE BENEFITS CALCULATION ============
     let onsiteBenefitsDetails = {
@@ -698,9 +1070,6 @@ exports.createPayroll = async (req, res) => {
         }
       };
       
-      // Add tea allowance to total allowance
-      // calculation.calculations.allowance = (calculation.calculations.allowance || 0) + teaAllowance;
-      
       // Add service charge to total deductions
       calculation.calculations.deductions.actualTotal += serviceChargeDeduction;
       calculation.calculations.deductions.calculatedTotal += serviceChargeDeduction;
@@ -723,8 +1092,8 @@ exports.createPayroll = async (req, res) => {
     // ============ 6. FINAL CALCULATION ============
     const totalEarnings = calculation.calculations.basicPay + 
                          calculation.calculations.overtime.amount + 
-                         calculation.calculations.bonus 
-                        //  calculation.calculations.allowance;
+                         calculation.calculations.bonus + 
+                         calculation.calculations.allowance;
     
     const totalDeductions = calculation.calculations.deductions.actualTotal + 
                            mealDeduction.amount;
@@ -881,7 +1250,6 @@ exports.createPayroll = async (req, res) => {
           netPayableRule: "Net payable minimum 0",
           serviceChargeRule: "Fixed 500 BDT service charge for onsite employees",
           teaAllowanceRule: "10 BDT tea allowance per present day for onsite employees",
-          // নতুন Rule যোগ করা হয়েছে
           mealDeductionRule: mealDeduction.type === 'monthly_subscription' ? 
             `Food cost (${totalMonthlyFoodCost} BDT) ÷ ${activeSubscribers} active subscribers` :
             mealDeduction.type === 'daily_meal' ?
@@ -906,7 +1274,6 @@ exports.createPayroll = async (req, res) => {
         onsiteBenefitsApplied: employee.workLocationType === 'onsite',
         onsiteBenefitsDetails: onsiteBenefitsDetails,
         
-        // নতুন ফিল্ড যোগ করুন
         onsiteBreakdown: {
           teaAllowance: onsiteBenefitsDetails.teaAllowance,
           serviceCharge: onsiteBenefitsDetails.serviceCharge,
@@ -916,7 +1283,6 @@ exports.createPayroll = async (req, res) => {
           netPayable: netPayable
         },
         
-        // Meal System Summary
         mealSystemSummary: {
           type: mealDeduction.type,
           deduction: mealDeduction.amount,
@@ -943,7 +1309,6 @@ exports.createPayroll = async (req, res) => {
         calculationNote: calculation.notes?.calculationNote || '23 days fixed calculation basis',
         deductionNote: calculation.notes?.deductionNote || '',
         onsiteBenefitsNote: onsiteBenefitsDetails.calculationNote,
-        // নতুন Note যোগ করা হয়েছে
         mealDeductionNote: mealDeduction.calculationNote
       },
       
@@ -952,7 +1317,7 @@ exports.createPayroll = async (req, res) => {
         overtimeHours: 0,
         bonus: parseInt(bonus),
         allowance: parseInt(allowance),
-        dailyMealRate: parseFloat(dailyMealRate) || 0, // নতুন field যোগ করা হয়েছে
+        dailyMealRate: parseFloat(dailyMealRate) || 0,
         enteredBy: req.user._id,
         enteredAt: new Date()
       },
@@ -967,8 +1332,8 @@ exports.createPayroll = async (req, res) => {
           'holidays', 
           'office_schedule', 
           'manual_input',
-          'meal_system', // নতুন data source
-          'food_cost_system' // নতুন data source
+          'meal_system',
+          'food_cost_system'
         ],
         calculationNotes: 'Auto-calculated with 23 days fixed basis + Deduction Cap + Onsite Benefits + Meal System'
       },
@@ -980,11 +1345,11 @@ exports.createPayroll = async (req, res) => {
         deductionCapApplied: calculation.calculations.deductions.isCapped,
         attendanceBased: true,
         fixed23Days: true,
-        version: '4.0', // Updated version
+        version: '4.0',
         safetyRules: ['Deduction cap = monthly salary', 'Net payable minimum 0'],
         onsiteBenefitsIncluded: employee.workLocationType === 'onsite',
         workLocationType: employee.workLocationType,
-        mealSystemIncluded: true, // নতুন flag
+        mealSystemIncluded: true,
         foodCostIncluded: mealDeduction.type === 'monthly_subscription',
         foodCostBillsCount: monthlyFoodCosts.length,
         activeSubscribersCount: activeSubscribers,
@@ -1014,7 +1379,6 @@ exports.createPayroll = async (req, res) => {
         employee: payroll.employeeName,
         netPayable: payroll.summary.netPayable,
         
-        // Meal System Details
         mealSystem: {
           status: hasSubscription ? 'Monthly Subscription' : 
                  hasDailyMeals ? 'Daily Meals' : 'No Meals',
@@ -1081,16 +1445,7 @@ exports.createPayroll = async (req, res) => {
   }
 };
 
-// Helper function to format currency
-// const formatCurrency = (amount) => {
-//   return new Intl.NumberFormat('en-BD', {
-//     style: 'currency',
-//     currency: 'BDT',
-//     minimumFractionDigits: 2
-//   }).format(amount);
-// };
-
-// 3. Get All Payrolls
+// 4. Get All Payrolls
 exports.getAllPayrolls = async (req, res) => {
   try {
     const { month, year, status, department, page = 1, limit = 20 } = req.query;
@@ -1173,7 +1528,7 @@ exports.getAllPayrolls = async (req, res) => {
   }
 };
 
-// 4. Get Payroll by ID
+// 5. Get Payroll by ID
 exports.getPayrollById = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id)
@@ -1203,7 +1558,7 @@ exports.getPayrollById = async (req, res) => {
   }
 };
 
-// 5. Update Payroll Status
+// 6. Update Payroll Status
 exports.updatePayrollStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1258,7 +1613,7 @@ exports.updatePayrollStatus = async (req, res) => {
   }
 };
 
-// 6. Delete Payroll (Hard Delete - Permanent)
+// 7. Delete Payroll (Hard Delete - Permanent)
 exports.deletePayroll = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id);
@@ -1287,9 +1642,7 @@ exports.deletePayroll = async (req, res) => {
   }
 };
 
-// payrollController.js-এ
-
-// 7A. Get Employee Payrolls (Admin/HR দেখার জন্য)
+// 8A. Get Employee Payrolls (Admin/HR দেখার জন্য)
 exports.getEmployeePayrolls = async (req, res) => {
   try {
     const { userId } = req.params; // URL থেকে employeeId নিচ্ছে
@@ -1365,11 +1718,11 @@ exports.getEmployeePayrolls = async (req, res) => {
   }
 };
 
-// 7B. Get My Payrolls (Employee নিজের দেখার জন্য)
+// 8B. Get My Payrolls (Employee নিজের দেখার জন্য)
 exports.getMyPayrolls = async (req, res) => {
   try {
     const { year } = req.query;
-    const employeeId = req.user._id; // Logged in user's ID
+    const employeeId = req.user._id;
     
     // Build query - employee নিজের ID
     const query = { 
@@ -1429,23 +1782,11 @@ exports.getMyPayrolls = async (req, res) => {
   }
 };
 
-// 8. Bulk Generate Payrolls
+// 9. Bulk Generate Payrolls
 exports.bulkGeneratePayrolls = async (req, res) => {
   try {
     const { month, year, department } = req.body;
-        // Calculate food cost deduction for all employees
-    let foodCostDeductionMap = {};
     
-    if (includeFoodCost && foodCostBillIds && foodCostBillIds.length > 0) {
-      const foodCostData = await calculateFoodCostDeduction(month, year);
-      
-      if (foodCostData.perEmployeeDeduction > 0) {
-        // Create a map of employee ID to food cost deduction
-        foodCostData.mealEmployees.forEach(emp => {
-          foodCostDeductionMap[emp.id] = foodCostData.perEmployeeDeduction;
-        });
-      }
-    }
     if (!month || !year) {
       return res.status(400).json({
         status: 'fail',
@@ -1474,11 +1815,12 @@ exports.bulkGeneratePayrolls = async (req, res) => {
     for (const employee of employees) {
       try {
         // Check if payroll exists
-        const existing = await Payroll.findByEmployeeAndMonth(
-          employee._id,
-          parseInt(month),
-          parseInt(year)
-        );
+        const existing = await Payroll.findOne({
+          employee: employee._id,
+          month: parseInt(month),
+          year: parseInt(year),
+          isDeleted: false
+        });
         
         if (existing) {
           results.push({
@@ -1671,7 +2013,7 @@ exports.bulkGeneratePayrolls = async (req, res) => {
   }
 };
 
-// 9. Get Payroll Statistics
+// 10. Get Payroll Statistics
 exports.getPayrollStats = async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -1683,7 +2025,25 @@ exports.getPayrollStats = async (req, res) => {
       });
     }
     
-    const stats = await Payroll.getPayrollStats(parseInt(month), parseInt(year));
+    const stats = await Payroll.aggregate([
+      {
+        $match: {
+          month: parseInt(month),
+          year: parseInt(year),
+          isDeleted: false
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalNetPayable: { $sum: '$summary.netPayable' },
+          totalDeductions: { $sum: '$deductions.total' },
+          totalPayrolls: { $sum: 1 },
+          paidAmount: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, '$summary.netPayable', 0] } },
+          pendingAmount: { $sum: { $cond: [{ $eq: ['$status', 'Pending'] }, '$summary.netPayable', 0] } }
+        }
+      }
+    ]);
     
     // Get department-wise breakdown
     const departmentStats = await Payroll.aggregate([
@@ -1717,7 +2077,13 @@ exports.getPayrollStats = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: {
-        ...stats,
+        ...(stats[0] || {
+          totalNetPayable: 0,
+          totalDeductions: 0,
+          totalPayrolls: 0,
+          paidAmount: 0,
+          pendingAmount: 0
+        }),
         departmentStats,
         period: {
           month: parseInt(month),
@@ -1736,7 +2102,7 @@ exports.getPayrollStats = async (req, res) => {
   }
 };
 
-// 10. Export Payroll Data
+// 11. Export Payroll Data
 exports.exportPayrolls = async (req, res) => {
   try {
     const { month, year, format = 'json' } = req.query;
@@ -1806,8 +2172,24 @@ exports.exportPayrolls = async (req, res) => {
           year: parseInt(year),
           monthName: new Date(parseInt(year), parseInt(month) - 1, 1).toLocaleDateString('en-US', { month: 'long' })
         },
-        payrolls: payrolls.map(p => p.getPayrollSlipData()),
-        summary: await Payroll.getPayrollStats(parseInt(month), parseInt(year))
+        payrolls: payrolls,
+        summary: await Payroll.aggregate([
+          {
+            $match: {
+              month: parseInt(month),
+              year: parseInt(year),
+              isDeleted: false
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              totalNetPayable: { $sum: '$summary.netPayable' },
+              totalDeductions: { $sum: '$deductions.total' },
+              totalPayrolls: { $sum: 1 }
+            }
+          }
+        ])
       }
     });
     
@@ -1820,7 +2202,7 @@ exports.exportPayrolls = async (req, res) => {
   }
 };
 
-// 11. Update Manual Inputs
+// 12. Update Manual Inputs
 exports.updateManualInputs = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1877,7 +2259,7 @@ exports.updateManualInputs = async (req, res) => {
   }
 };
 
-// 12. Get Payroll with Manual Overtime Only
+// 13. Get Payroll with Manual Overtime Only
 exports.getPayrollWithManualOvertime = async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -1910,7 +2292,7 @@ exports.getPayrollWithManualOvertime = async (req, res) => {
   }
 };
 
-// 13. Recalculate Payroll (আপডেট লজিক)
+// 14. Recalculate Payroll (আপডেট লজিক)
 exports.recalculatePayroll = async (req, res) => {
   try {
     const { id } = req.params;
@@ -2002,222 +2384,7 @@ exports.recalculatePayroll = async (req, res) => {
   }
 };
 
-// 14. Employee Accept Payroll
-exports.employeeAcceptPayroll = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const employeeId = req.user._id; // Current logged in employee
-    
-    // Find payroll
-    const payroll = await Payroll.findById(id);
-    
-    if (!payroll || payroll.isDeleted) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Payroll not found'
-      });
-    }
-    
-    // Check if payroll belongs to this employee
-    if (payroll.employee.toString() !== employeeId.toString()) {
-      return res.status(403).json({
-        status: 'fail',
-        message: 'You can only accept your own payroll'
-      });
-    }
-    
-    // Check if already paid or accepted
-    if (payroll.status === 'Paid') {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Payroll is already paid'
-      });
-    }
-    
-    // Update status to "Paid" and add employee acceptance info
-    payroll.status = 'Paid';
-    payroll.employeeAccepted = {
-      accepted: true,
-      acceptedAt: new Date(),
-      acceptedBy: employeeId
-    };
-    
-    // Update payment info
-    payroll.payment = {
-      paymentDate: new Date(),
-      paymentMethod: 'Employee Accepted',
-      transactionId: `EMP_ACCEPT_${Date.now()}`,
-      bankAccount: 'Employee Acceptance',
-      paidBy: employeeId,
-      paymentNotes: 'Accepted by employee through portal'
-    };
-    
-    // Add metadata
-    payroll.metadata.employeeAccepted = true;
-    
-    await payroll.save();
-    
-    res.status(200).json({
-      status: 'success',
-      message: 'Payroll accepted successfully. Status updated to "Paid".',
-      data: {
-        payrollId: payroll._id,
-        status: payroll.status,
-        acceptedAt: payroll.employeeAccepted.acceptedAt,
-        netPayable: payroll.summary.netPayable
-      }
-    });
-    
-  } catch (error) {
-    console.error('Employee accept payroll error:', error);
-    res.status(500).json({
-      status: 'fail',
-      message: error.message
-    });
-  }
-};
-
-// 15. Check Employee Acceptance Status
-exports.checkEmployeeAcceptance = async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const payroll = await Payroll.findById(id).select('employeeAccepted status payment employee');
-    
-    if (!payroll) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Payroll not found'
-      });
-    }
-    
-    res.status(200).json({
-      status: 'success',
-      data: {
-        employeeAccepted: payroll.employeeAccepted || { accepted: false },
-        status: payroll.status,
-        paymentDate: payroll.payment?.paymentDate,
-        employeeId: payroll.employee
-      }
-    });
-    
-  } catch (error) {
-    console.error('Check employee acceptance error:', error);
-    res.status(500).json({
-      status: 'fail',
-      message: error.message
-    });
-  }
-};
-exports.calculateOnsiteBenefitsForPayroll = async (employeeId, month, year, attendanceData) => {
-  try {
-    const employee = await User.findById(employeeId);
-    
-    // Check if employee is onsite
-    if (employee.workLocationType !== 'onsite') {
-      return {
-        deduction: 0,
-        allowance: 0,
-        presentDays: 0,
-        netEffect: 0,
-        calculationNote: 'Not an onsite employee'
-      };
-    }
-    
-    const presentDays = attendanceData.presentDays || 0;
-    const halfDays = attendanceData.halfDays || 0;
-    
-    // Calculate eligible days
-    const includeHalfDays = employee.onsiteBenefits?.includeHalfDays !== false;
-    const eligibleDays = presentDays + (includeHalfDays ? Math.ceil(halfDays / 2) : 0);
-    
-    // Get rates from employee data
-    const fixedDeduction = employee.onsiteBenefits?.fixedDeduction || 500;
-    const dailyRate = employee.onsiteBenefits?.dailyAllowanceRate || 10;
-    
-    // Calculate benefits
-    const allowance = eligibleDays * dailyRate;
-    const deduction = fixedDeduction;
-    const netEffect = allowance - deduction;
-    
-    return {
-      deduction: deduction,
-      allowance: allowance,
-      presentDays: eligibleDays,
-      netEffect: netEffect,
-      calculationNote: `Onsite Benefits: ${eligibleDays} days × ${dailyRate} BDT = ${allowance} - ${deduction} deduction = ${netEffect} BDT`
-    };
-  } catch (error) {
-    console.error('Error calculating onsite benefits:', error);
-    return {
-      deduction: 0,
-      allowance: 0,
-      presentDays: 0,
-      netEffect: 0,
-      calculationNote: 'Error in calculation'
-    };
-  }
-}; 
-// controllers/payrollController.js
-
-// Employee acceptance এর জন্য নতুন ফাংশন
-const handleEmployeeAcceptance = async (payrollId, employeeId, userData) => {
-  try {
-    const payroll = await Payroll.findById(payrollId);
-    if (!payroll) {
-      throw new Error('Payroll not found');
-    }
-    
-    // Verify ownership
-    if (payroll.employee.toString() !== employeeId.toString()) {
-      throw new Error('You can only accept your own payroll');
-    }
-    
-    // Check if already accepted
-    if (payroll.employeeAccepted?.accepted) {
-      throw new Error('Payroll already accepted');
-    }
-    
-    // Update payroll status and acceptance info
-    payroll.status = 'Paid';
-    payroll.employeeAccepted = {
-      accepted: true,
-      acceptedAt: new Date(),
-      acceptedBy: employeeId,
-      employeeName: userData.name || `${userData.firstName} ${userData.lastName}`,
-      employeeId: userData.employeeId
-    };
-    
-    // Add payment info
-    payroll.payment = {
-      paymentDate: new Date(),
-      paymentMethod: 'Employee Accepted',
-      transactionId: `EMP_ACCEPT_${Date.now()}_${employeeId}`,
-      bankAccount: 'Employee Acceptance',
-      paidBy: employeeId,
-      paymentNotes: 'Payroll accepted by employee'
-    };
-    
-    // Update metadata
-    payroll.metadata.employeeAccepted = true;
-    payroll.metadata.acceptedVia = 'employee_portal';
-    payroll.metadata.acceptedAt = new Date();
-    
-    // Mark as modified and save
-    payroll.markModified('employeeAccepted');
-    payroll.markModified('payment');
-    payroll.markModified('metadata');
-    
-    await payroll.save();
-    
-    return payroll;
-  } catch (error) {
-    console.error('Employee acceptance error:', error);
-    throw error;
-  }
-};
-
-// Employee acceptance API endpoint আপডেট করুন
+// 15. Employee Accept Payroll
 exports.employeeAcceptPayroll = async (req, res) => {
   try {
     const { id } = req.params;
@@ -2286,7 +2453,40 @@ exports.employeeAcceptPayroll = async (req, res) => {
   }
 };
 
-// Get payroll details for employee - নতুন ফাংশন
+// 16. Check Employee Acceptance Status
+exports.checkEmployeeAcceptance = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const payroll = await Payroll.findById(id).select('employeeAccepted status payment employee');
+    
+    if (!payroll) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+    
+    res.status(200).json({
+      status: 'success',
+      data: {
+        employeeAccepted: payroll.employeeAccepted || { accepted: false },
+        status: payroll.status,
+        paymentDate: payroll.payment?.paymentDate,
+        employeeId: payroll.employee
+      }
+    });
+    
+  } catch (error) {
+    console.error('Check employee acceptance error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
+
+// 17. Get payroll details for employee - নতুন ফাংশন
 exports.getEmployeePayrollDetails = async (req, res) => {
   try {
     const { id } = req.params;
@@ -2396,4 +2596,94 @@ exports.getEmployeePayrollDetails = async (req, res) => {
     });
   }
 };
-module.exports = exports;
+// payrollController.js
+
+exports.getEmployeeMealData = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { month, year } = req.query;
+    
+    if (!employeeId || !month || !year) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Employee ID, month and year are required'
+      });
+    }
+    
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
+    
+    // 1. Check Monthly Subscription
+    const subscription = await MealSubscription.findOne({
+      user: employeeId,
+      isDeleted: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'approved'
+    });
+    
+    const hasMonthlySubscription = !!subscription;
+    
+    // 2. Count Daily Meals
+    const dailyMeals = await Meal.find({
+      user: employeeId,
+      date: { $gte: startDate, $lte: endDate },
+      status: { $in: ['approved', 'served'] },
+      isDeleted: false
+    });
+    
+    const dailyMealDays = dailyMeals.length;
+    
+    // 3. Get Monthly Food Costs
+    const monthlyFoodCosts = await FoodCost.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    
+    const totalMonthlyFoodCost = monthlyFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    const foodCostDays = monthlyFoodCosts.length;
+    const averageDailyCost = foodCostDays > 0 ? totalMonthlyFoodCost / foodCostDays : 0;
+    
+    // 4. Count Active Subscribers (for monthly subscription calculation)
+    const activeSubscribers = await MealSubscription.countDocuments({
+      status: 'active',
+      isDeleted: false,
+      isPaused: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'approved'
+    });
+    
+    // 5. Calculate deduction per employee (if monthly subscription)
+    const deductionPerEmployee = activeSubscribers > 0 ? 
+      Math.round(totalMonthlyFoodCost / activeSubscribers) : 0;
+    
+    res.status(200).json({
+      status: 'success',
+      message: 'Meal data loaded successfully',
+      data: {
+        hasMonthlySubscription,
+        dailyMealDays,
+        monthlyFoodCost: totalMonthlyFoodCost,
+        activeSubscribers,
+        deductionPerEmployee,
+        averageDailyCost: Math.round(averageDailyCost),
+        foodCostDays,
+        mealDetails: {
+          subscriptionPreference: subscription?.preference || 'none',
+          subscriptionStatus: subscription?.status || 'none',
+          dailyMeals: dailyMeals.map(meal => ({
+            date: meal.date,
+            preference: meal.preference,
+            status: meal.status
+          }))
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get employee meal data error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message || 'Failed to load meal data'
+    });
+  }
+};

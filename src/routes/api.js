@@ -456,8 +456,8 @@ router.get('/food-cost/bills',  protect, adminOnly, payrollController.getFoodCos
  // Employee acceptance routes
 router.put('/:id/employee-accept', protect, payrollController.employeeAcceptPayroll);
 router.get('/:id/employee-details', protect, payrollController.getEmployeePayrollDetails);
-
-
+router.post('/preview', protect, adminOnly, payrollController.previewPayroll);
+router.get('/meal-data/:employeeId', protect, payrollController.getEmployeeMealData);
 // =================== SalaryRule Routes ==================== 
 router.get('/active', protect, salaryRuleController.getActiveSalaryRules); 
 router.get('/getSalaryRule', protect, adminOnly, salaryRuleController.getAllSalaryRules);
