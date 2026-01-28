@@ -296,7 +296,7 @@ router.post('/admin/bulk-v2', protect, adminOnly, attendanceController.createBul
 
 // Admin Shift Management Routes
 router.put('/admin/update-shift', protect, adminOnly, attendanceController.updateEmployeeShift);
-router.put('/admin/update-shift-timing', protect, adminOnly, attendanceController.updateEmployeeShiftTiming);
+router.put('/admin/update-shift-timing', protect, adminOnly, attendanceController.updateEmployeeShiftTiming);  
 
 // Admin Trigger Routes
 router.post('/admin/trigger-auto-clockout', protect, adminOnly, attendanceController.triggerAutoClockOut);
@@ -396,14 +396,15 @@ router.post('/auto-mark-absent', protect, async (req, res) => {
 }); 
 
 // ================= Shift ROUTES ================= 
-router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEmployeeShifts); 
-router.post('/admin/assign-shift/:employeeId', protect, adminOnly, userController.assignShiftToEmployee); 
+router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEmployeeShifts);  
 router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetEmployeeShift); 
 router.put('/admin/default-shift', protect, adminOnly, userController.updateDefaultShift); 
 router.get('/admin/shift-history/:employeeId', protect, adminOnly, userController.getEmployeeShiftHistory); 
 router.post('/admin/bulk-assign-shifts',protect, adminOnly, userController.bulkAssignShifts); 
 router.get('/admin/shift-statistics', protect, adminOnly, userController.getShiftStatistics);  
-router.get('/my-shift',protect, userController.getMyShift);
+router.get('/my-shift',protect, userController.getMyShift); 
+router.get('/employee/:employeeId/shift', protect, userController.getEmployeeShift);
+router.put('/employee/:employeeId/shift', protect, adminOnly, userController.updateEmployeeShift);
 
 
 // =================== Leave Routes ====================  
