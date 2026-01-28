@@ -1924,7 +1924,7 @@ exports.adminUpdateUser = async (req, res) => {
   }
 };
 
-// Delete user (admin/super admin only)
+// Delete user (admin/super admin only) 
 exports.deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1946,18 +1946,45 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    // Prevent deleting super admin unless you are super admin
-    if ((user.isSuperAdmin || user.adminLevel === 'super') &&
-      (req.user.adminLevel !== 'super' && !req.user.isSuperAdmin)) {
+    // Get current user
+    const currentUser = await User.findById(req.user._id);
+
+    // Permission check logic
+    let canDelete = false;
+    
+    // Super admin can delete anyone (except themselves - already checked above)
+    if (currentUser.role === 'superAdmin' || currentUser.isSuperAdmin) {
+      canDelete = true;
+    }
+    // Admin can delete employees and moderators only
+    else if (currentUser.role === 'admin') {
+      if (user.role === 'employee' || user.role === 'moderator') {
+        canDelete = true;
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: 'Admin can only delete employees and moderators, not other admins'
+        });
+      }
+    }
+    // Others cannot delete anyone
+    else {
       return res.status(403).json({
         success: false,
-        message: 'Cannot delete super admin without super admin privileges'
+        message: 'You do not have permission to delete users'
+      });
+    }
+
+    if (!canDelete) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to delete this user'
       });
     }
 
     await User.findByIdAndDelete(id);
 
-    // ✅ AuditLog
+    // AuditLog
     await AuditLog.create({
       userId: req.user._id,
       action: "Deleted User",
@@ -1965,21 +1992,11 @@ exports.deleteUser = async (req, res) => {
       details: {
         deletedUserEmail: user.email,
         deletedUserRole: user.role,
-        deletedBy: req.user.email
+        deletedBy: req.user.email,
+        permissionLevel: currentUser.role
       },
       ip: req.ip,
       device: req.headers['user-agent']
-    });
-
-    // ✅ Session activity
-    await addSessionActivity({
-      userId: req.user._id,
-      action: "Deleted User",
-      target: id,
-      details: {
-        email: user.email,
-        role: user.role
-      }
     });
 
     res.status(200).json({
