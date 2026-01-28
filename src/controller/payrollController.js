@@ -7,7 +7,7 @@ const OfficeSchedule = require('../models/OfficeScheduleModel');
 const FoodCost = require('../models/foodCostModel'); 
 const Meal = require('../models/mealModel');
 const MealSubscription = require('../models/subscriptionMealModel');
-
+const mongoose = require('mongoose');
 // ========== HELPER FUNCTIONS ==========
 
 // Helper function for currency formatting
