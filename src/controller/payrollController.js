@@ -3010,14 +3010,18 @@ const updatePayrollTotals = (payroll) => {
     throw error;
   }
 };
+ 
+// ==================== ADMIN EDIT CONTROLLERS ====================
 
-// 19. Get Payroll for Edit (Admin)
+// 1. Get Payroll for Edit (Admin) - FIXED VERSION
 exports.getPayrollForEdit = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    console.log(`🔄 Loading payroll for edit: ${id}`);
 
     const payroll = await Payroll.findById(id)
-      .populate('employee', 'firstName lastName employeeId department designation workLocationType')
+      .populate('employee', 'firstName lastName employeeId department designation workLocationType onsiteBenefits')
       .lean();
 
     if (!payroll || payroll.isDeleted) {
@@ -3035,10 +3039,10 @@ exports.getPayrollForEdit = async (req, res) => {
       payrollId: payroll._id,
       employee: {
         id: payroll.employee?._id || payroll.employee,
-        name: payroll.employeeName,
-        employeeId: payroll.employeeId,
-        department: payroll.department,
-        designation: payroll.designation,
+        name: payroll.employeeName || `${payroll.employee?.firstName || ''} ${payroll.employee?.lastName || ''}`.trim(),
+        employeeId: payroll.employeeId || payroll.employee?.employeeId,
+        department: payroll.department || payroll.employee?.department,
+        designation: payroll.designation || payroll.employee?.designation,
         workLocationType: payroll.employee?.workLocationType || payroll.metadata?.workLocationType
       },
       period: {
@@ -3049,28 +3053,28 @@ exports.getPayrollForEdit = async (req, res) => {
         endDate: payroll.periodEnd
       },
       currentValues: {
-        monthlySalary: payroll.salaryDetails.monthlySalary,
-        overtime: payroll.earnings.overtime.amount,
-        bonus: payroll.earnings.bonus.amount,
-        allowance: payroll.earnings.allowance.amount,
-        dailyMealRate: payroll.manualInputs.dailyMealRate || 0,
-        manualMealAmount: payroll.manualInputs.manualMealAmount || 0,
+        monthlySalary: payroll.salaryDetails?.monthlySalary || 0,
+        overtime: payroll.earnings?.overtime?.amount || 0,
+        bonus: payroll.earnings?.bonus?.amount || 0,
+        allowance: payroll.earnings?.allowance?.amount || 0,
+        dailyMealRate: payroll.manualInputs?.dailyMealRate || 0,
+        manualMealAmount: payroll.manualInputs?.manualMealAmount || 0,
         mealDeduction: payroll.mealSystemData?.mealDeduction?.amount || 0,
         mealDeductionType: payroll.mealSystemData?.mealDeduction?.type || 'none',
         notes: payroll.notes || ''
       },
       attendance: {
-        presentDays: payroll.attendance.presentDays,
-        totalWorkingDays: payroll.attendance.totalWorkingDays,
-        absentDays: payroll.attendance.absentDays,
-        leaveDays: payroll.attendance.leaveDays,
-        lateDays: payroll.attendance.lateDays,
-        halfDays: payroll.attendance.halfDays
+        presentDays: payroll.attendance?.presentDays || 0,
+        totalWorkingDays: payroll.attendance?.totalWorkingDays || 23,
+        absentDays: payroll.attendance?.absentDays || 0,
+        leaveDays: payroll.attendance?.leaveDays || 0,
+        lateDays: payroll.attendance?.lateDays || 0,
+        halfDays: payroll.attendance?.halfDays || 0
       },
       calculation: {
-        dailyRate: payroll.salaryDetails.dailyRate,
-        hourlyRate: payroll.salaryDetails.hourlyRate,
-        overtimeRate: payroll.salaryDetails.overtimeRate
+        dailyRate: payroll.salaryDetails?.dailyRate || 0,
+        hourlyRate: payroll.salaryDetails?.hourlyRate || 0,
+        overtimeRate: payroll.salaryDetails?.overtimeRate || 0
       },
       mealSystem: {
         hasMonthlySubscription: payroll.mealSystemData?.subscriptionStatus || false,
@@ -3086,12 +3090,12 @@ exports.getPayrollForEdit = async (req, res) => {
         netEffect: payroll.onsiteBenefitsDetails?.netEffect || 0
       },
       summary: {
-        grossEarnings: payroll.summary.grossEarnings,
-        totalDeductions: payroll.summary.totalDeductions,
-        netPayable: payroll.summary.netPayable
+        grossEarnings: payroll.summary?.grossEarnings || 0,
+        totalDeductions: payroll.summary?.totalDeductions || 0,
+        netPayable: payroll.summary?.netPayable || 0
       },
       status: {
-        current: payroll.status,
+        current: payroll.status || 'Pending',
         employeeAccepted: payroll.employeeAccepted?.accepted || false,
         canEdit: canEdit,
         editRestriction: canEdit ? null : 'Payroll is paid/accepted and cannot be edited'
@@ -3105,20 +3109,207 @@ exports.getPayrollForEdit = async (req, res) => {
       }
     };
 
+    console.log('✅ Payroll edit data loaded successfully');
+
     res.status(200).json({
       status: 'success',
+      message: 'Payroll data loaded for edit',
       data: editData
     });
 
   } catch (error) {
-    console.error('Get payroll for edit error:', error);
+    console.error('❌ Get payroll for edit error:', error);
     res.status(500).json({
       status: 'fail',
-      message: error.message
+      message: error.message || 'Failed to load payroll for edit'
     });
   }
 };
-// 20. Admin View All Payrolls with Details
+
+// 2. Update Payroll (Admin Edit) - FIXED VERSION
+exports.updatePayroll = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      monthlySalary,
+      overtime,
+      bonus,
+      allowance,
+      dailyMealRate,
+      manualMealAmount,
+      mealDeduction,
+      mealDeductionType,
+      notes,
+      recalculate = true
+    } = req.body;
+
+    console.log(`🔄 Updating payroll: ${id}`, req.body);
+
+    const payroll = await Payroll.findById(id);
+    
+    if (!payroll || payroll.isDeleted) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+
+    // Check if payroll is already paid/accepted
+    if (payroll.status === 'Paid' || payroll.employeeAccepted?.accepted) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Cannot edit paid or accepted payroll'
+      });
+    }
+
+    // Store original values for audit
+    const originalData = {
+      salary: payroll.salaryDetails?.monthlySalary || 0,
+      overtime: payroll.earnings?.overtime?.amount || 0,
+      bonus: payroll.earnings?.bonus?.amount || 0,
+      allowance: payroll.earnings?.allowance?.amount || 0,
+      mealDeduction: payroll.mealSystemData?.mealDeduction?.amount || 0
+    };
+
+    // Update manual inputs
+    const updates = {
+      monthlySalary: parseInt(monthlySalary) || originalData.salary,
+      overtime: parseInt(overtime) || 0,
+      bonus: parseInt(bonus) || 0,
+      allowance: parseInt(allowance) || 0,
+      dailyMealRate: parseFloat(dailyMealRate) || 0,
+      manualMealAmount: parseFloat(manualMealAmount) || 0,
+      mealDeduction: parseFloat(mealDeduction) || 0,
+      mealDeductionType: mealDeductionType || 'none',
+      notes: notes || payroll.notes
+    };
+
+    // Ensure salary details exist
+    if (!payroll.salaryDetails) payroll.salaryDetails = {};
+    if (!payroll.earnings) payroll.earnings = {};
+    if (!payroll.manualInputs) payroll.manualInputs = {};
+    if (!payroll.mealSystemData) payroll.mealSystemData = {};
+
+    // Update payroll document
+    payroll.salaryDetails.monthlySalary = updates.monthlySalary;
+    
+    // Update earnings
+    payroll.earnings.overtime = payroll.earnings.overtime || {};
+    payroll.earnings.overtime.amount = updates.overtime;
+    payroll.earnings.overtime.source = updates.overtime > 0 ? 'manual_edit' : 'none';
+    payroll.earnings.overtime.description = updates.overtime > 0 ? 'Updated by admin' : '';
+    
+    payroll.earnings.bonus = payroll.earnings.bonus || {};
+    payroll.earnings.bonus.amount = updates.bonus;
+    payroll.earnings.bonus.type = updates.bonus > 0 ? 'other_edit' : 'none';
+    payroll.earnings.bonus.description = updates.bonus > 0 ? 'Updated by admin' : '';
+    
+    payroll.earnings.allowance = payroll.earnings.allowance || {};
+    payroll.earnings.allowance.amount = updates.allowance;
+    payroll.earnings.allowance.type = updates.allowance > 0 ? 'other_edit' : 'none';
+    payroll.earnings.allowance.description = updates.allowance > 0 ? 'Updated by admin' : '';
+
+    // Update meal system data if provided
+    if (updates.mealDeduction > 0 || updates.mealDeductionType !== 'none') {
+      payroll.mealSystemData.mealDeduction = {
+        type: updates.mealDeductionType,
+        amount: updates.mealDeduction,
+        calculationNote: `Manual update by admin: ${formatCurrency(updates.mealDeduction)}`,
+        details: {
+          ...(payroll.mealSystemData.mealDeduction?.details || {}),
+          manuallyUpdated: true,
+          originalAmount: originalData.mealDeduction,
+          updatedBy: req.user._id,
+          updatedAt: new Date()
+        }
+      };
+      
+      if (payroll.foodCostDetails) {
+        payroll.foodCostDetails.fixedDeduction = updates.mealDeduction;
+        payroll.foodCostDetails.totalFoodDeduction = updates.mealDeduction;
+        payroll.foodCostDetails.calculationNote = `Manually updated to ${formatCurrency(updates.mealDeduction)} by admin`;
+      }
+    }
+
+    // Update notes
+    if (updates.notes) {
+      payroll.notes = updates.notes;
+    }
+
+    // Update manual inputs
+    payroll.manualInputs.overtime = updates.overtime;
+    payroll.manualInputs.bonus = updates.bonus;
+    payroll.manualInputs.allowance = updates.allowance;
+    payroll.manualInputs.dailyMealRate = updates.dailyMealRate;
+    payroll.manualInputs.manualMealAmount = updates.manualMealAmount;
+    payroll.manualInputs.editedBy = req.user._id;
+    payroll.manualInputs.editedAt = new Date();
+    payroll.manualInputs.editCount = (payroll.manualInputs.editCount || 0) + 1;
+
+    // Recalculate if requested
+    if (recalculate) {
+      await recalculatePayrollTotals(payroll, req);
+    } else {
+      // Just update totals manually
+      await updatePayrollTotals(payroll);
+    }
+
+    // Add audit trail
+    payroll.auditTrail = payroll.auditTrail || [];
+    payroll.auditTrail.push({
+      action: 'update',
+      performedBy: req.user._id,
+      performedAt: new Date(),
+      changes: {
+        salary: { from: originalData.salary, to: updates.monthlySalary },
+        overtime: { from: originalData.overtime, to: updates.overtime },
+        bonus: { from: originalData.bonus, to: updates.bonus },
+        allowance: { from: originalData.allowance, to: updates.allowance },
+        mealDeduction: { from: originalData.mealDeduction, to: updates.mealDeduction }
+      },
+      notes: 'Manual update by admin'
+    });
+
+    // Update metadata
+    payroll.metadata = payroll.metadata || {};
+    payroll.metadata.lastEdited = new Date();
+    payroll.metadata.editedBy = req.user._id;
+    payroll.metadata.isEdited = true;
+
+    await payroll.save();
+
+    console.log('✅ Payroll updated successfully');
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll updated successfully',
+      data: {
+        payrollId: payroll._id,
+        changes: {
+          salary: updates.monthlySalary,
+          overtime: updates.overtime,
+          bonus: updates.bonus,
+          allowance: updates.allowance,
+          mealDeduction: updates.mealDeduction
+        },
+        summary: {
+          grossEarnings: payroll.summary?.grossEarnings || 0,
+          totalDeductions: payroll.summary?.totalDeductions || 0,
+          netPayable: payroll.summary?.netPayable || 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Update payroll error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message || 'Failed to update payroll'
+    });
+  }
+};
+
+// 3. Admin View All Payrolls - FIXED VERSION
 exports.adminViewAllPayrolls = async (req, res) => {
   try {
     const {
@@ -3129,7 +3320,7 @@ exports.adminViewAllPayrolls = async (req, res) => {
       employeeId,
       page = 1,
       limit = 50,
-      view = 'detailed' // detailed, summary, grouped
+      view = 'detailed'
     } = req.query;
 
     const query = { isDeleted: false };
@@ -3192,163 +3383,30 @@ exports.adminViewAllPayrolls = async (req, res) => {
             $sum: {
               $cond: [{ $eq: ['$status', 'Approved'] }, '$summary.netPayable', 0]
             }
-          },
-          // Meal deduction summary
-          totalMealDeduction: {
-            $sum: { $ifNull: ['$mealSystemData.mealDeduction.amount', 0] }
-          },
-          // Onsite benefits summary
-          totalOnsiteServiceCharge: {
-            $sum: { $ifNull: ['$onsiteBenefitsDetails.serviceCharge', 0] }
-          },
-          totalOnsiteTeaAllowance: {
-            $sum: { $ifNull: ['$onsiteBenefitsDetails.teaAllowance', 0] }
           }
         }
       }
     ]);
 
-    // Department-wise breakdown
-    const departmentStats = await Payroll.aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: '$department',
-          count: { $sum: 1 },
-          totalNetPayable: { $sum: '$summary.netPayable' },
-          totalEmployees: { $addToSet: '$employee' },
-          avgNetPayable: { $avg: '$summary.netPayable' }
-        }
-      },
-      {
-        $project: {
-          department: '$_id',
-          count: 1,
-          totalNetPayable: 1,
-          employeeCount: { $size: '$totalEmployees' },
-          averagePerEmployee: { $round: ['$avgNetPayable', 2] }
-        }
-      },
-      { $sort: { totalNetPayable: -1 } }
-    ]);
-
-    // Status breakdown
-    const statusStats = await Payroll.aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$summary.netPayable' },
-          employees: { $addToSet: '$employee' }
-        }
-      },
-      {
-        $project: {
-          status: '$_id',
-          count: 1,
-          totalAmount: 1,
-          employeeCount: { $size: '$employees' }
-        }
-      }
-    ]);
-
-    // Month-wise trend
-    const monthlyTrend = await Payroll.aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: { month: '$month', year: '$year' },
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$summary.netPayable' },
-          avgAmount: { $avg: '$summary.netPayable' }
-        }
-      },
-      {
-        $project: {
-          month: '$_id.month',
-          year: '$_id.year',
-          monthName: {
-            $let: {
-              vars: {
-                months: ['January', 'February', 'March', 'April', 'May', 'June', 
-                        'July', 'August', 'September', 'October', 'November', 'December']
-              },
-              in: { $arrayElemAt: ['$$months', { $subtract: ['$_id.month', 1] }] }
-            }
-          },
-          count: 1,
-          totalAmount: 1,
-          avgAmount: { $round: ['$avgAmount', 2] }
-        }
-      },
-      { $sort: { year: -1, month: -1 } },
-      { $limit: 12 }
-    ]);
-
-    // Prepare response based on view type
-    let responseData;
-    
-    if (view === 'summary') {
-      responseData = {
-        summary: summary[0] || {},
-        departmentStats,
-        statusStats,
-        monthlyTrend,
-        totalRecords: total
+    // Format payrolls for frontend
+    const formattedPayrolls = payrolls.map(p => {
+      const payrollObj = p.toObject ? p.toObject() : p;
+      return {
+        ...payrollObj,
+        period: `${getMonthName(payrollObj.month)} ${payrollObj.year}`,
+        attendancePercentage: payrollObj.attendance?.attendancePercentage || 0,
+        canEdit: payrollObj.status !== 'Paid' && !payrollObj.employeeAccepted?.accepted,
+        hasMealDeduction: payrollObj.mealSystemData?.mealDeduction?.amount > 0,
+        hasOnsiteBenefits: payrollObj.onsiteBenefitsDetails ? true : false,
+        netOnsiteEffect: payrollObj.onsiteBenefitsDetails?.netEffect || 0
       };
-    } else if (view === 'grouped') {
-      // Group by employee
-      const employeeGroups = await Payroll.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: '$employee',
-            employeeName: { $first: '$employeeName' },
-            employeeId: { $first: '$employeeId' },
-            department: { $first: '$department' },
-            payrolls: { $push: '$$ROOT' },
-            totalNetPayable: { $sum: '$summary.netPayable' },
-            totalEarnings: { $sum: '$summary.grossEarnings' },
-            totalDeductions: { $sum: '$deductions.total' },
-            count: { $sum: 1 },
-            avgNetPayable: { $avg: '$summary.netPayable' }
-          }
-        },
-        {
-          $project: {
-            employeeId: '$_id',
-            employeeName: 1,
-            department: 1,
-            totalPayrolls: '$count',
-            totalNetPayable: 1,
-            totalEarnings: 1,
-            totalDeductions: 1,
-            averageNetPayable: { $round: ['$avgNetPayable', 2] },
-            lastPayroll: { $arrayElemAt: ['$payrolls', 0] }
-          }
-        },
-        { $sort: { totalNetPayable: -1 } }
-      ]);
-      
-      responseData = {
-        employeeGroups,
-        summary: summary[0] || {},
-        totalRecords: total
-      };
-    } else {
-      // Detailed view (default)
-      responseData = {
-        payrolls: payrolls.map(p => ({
-          ...p.toObject(),
-          // Add computed fields for easier display
-          period: `${getMonthName(p.month)} ${p.year}`,
-          attendancePercentage: p.attendance?.attendancePercentage || 0,
-          canEdit: p.status !== 'Paid' && !p.employeeAccepted?.accepted,
-          hasMealDeduction: p.mealSystemData?.mealDeduction?.amount > 0,
-          hasOnsiteBenefits: p.onsiteBenefitsDetails ? true : false,
-          netOnsiteEffect: p.onsiteBenefitsDetails?.netEffect || 0
-        })),
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll data loaded successfully',
+      data: {
+        payrolls: formattedPayrolls,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -3361,14 +3419,8 @@ exports.adminViewAllPayrolls = async (req, res) => {
           totalEarnings: 0,
           totalPayrolls: 0,
           paidAmount: 0,
-          pendingAmount: 0,
-          totalMealDeduction: 0,
-          totalOnsiteServiceCharge: 0,
-          totalOnsiteTeaAllowance: 0
+          pendingAmount: 0
         },
-        departmentStats,
-        statusStats,
-        monthlyTrend,
         filters: {
           month,
           year,
@@ -3377,20 +3429,15 @@ exports.adminViewAllPayrolls = async (req, res) => {
           employeeId,
           view
         }
-      };
-    }
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Payroll data loaded successfully',
-      data: responseData
+      }
     });
 
   } catch (error) {
-    console.error('Admin view all payrolls error:', error);
+    console.error('❌ Admin view all payrolls error:', error);
     res.status(500).json({
       status: 'fail',
-      message: error.message
+      message: error.message || 'Failed to load payroll data'
     });
   }
 };
+ 
