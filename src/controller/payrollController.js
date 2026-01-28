@@ -2826,7 +2826,7 @@ exports.updatePayroll = async (req, res) => {
 
     // Recalculate if requested
     if (recalculate) {
-      await recalculatePayrollTotals(payroll);
+      await recalculatePayrollTotals(payroll,req);
     } else {
       // Just update totals manually
       await updatePayrollTotals(payroll);
@@ -2957,7 +2957,7 @@ const recalculatePayrollTotals = async (payroll) => {
 
     // Update calculation notes
     payroll.calculation.calculatedDate = new Date();
-    payroll.calculation.calculatedBy = req.user._id;
+     payroll.calculation.calculatedBy = req.user._id;
     payroll.calculation.calculationNotes = 'Recalculated after admin edit';
 
   } catch (error) {
