@@ -3196,7 +3196,7 @@ exports.updatePayroll = async (req, res) => {
     // Update earnings
     payroll.earnings.overtime = payroll.earnings.overtime || {};
     payroll.earnings.overtime.amount = updates.overtime;
-    payroll.earnings.overtime.source = updates.overtime > 0 ? 'manual_edit' : 'none';
+    payroll.earnings.overtime.source = updates.overtime > 0 ? 'manual' : 'none';
     payroll.earnings.overtime.description = updates.overtime > 0 ? 'Updated by admin' : '';
     
     payroll.earnings.bonus = payroll.earnings.bonus || {};
