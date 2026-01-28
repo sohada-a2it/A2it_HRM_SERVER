@@ -451,6 +451,10 @@ router.post('/payroll/:id/recalculate', protect, adminOnly, payrollController.re
 router.get('/my-payrolls', protect, payrollController.getMyPayrolls);  
 router.put('/payroll/:id/employee-accept', protect, payrollController.employeeAcceptPayroll);
 router.get('/payroll/:id/check-acceptance', protect, payrollController.checkEmployeeAcceptance);
+// Admin edit routes
+router.get('/admin/all', adminAuth, payrollController.adminViewAllPayrolls);
+router.put('payroll/:id/edit', adminAuth, payrollController.updatePayroll);
+router.get('payrollget/:id/edit', adminAuth, payrollController.getPayrollForEdit);
 // New food cost integration routes
 router.get('/food-cost/bills',  protect, adminOnly, payrollController.getFoodCostBillsForPayroll);
  // Employee acceptance routes

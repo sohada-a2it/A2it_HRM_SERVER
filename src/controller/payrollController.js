@@ -939,59 +939,49 @@ exports.createPayroll = async (req, res) => {
       });
     }
     
-    // ============ 3. AUTO LOAD MEAL DATA ============ 
-const startDate = new Date(year, month - 1, 1);
-const endDate = new Date(year, month, 0);
-const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
-
-// A. Check Monthly Subscription FIRST (Priority)
-const subscription = await MealSubscription.findOne({
-  user: employeeId,
-  isDeleted: false,
-  'monthlyApprovals.month': currentMonth,
-  'monthlyApprovals.status': 'approved'
-});
-
-const hasSubscription = !!subscription;
-
-// B. Daily Meals - ONLY query if NO monthly subscription ✅ OPTIMIZED
-let dailyMeals = [];
-let dailyMealDays = 0;
-let hasDailyMeals = false;
-
-if (!hasSubscription) {
-  // শুধুমাত্র যখন monthly subscription নেই, তখনই daily meal query করো
-  dailyMeals = await Meal.find({
-    user: employeeId,
-    date: { $gte: startDate, $lte: endDate },
-    status: { $in: ['approved', 'served'] },
-    isDeleted: false
-  });
-  
-  dailyMealDays = dailyMeals.length;
-  hasDailyMeals = dailyMealDays > 0;
-} else {
-  // Monthly subscription থাকলে daily meal query করবেনা
-  console.log(`[PAYROLL] Employee ${employeeId} has monthly subscription - skipping daily meal query`);
-}
-
-// C. Monthly Food Cost (always needed for calculation)
-const monthlyFoodCosts = await FoodCost.find({
-  date: { $gte: startDate, $lte: endDate }
-});
-
-const totalMonthlyFoodCost = monthlyFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
-const foodCostDays = monthlyFoodCosts.length;
-const averageDailyCost = foodCostDays > 0 ? totalMonthlyFoodCost / foodCostDays : 0;
-
-// D. Active Subscribers count (for monthly subscription calculation)
-const activeSubscribers = await MealSubscription.countDocuments({
-  status: 'active',
-  isDeleted: false,
-  isPaused: false,
-  'monthlyApprovals.month': currentMonth,
-  'monthlyApprovals.status': 'approved'
-});
+    // ============ 3. AUTO LOAD MEAL DATA ============
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    const currentMonth = `${year}-${String(month).padStart(2, '0')}`;
+    
+    // A. Check Monthly Subscription (Auto)
+    const subscription = await MealSubscription.findOne({
+      user: employeeId,
+      isDeleted: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'approved'
+    });
+    
+    const hasSubscription = !!subscription;
+    
+    // B. Count Daily Meals (Auto)
+    const dailyMeals = await Meal.find({
+      user: employeeId,
+      date: { $gte: startDate, $lte: endDate },
+      status: { $in: ['approved', 'served'] },
+      isDeleted: false
+    });
+    
+    const dailyMealDays = dailyMeals.length;
+    const hasDailyMeals = dailyMealDays > 0;
+    
+    // C. AUTO: Calculate Total Monthly Food Cost
+    const monthlyFoodCosts = await FoodCost.find({
+      date: { $gte: startDate, $lte: endDate }
+    });
+    
+    const totalMonthlyFoodCost = monthlyFoodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    const foodCostDays = monthlyFoodCosts.length;
+    const averageDailyCost = foodCostDays > 0 ? totalMonthlyFoodCost / foodCostDays : 0;
+    
+    // D. AUTO: Count Active Subscribers
+    const activeSubscribers = await MealSubscription.countDocuments({
+      status: 'active',
+      isDeleted: false,
+      isPaused: false,
+      'monthlyApprovals.month': currentMonth,
+      'monthlyApprovals.status': 'approved'
+    });
      
 // ============ 4. AUTO MEAL DEDUCTION CALCULATION ============
 let mealDeduction = {
@@ -2722,6 +2712,685 @@ exports.getEmployeeMealData = async (req, res) => {
     res.status(500).json({
       status: 'fail',
       message: error.message || 'Failed to load meal data'
+    });
+  }
+};
+// 18. Update Payroll (Admin Edit)
+exports.updatePayroll = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      monthlySalary,
+      overtime,
+      bonus,
+      allowance,
+      dailyMealRate,
+      manualMealAmount,
+      mealDeduction,
+      mealDeductionType,
+      notes,
+      recalculate = true
+    } = req.body;
+
+    const payroll = await Payroll.findById(id);
+    
+    if (!payroll || payroll.isDeleted) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+
+    // Check if payroll is already paid/accepted
+    if (payroll.status === 'Paid' || payroll.employeeAccepted?.accepted) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Cannot edit paid or accepted payroll'
+      });
+    }
+
+    // Store original values for audit
+    const originalData = {
+      salary: payroll.salaryDetails.monthlySalary,
+      overtime: payroll.earnings.overtime.amount,
+      bonus: payroll.earnings.bonus.amount,
+      allowance: payroll.earnings.allowance.amount,
+      mealDeduction: payroll.mealSystemData?.mealDeduction?.amount || 0
+    };
+
+    // Update manual inputs
+    const updates = {
+      monthlySalary: parseInt(monthlySalary) || originalData.salary,
+      overtime: parseInt(overtime) || 0,
+      bonus: parseInt(bonus) || 0,
+      allowance: parseInt(allowance) || 0,
+      dailyMealRate: parseFloat(dailyMealRate) || 0,
+      manualMealAmount: parseFloat(manualMealAmount) || 0,
+      mealDeduction: parseFloat(mealDeduction) || 0,
+      mealDeductionType: mealDeductionType || 'none',
+      notes: notes || payroll.notes
+    };
+
+    // Update payroll document
+    payroll.salaryDetails.monthlySalary = updates.monthlySalary;
+    
+    // Update earnings
+    payroll.earnings.overtime.amount = updates.overtime;
+    payroll.earnings.overtime.source = updates.overtime > 0 ? 'manual_edit' : 'none';
+    payroll.earnings.overtime.description = updates.overtime > 0 ? 'Updated by admin' : '';
+    
+    payroll.earnings.bonus.amount = updates.bonus;
+    payroll.earnings.bonus.type = updates.bonus > 0 ? 'other_edit' : 'none';
+    payroll.earnings.bonus.description = updates.bonus > 0 ? 'Updated by admin' : '';
+    
+    payroll.earnings.allowance.amount = updates.allowance;
+    payroll.earnings.allowance.type = updates.allowance > 0 ? 'other_edit' : 'none';
+    payroll.earnings.allowance.description = updates.allowance > 0 ? 'Updated by admin' : '';
+
+    // Update meal system data if provided
+    if (updates.mealDeduction > 0) {
+      payroll.mealSystemData.mealDeduction = {
+        type: updates.mealDeductionType,
+        amount: updates.mealDeduction,
+        calculationNote: `Manual update by admin: ${formatCurrency(updates.mealDeduction)}`,
+        details: {
+          ...payroll.mealSystemData.mealDeduction?.details,
+          manuallyUpdated: true,
+          originalAmount: originalData.mealDeduction,
+          updatedBy: req.user._id,
+          updatedAt: new Date()
+        }
+      };
+      
+      payroll.foodCostDetails.fixedDeduction = updates.mealDeduction;
+      payroll.foodCostDetails.totalFoodDeduction = updates.mealDeduction;
+      payroll.foodCostDetails.calculationNote = `Manually updated to ${formatCurrency(updates.mealDeduction)} by admin`;
+    }
+
+    // Update notes
+    if (updates.notes) {
+      payroll.notes = updates.notes;
+    }
+
+    // Update manual inputs
+    payroll.manualInputs = {
+      ...payroll.manualInputs,
+      overtime: updates.overtime,
+      bonus: updates.bonus,
+      allowance: updates.allowance,
+      dailyMealRate: updates.dailyMealRate,
+      editedBy: req.user._id,
+      editedAt: new Date(),
+      editCount: (payroll.manualInputs.editCount || 0) + 1
+    };
+
+    // Recalculate if requested
+    if (recalculate) {
+      await recalculatePayrollTotals(payroll);
+    } else {
+      // Just update totals manually
+      await updatePayrollTotals(payroll);
+    }
+
+    // Add audit trail
+    payroll.auditTrail = payroll.auditTrail || [];
+    payroll.auditTrail.push({
+      action: 'update',
+      performedBy: req.user._id,
+      performedAt: new Date(),
+      changes: {
+        salary: { from: originalData.salary, to: updates.monthlySalary },
+        overtime: { from: originalData.overtime, to: updates.overtime },
+        bonus: { from: originalData.bonus, to: updates.bonus },
+        allowance: { from: originalData.allowance, to: updates.allowance },
+        mealDeduction: { from: originalData.mealDeduction, to: updates.mealDeduction }
+      },
+      notes: 'Manual update by admin'
+    });
+
+    // Update metadata
+    payroll.metadata.lastEdited = new Date();
+    payroll.metadata.editedBy = req.user._id;
+    payroll.metadata.isEdited = true;
+
+    await payroll.save();
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll updated successfully',
+      data: {
+        payrollId: payroll._id,
+        changes: {
+          salary: updates.monthlySalary,
+          overtime: updates.overtime,
+          bonus: updates.bonus,
+          allowance: updates.allowance,
+          mealDeduction: updates.mealDeduction
+        },
+        summary: {
+          grossEarnings: payroll.summary.grossEarnings,
+          totalDeductions: payroll.deductions.total,
+          netPayable: payroll.summary.netPayable
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Update payroll error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
+
+// Helper: Recalculate payroll totals
+const recalculatePayrollTotals = async (payroll) => {
+  try {
+    const employeeId = payroll.employee;
+    const month = payroll.month;
+    const year = payroll.year;
+    const monthlySalary = payroll.salaryDetails.monthlySalary;
+    
+    // Get fresh calculation
+    const calculation = await calculatePayroll(
+      employeeId,
+      monthlySalary,
+      month,
+      year,
+      {
+        overtime: payroll.earnings.overtime.amount,
+        bonus: payroll.earnings.bonus.amount,
+        allowance: payroll.earnings.allowance.amount
+      }
+    );
+
+    // Update attendance
+    payroll.attendance = {
+      totalWorkingDays: calculation.attendance.totalWorkingDays,
+      presentDays: calculation.attendance.presentDays,
+      absentDays: calculation.attendance.absentDays,
+      leaveDays: calculation.attendance.leaveDays,
+      lateDays: calculation.attendance.lateDays,
+      halfDays: calculation.attendance.halfDays,
+      holidays: calculation.attendance.holidays,
+      weeklyOffs: calculation.attendance.weeklyOffs,
+      attendancePercentage: Math.round(
+        (calculation.attendance.presentDays / calculation.attendance.totalWorkingDays) * 100
+      )
+    };
+
+    // Update rates
+    payroll.salaryDetails.dailyRate = calculation.rates.dailyRate;
+    payroll.salaryDetails.hourlyRate = calculation.rates.hourlyRate;
+    payroll.salaryDetails.overtimeRate = calculation.rates.overtimeRate;
+
+    // Update deductions
+    payroll.deductions.lateDeduction = calculation.calculations.deductions.late.amount;
+    payroll.deductions.absentDeduction = calculation.calculations.deductions.absent.amount;
+    payroll.deductions.leaveDeduction = calculation.calculations.deductions.leave.amount;
+    payroll.deductions.halfDayDeduction = calculation.calculations.deductions.halfDay.amount;
+    
+    // Update totals
+    payroll.deductions.calculatedTotal = calculation.calculations.deductions.calculatedTotal;
+    payroll.deductions.isCapped = calculation.calculations.deductions.isCapped;
+    payroll.deductions.cappedAmount = calculation.calculations.deductions.cappedAmount;
+
+    // Add meal deduction to total
+    const mealDeduction = payroll.mealSystemData?.mealDeduction?.amount || 0;
+    const onsiteServiceCharge = payroll.onsiteBenefitsDetails?.serviceCharge || 0;
+    
+    payroll.deductions.total = calculation.calculations.deductions.actualTotal + 
+                               mealDeduction + 
+                               onsiteServiceCharge;
+
+    // Update summary
+    const totalEarnings = calculation.calculations.basicPay + 
+                         payroll.earnings.overtime.amount + 
+                         payroll.earnings.bonus.amount + 
+                         payroll.earnings.allowance.amount +
+                         (payroll.onsiteBenefitsDetails?.teaAllowance || 0);
+
+    payroll.summary.grossEarnings = totalEarnings;
+    payroll.summary.totalDeductions = payroll.deductions.total;
+    payroll.summary.netPayable = Math.max(0, totalEarnings - payroll.deductions.total);
+
+    // Update calculation notes
+    payroll.calculation.calculatedDate = new Date();
+    payroll.calculation.calculatedBy = req.user._id;
+    payroll.calculation.calculationNotes = 'Recalculated after admin edit';
+
+  } catch (error) {
+    console.error('Recalculate totals error:', error);
+    throw error;
+  }
+};
+
+// Helper: Update totals without full recalculation
+const updatePayrollTotals = (payroll) => {
+  try {
+    const monthlySalary = payroll.salaryDetails.monthlySalary;
+    const dailyRate = Math.round(monthlySalary / 23);
+    
+    // Update rates
+    payroll.salaryDetails.dailyRate = dailyRate;
+    payroll.salaryDetails.hourlyRate = Math.round(dailyRate / 8);
+    payroll.salaryDetails.overtimeRate = Math.round(dailyRate / 8 * 1.5);
+
+    // Calculate totals
+    const basicPay = monthlySalary;
+    const mealDeduction = payroll.mealSystemData?.mealDeduction?.amount || 0;
+    const onsiteServiceCharge = payroll.onsiteBenefitsDetails?.serviceCharge || 0;
+    const onsiteTeaAllowance = payroll.onsiteBenefitsDetails?.teaAllowance || 0;
+
+    // Total earnings
+    const totalEarnings = basicPay + 
+                         payroll.earnings.overtime.amount + 
+                         payroll.earnings.bonus.amount + 
+                         payroll.earnings.allowance.amount +
+                         onsiteTeaAllowance;
+
+    // Total deductions
+    const totalDeductions = payroll.deductions.lateDeduction +
+                           payroll.deductions.absentDeduction +
+                           payroll.deductions.leaveDeduction +
+                           payroll.deductions.halfDayDeduction +
+                           mealDeduction +
+                           onsiteServiceCharge;
+
+    // Update totals
+    payroll.summary.grossEarnings = totalEarnings;
+    payroll.summary.totalDeductions = totalDeductions;
+    payroll.summary.netPayable = Math.max(0, totalEarnings - totalDeductions);
+
+    payroll.deductions.total = totalDeductions;
+
+  } catch (error) {
+    console.error('Update totals error:', error);
+    throw error;
+  }
+};
+
+// 19. Get Payroll for Edit (Admin)
+exports.getPayrollForEdit = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const payroll = await Payroll.findById(id)
+      .populate('employee', 'firstName lastName employeeId department designation workLocationType')
+      .lean();
+
+    if (!payroll || payroll.isDeleted) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Payroll not found'
+      });
+    }
+
+    // Check if payroll can be edited
+    const canEdit = payroll.status !== 'Paid' && !payroll.employeeAccepted?.accepted;
+    
+    // Format response for edit form
+    const editData = {
+      payrollId: payroll._id,
+      employee: {
+        id: payroll.employee?._id || payroll.employee,
+        name: payroll.employeeName,
+        employeeId: payroll.employeeId,
+        department: payroll.department,
+        designation: payroll.designation,
+        workLocationType: payroll.employee?.workLocationType || payroll.metadata?.workLocationType
+      },
+      period: {
+        month: payroll.month,
+        year: payroll.year,
+        monthName: getMonthName(payroll.month),
+        startDate: payroll.periodStart,
+        endDate: payroll.periodEnd
+      },
+      currentValues: {
+        monthlySalary: payroll.salaryDetails.monthlySalary,
+        overtime: payroll.earnings.overtime.amount,
+        bonus: payroll.earnings.bonus.amount,
+        allowance: payroll.earnings.allowance.amount,
+        dailyMealRate: payroll.manualInputs.dailyMealRate || 0,
+        manualMealAmount: payroll.manualInputs.manualMealAmount || 0,
+        mealDeduction: payroll.mealSystemData?.mealDeduction?.amount || 0,
+        mealDeductionType: payroll.mealSystemData?.mealDeduction?.type || 'none',
+        notes: payroll.notes || ''
+      },
+      attendance: {
+        presentDays: payroll.attendance.presentDays,
+        totalWorkingDays: payroll.attendance.totalWorkingDays,
+        absentDays: payroll.attendance.absentDays,
+        leaveDays: payroll.attendance.leaveDays,
+        lateDays: payroll.attendance.lateDays,
+        halfDays: payroll.attendance.halfDays
+      },
+      calculation: {
+        dailyRate: payroll.salaryDetails.dailyRate,
+        hourlyRate: payroll.salaryDetails.hourlyRate,
+        overtimeRate: payroll.salaryDetails.overtimeRate
+      },
+      mealSystem: {
+        hasMonthlySubscription: payroll.mealSystemData?.subscriptionStatus || false,
+        dailyMealDays: payroll.mealSystemData?.dailyMealDays || 0,
+        monthlyFoodCost: payroll.mealSystemData?.totalMonthlyFoodCost || 0,
+        activeSubscribers: payroll.mealSystemData?.activeSubscribers || 0,
+        deductionPerEmployee: payroll.mealSystemData?.mealDeduction?.amount || 0
+      },
+      onsiteBenefits: {
+        included: payroll.onsiteBenefitsDetails ? true : false,
+        serviceCharge: payroll.onsiteBenefitsDetails?.serviceCharge || 0,
+        teaAllowance: payroll.onsiteBenefitsDetails?.teaAllowance || 0,
+        netEffect: payroll.onsiteBenefitsDetails?.netEffect || 0
+      },
+      summary: {
+        grossEarnings: payroll.summary.grossEarnings,
+        totalDeductions: payroll.summary.totalDeductions,
+        netPayable: payroll.summary.netPayable
+      },
+      status: {
+        current: payroll.status,
+        employeeAccepted: payroll.employeeAccepted?.accepted || false,
+        canEdit: canEdit,
+        editRestriction: canEdit ? null : 'Payroll is paid/accepted and cannot be edited'
+      },
+      metadata: {
+        createdDate: payroll.createdAt,
+        lastEdited: payroll.metadata?.lastEdited,
+        editedBy: payroll.metadata?.editedBy,
+        editCount: payroll.manualInputs?.editCount || 0,
+        version: payroll.metadata?.version || '1.0'
+      }
+    };
+
+    res.status(200).json({
+      status: 'success',
+      data: editData
+    });
+
+  } catch (error) {
+    console.error('Get payroll for edit error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
+    });
+  }
+};
+// 20. Admin View All Payrolls with Details
+exports.adminViewAllPayrolls = async (req, res) => {
+  try {
+    const {
+      month,
+      year,
+      status,
+      department,
+      employeeId,
+      page = 1,
+      limit = 50,
+      view = 'detailed' // detailed, summary, grouped
+    } = req.query;
+
+    const query = { isDeleted: false };
+    
+    if (month && month !== 'all') {
+      query.month = parseInt(month);
+    }
+    
+    if (year && year !== 'all') {
+      query.year = parseInt(year);
+    }
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    if (department && department !== 'all') {
+      query.department = department;
+    }
+    
+    if (employeeId) {
+      query.employeeId = employeeId;
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get payrolls with all details
+    const payrolls = await Payroll.find(query)
+      .populate('employee', 'firstName lastName email phone department designation workLocationType onsiteBenefits')
+      .populate('createdBy', 'firstName lastName')
+      .populate('approvedBy', 'firstName lastName')
+      .populate('paidBy', 'firstName lastName')
+      .sort({ year: -1, month: -1, department: 1, employeeName: 1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Payroll.countDocuments(query);
+
+    // Enhanced summary calculations
+    const summary = await Payroll.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          totalNetPayable: { $sum: '$summary.netPayable' },
+          totalDeductions: { $sum: '$deductions.total' },
+          totalEarnings: { $sum: '$summary.grossEarnings' },
+          totalPayrolls: { $sum: 1 },
+          paidAmount: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'Paid'] }, '$summary.netPayable', 0]
+            }
+          },
+          pendingAmount: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'Pending'] }, '$summary.netPayable', 0]
+            }
+          },
+          approvedAmount: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'Approved'] }, '$summary.netPayable', 0]
+            }
+          },
+          // Meal deduction summary
+          totalMealDeduction: {
+            $sum: { $ifNull: ['$mealSystemData.mealDeduction.amount', 0] }
+          },
+          // Onsite benefits summary
+          totalOnsiteServiceCharge: {
+            $sum: { $ifNull: ['$onsiteBenefitsDetails.serviceCharge', 0] }
+          },
+          totalOnsiteTeaAllowance: {
+            $sum: { $ifNull: ['$onsiteBenefitsDetails.teaAllowance', 0] }
+          }
+        }
+      }
+    ]);
+
+    // Department-wise breakdown
+    const departmentStats = await Payroll.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$department',
+          count: { $sum: 1 },
+          totalNetPayable: { $sum: '$summary.netPayable' },
+          totalEmployees: { $addToSet: '$employee' },
+          avgNetPayable: { $avg: '$summary.netPayable' }
+        }
+      },
+      {
+        $project: {
+          department: '$_id',
+          count: 1,
+          totalNetPayable: 1,
+          employeeCount: { $size: '$totalEmployees' },
+          averagePerEmployee: { $round: ['$avgNetPayable', 2] }
+        }
+      },
+      { $sort: { totalNetPayable: -1 } }
+    ]);
+
+    // Status breakdown
+    const statusStats = await Payroll.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$summary.netPayable' },
+          employees: { $addToSet: '$employee' }
+        }
+      },
+      {
+        $project: {
+          status: '$_id',
+          count: 1,
+          totalAmount: 1,
+          employeeCount: { $size: '$employees' }
+        }
+      }
+    ]);
+
+    // Month-wise trend
+    const monthlyTrend = await Payroll.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: { month: '$month', year: '$year' },
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$summary.netPayable' },
+          avgAmount: { $avg: '$summary.netPayable' }
+        }
+      },
+      {
+        $project: {
+          month: '$_id.month',
+          year: '$_id.year',
+          monthName: {
+            $let: {
+              vars: {
+                months: ['January', 'February', 'March', 'April', 'May', 'June', 
+                        'July', 'August', 'September', 'October', 'November', 'December']
+              },
+              in: { $arrayElemAt: ['$$months', { $subtract: ['$_id.month', 1] }] }
+            }
+          },
+          count: 1,
+          totalAmount: 1,
+          avgAmount: { $round: ['$avgAmount', 2] }
+        }
+      },
+      { $sort: { year: -1, month: -1 } },
+      { $limit: 12 }
+    ]);
+
+    // Prepare response based on view type
+    let responseData;
+    
+    if (view === 'summary') {
+      responseData = {
+        summary: summary[0] || {},
+        departmentStats,
+        statusStats,
+        monthlyTrend,
+        totalRecords: total
+      };
+    } else if (view === 'grouped') {
+      // Group by employee
+      const employeeGroups = await Payroll.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: '$employee',
+            employeeName: { $first: '$employeeName' },
+            employeeId: { $first: '$employeeId' },
+            department: { $first: '$department' },
+            payrolls: { $push: '$$ROOT' },
+            totalNetPayable: { $sum: '$summary.netPayable' },
+            totalEarnings: { $sum: '$summary.grossEarnings' },
+            totalDeductions: { $sum: '$deductions.total' },
+            count: { $sum: 1 },
+            avgNetPayable: { $avg: '$summary.netPayable' }
+          }
+        },
+        {
+          $project: {
+            employeeId: '$_id',
+            employeeName: 1,
+            department: 1,
+            totalPayrolls: '$count',
+            totalNetPayable: 1,
+            totalEarnings: 1,
+            totalDeductions: 1,
+            averageNetPayable: { $round: ['$avgNetPayable', 2] },
+            lastPayroll: { $arrayElemAt: ['$payrolls', 0] }
+          }
+        },
+        { $sort: { totalNetPayable: -1 } }
+      ]);
+      
+      responseData = {
+        employeeGroups,
+        summary: summary[0] || {},
+        totalRecords: total
+      };
+    } else {
+      // Detailed view (default)
+      responseData = {
+        payrolls: payrolls.map(p => ({
+          ...p.toObject(),
+          // Add computed fields for easier display
+          period: `${getMonthName(p.month)} ${p.year}`,
+          attendancePercentage: p.attendance?.attendancePercentage || 0,
+          canEdit: p.status !== 'Paid' && !p.employeeAccepted?.accepted,
+          hasMealDeduction: p.mealSystemData?.mealDeduction?.amount > 0,
+          hasOnsiteBenefits: p.onsiteBenefitsDetails ? true : false,
+          netOnsiteEffect: p.onsiteBenefitsDetails?.netEffect || 0
+        })),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / parseInt(limit))
+        },
+        summary: summary[0] || {
+          totalNetPayable: 0,
+          totalDeductions: 0,
+          totalEarnings: 0,
+          totalPayrolls: 0,
+          paidAmount: 0,
+          pendingAmount: 0,
+          totalMealDeduction: 0,
+          totalOnsiteServiceCharge: 0,
+          totalOnsiteTeaAllowance: 0
+        },
+        departmentStats,
+        statusStats,
+        monthlyTrend,
+        filters: {
+          month,
+          year,
+          status,
+          department,
+          employeeId,
+          view
+        }
+      };
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Payroll data loaded successfully',
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Admin view all payrolls error:', error);
+    res.status(500).json({
+      status: 'fail',
+      message: error.message
     });
   }
 };
