@@ -495,7 +495,7 @@ const payrollSchema = new mongoose.Schema({
     },
     paymentMethod: {
       type: String,
-      enum: ['Bank Transfer', 'Cash', 'Cheque', 'Online Payment', 'Mobile Banking', 'Not Paid'],
+      enum: ['Bank Transfer', 'Cash', 'Cheque', 'Online Payment', 'Mobile Banking','Employee Accepted', 'Not Paid'],
       default: 'Not Paid'
     },
     transactionId: {
@@ -906,6 +906,7 @@ employeeAccepted: {
       type: String
     }
   },
+  
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
