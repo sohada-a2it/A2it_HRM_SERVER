@@ -680,7 +680,7 @@ exports.createPayroll = async (req, res) => {
       onsiteBenefitsDetails = {
         serviceCharge: serviceChargeDeduction,
         teaAllowance: teaAllowance,
-        totalAllowance: teaAllowance,
+        // totalAllowance: teaAllowance,
         totalDeduction: serviceChargeDeduction,
         presentDays: eligibleDays,
         netEffect: netOnsiteEffect,
