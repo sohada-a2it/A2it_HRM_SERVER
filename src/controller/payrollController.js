@@ -680,7 +680,7 @@ exports.createPayroll = async (req, res) => {
       onsiteBenefitsDetails = {
         serviceCharge: serviceChargeDeduction,
         teaAllowance: teaAllowance,
-        // totalAllowance: teaAllowance,
+        totalAllowance: teaAllowance,
         totalDeduction: serviceChargeDeduction,
         presentDays: eligibleDays,
         netEffect: netOnsiteEffect,
@@ -699,7 +699,7 @@ exports.createPayroll = async (req, res) => {
       };
       
       // Add tea allowance to total allowance
-      calculation.calculations.allowance = (calculation.calculations.allowance || 0) + teaAllowance;
+      // calculation.calculations.allowance = (calculation.calculations.allowance || 0) + teaAllowance;
       
       // Add service charge to total deductions
       calculation.calculations.deductions.actualTotal += serviceChargeDeduction;
@@ -723,8 +723,8 @@ exports.createPayroll = async (req, res) => {
     // ============ 6. FINAL CALCULATION ============
     const totalEarnings = calculation.calculations.basicPay + 
                          calculation.calculations.overtime.amount + 
-                         calculation.calculations.bonus + 
-                         calculation.calculations.allowance;
+                         calculation.calculations.bonus 
+                        //  calculation.calculations.allowance;
     
     const totalDeductions = calculation.calculations.deductions.actualTotal + 
                            mealDeduction.amount;
