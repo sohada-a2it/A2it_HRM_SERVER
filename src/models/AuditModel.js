@@ -100,6 +100,5 @@ auditLogSchema.statics.cleanOldLogs = async function(days = 30) {
     return null;
   }
 };
-
-const AuditLog = mongoose.model('AuditLog', auditLogSchema);
-module.exports = AuditLog;
+ 
+module.exports = mongoose.model("auditlogs", auditLogSchema);
