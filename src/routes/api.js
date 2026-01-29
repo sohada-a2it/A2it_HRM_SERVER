@@ -641,29 +641,16 @@ router.get('/subscription/my-details', protect, mealController.getMySubscription
 
 // ============================
 // ADMIN/MODERATOR ROUTES
-// ============================
-// Subscriptions Management
+// ============================ 
 router.get('/admin/subscriptions/all', protect, adminOnly, mealController.getAllSubscriptions);
 router.get('/admin/subscriptions/pending', protect, adminOnly, mealController.getPendingApprovals);
 router.post('/admin/subscription/create', protect, adminOnly, mealController.adminCreateSubscription);
 router.put('/admin/subscription/approve', protect, adminOnly, mealController.approveMonthlySubscription);
 router.put('/admin/subscription/update/:id', protect, adminOnly, mealController.updateSubscription);
 router.delete('/admin/subscription/:id', protect, adminOnly, mealController.deleteSubscription);
-
-// Meals Management (All meals view for admin)
 router.get('/admin/meals/all', protect, adminOnly, mealController.getAllMeals);
-router.post('/admin/create-meal', protect, adminOnly, mealController.adminCreateMeal);
-
-// ============================
-// REPORT ROUTES
-// ============================
-router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport);
-// router.get('/export/payroll', protect, adminOnly, mealController.exportMealDataForPayroll);
-// router.put('/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
-
-// ============================
-// UTILITY ROUTES
-// ============================
+router.post('/admin/create-meal', protect, adminOnly, mealController.adminCreateMeal); 
+router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport); 
 router.get('/dashboard/stats', protect, mealController.getDashboardStats);
 router.get('/departments', protect, mealController.getDepartments);
 
