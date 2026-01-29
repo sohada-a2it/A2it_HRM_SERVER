@@ -60,23 +60,24 @@ const auditLogSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  // Auto-delete after 30 days
+  // TTL index এর জন্য সঠিক ফরম্যাট
   expiresAt: {
     type: Date,
-    default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-    index: { expires: '30d' }
+    default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    index: { expires: 0 } // ✅ সঠিক ফরম্যাট
   }
 }, { 
-  timestamps: true 
+  timestamps: true,
+  collection: 'auditlogs' // collection নাম আলাদাভাবে নির্দিষ্ট করুন
 });
 
-// Compound indexes for better query performance
+// Compound indexes
 auditLogSchema.index({ userId: 1, createdAt: -1 });
 auditLogSchema.index({ userRole: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
 auditLogSchema.index({ createdAt: -1 });
 
-// Static method to create audit log for any user
+// Static methods
 auditLogSchema.statics.createLog = async function(logData) {
   try {
     return await this.create({
@@ -89,16 +90,18 @@ auditLogSchema.statics.createLog = async function(logData) {
   }
 };
 
-// Static method to clean old logs
 auditLogSchema.statics.cleanOldLogs = async function(days = 30) {
   try {
     const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const result = await this.deleteMany({ createdAt: { $lt: cutoffDate } });
+    console.log(`Cleaned ${result.deletedCount} old audit logs`);
     return result;
   } catch (error) {
     console.error('Clean old logs error:', error);
     return null;
   }
 };
- 
-module.exports = mongoose.model("auditlogs", auditLogSchema);
+
+// ✅ Model নাম Controller-এর সাথে মিলিয়ে দিন
+const AuditLog = mongoose.model('AuditLog', auditLogSchema);
+module.exports = AuditLog;
