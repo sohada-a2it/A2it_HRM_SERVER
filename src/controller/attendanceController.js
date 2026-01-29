@@ -796,11 +796,35 @@ exports.clockIn = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    let attendance = await Attendance.findOne({ 
-      employee: userId, 
-      date: today,
-      isDeleted: false 
-    });
+    // ✅ আপনার existing কোডের এই অংশ:
+let attendance = await Attendance.findOne({ 
+  employee: userId, 
+  date: today,
+  isDeleted: false 
+});
+
+// ✅ এরপরই এই Absent চেক যোগ করুন:
+// Check if marked as absent (NEW CODE TO ADD)
+if (attendance && attendance.status === 'Absent') {
+  return res.status(400).json({
+    status: "fail",
+    message: "Cannot clock in - You are marked as absent today",
+    details: {
+      markedAbsent: attendance.markedAbsent || false,
+      autoMarkedAbsentReason: attendance.autoMarkedAbsentReason || "Manually marked as absent",
+      markedAt: attendance.absentMarkedAt || attendance.updatedAt
+    }
+  });
+}
+
+// ✅ এরপর আপনার existing চেক থাকে:
+// If attendance exists and has clockIn already
+if (attendance && attendance.clockIn) {
+  return res.status(400).json({
+    status: "fail",
+    message: "Already clocked in today"
+  });
+}
     
     // If attendance exists and has Absent status from auto-marking, update it
     if (attendance && attendance.clockIn) {
