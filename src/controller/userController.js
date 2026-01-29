@@ -88,18 +88,23 @@ exports.unifiedLogin = async (req, res) => {
 
     // Audit Log
     try {
-      await AuditLog.create({
-        userId: user._id,
-        action: "Unified Login",
-        target: user._id,
-        details: {
-          email: user.email,
-          role: user.role,
-          timestamp: new Date()
-        },
-        ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
-        device: req.headers['user-agent'] || 'Unknown'
-      });
+          // ✅ CORRECT WAY TO CREATE AUDIT LOG
+    await AuditLog.create({
+      userId: user._id,
+      userRole: user.role,  // ✅ MUST INCLUDE THIS
+      action: 'Unified Login',
+      target: user._id.toString(),
+      targetId: user._id,
+      details: {
+        email: user.email,
+        role: user.role,
+        loginMethod: 'unified'
+      },
+      ip: req.ip,
+      device: req.headers['user-agent'],
+      status: 'success',
+      duration: Date.now() - startTime // if you track start time
+    });
     } catch (auditError) {
       console.error("Audit log error:", auditError);
     }

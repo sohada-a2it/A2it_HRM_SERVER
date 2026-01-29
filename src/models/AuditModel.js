@@ -1,13 +1,15 @@
+// models/AuditModel.js
 const mongoose = require('mongoose');
 
 const auditLogSchema = new mongoose.Schema({
+  // ============ REQUIRED FIELDS ============
   userId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'User', 
     required: true,
     index: true 
   },
-  userRole: {
+  userRole: {  // ✅ ADD THIS
     type: String,
     enum: ['admin', 'employee', 'moderator', 'superAdmin'],
     required: true,
@@ -18,14 +20,22 @@ const auditLogSchema = new mongoose.Schema({
     required: true,
     index: true 
   },
+  
+  // ============ OPTIONAL FIELDS ============
   target: { 
     type: String,
     default: null 
+  },
+  targetId: {  // ✅ ADD FOR BETTER QUERYING
+    type: mongoose.Schema.Types.ObjectId,
+    default: null
   },
   details: { 
     type: mongoose.Schema.Types.Mixed,
     default: {} 
   },
+  
+  // ============ TECHNICAL INFO ============
   ip: { 
     type: String,
     default: 'Unknown' 
@@ -34,7 +44,7 @@ const auditLogSchema = new mongoose.Schema({
     type: String,
     default: 'Unknown' 
   },
-  browser: {
+  browser: {  // ✅ ADD FOR BETTER TRACKING
     type: String,
     default: 'Unknown'
   },
@@ -46,12 +56,14 @@ const auditLogSchema = new mongoose.Schema({
     type: String,
     default: 'Unknown'
   },
+  
+  // ============ STATUS & METRICS ============
   status: {
     type: String,
     enum: ['success', 'failed', 'pending'],
     default: 'success'
   },
-  severity: {
+  severity: {  // ✅ ADD FOR PRIORITY
     type: String,
     enum: ['low', 'medium', 'high', 'critical'],
     default: 'low'
@@ -60,32 +72,61 @@ const auditLogSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  // TTL index এর জন্য সঠিক ফরম্যাট
-  expiresAt: {
+  errorMessage: {  // ✅ ADD FOR FAILED LOGS
+    type: String,
+    default: null
+  },
+  
+  // ============ AUTO-CLEANUP ============
+  expiresAt: {  // ✅ ADD FOR AUTO DELETE
     type: Date,
-    default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    index: { expires: 0 } // ✅ সঠিক ফরম্যাট
+    default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    index: { expires: 0 }
   }
+  
 }, { 
   timestamps: true,
-  collection: 'auditlogs' // collection নাম আলাদাভাবে নির্দিষ্ট করুন
+  collection: 'auditlogs' // ✅ Explicit collection name
 });
 
-// Compound indexes
+// ============ COMPOUND INDEXES ============
 auditLogSchema.index({ userId: 1, createdAt: -1 });
 auditLogSchema.index({ userRole: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
+auditLogSchema.index({ status: 1, createdAt: -1 });
 auditLogSchema.index({ createdAt: -1 });
 
-// Static methods
+// ============ STATIC METHODS ============
 auditLogSchema.statics.createLog = async function(logData) {
   try {
-    return await this.create({
+    // Ensure required fields
+    const log = {
       ...logData,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    });
+    };
+    
+    return await this.create(log);
   } catch (error) {
     console.error('Audit log creation error:', error);
+    
+    // Fallback: Save error log in database
+    try {
+      await this.create({
+        userId: logData.userId || null,
+        userRole: 'system',
+        action: 'AUDIT_LOG_ERROR',
+        details: {
+          originalAction: logData.action,
+          error: error.message,
+          timestamp: new Date()
+        },
+        status: 'failed',
+        severity: 'high'
+      });
+    } catch (fallbackError) {
+      console.error('Even fallback audit log failed:', fallbackError);
+    }
+    
     return null;
   }
 };
@@ -94,14 +135,23 @@ auditLogSchema.statics.cleanOldLogs = async function(days = 30) {
   try {
     const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const result = await this.deleteMany({ createdAt: { $lt: cutoffDate } });
-    console.log(`Cleaned ${result.deletedCount} old audit logs`);
+    console.log(`✅ Cleaned ${result.deletedCount} old audit logs`);
     return result;
   } catch (error) {
-    console.error('Clean old logs error:', error);
+    console.error('❌ Clean old logs error:', error);
     return null;
   }
 };
 
-// ✅ Model নাম Controller-এর সাথে মিলিয়ে দিন
+// ============ PRE-SAVE HOOK ============
+auditLogSchema.pre('save', function(next) {
+  // Validate userRole if userId is provided
+  if (this.userId && !this.userRole) {
+    console.warn('⚠️ Audit log saved without userRole:', this.action);
+  }
+  next();
+});
+
+// ============ MODEL EXPORT ============
 const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 module.exports = AuditLog;
