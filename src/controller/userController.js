@@ -87,9 +87,10 @@ exports.unifiedLogin = async (req, res) => {
     console.log('User email:', user.email);
 
     // Audit Log
-    try {
-      await AuditLog.create({
+       try {
+      const auditData = {
         userId: user._id,
+        userRole: user.role, // ✅ এই ফিল্ডটার দরকার
         action: "Unified Login",
         target: user._id,
         details: {
@@ -98,10 +99,22 @@ exports.unifiedLogin = async (req, res) => {
           timestamp: new Date()
         },
         ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
-        device: req.headers['user-agent'] || 'Unknown'
-      });
+        device: req.headers['user-agent'] || 'Unknown',
+        status: 'success'
+      };
+      
+      console.log('📝 Attempting to create audit log:', auditData);
+      
+      const auditLog = await AuditLog.create(auditData);
+      console.log('✅ Audit log created:', auditLog._id);
+      
     } catch (auditError) {
-      console.error("Audit log error:", auditError);
+      console.error('❌ Audit log creation failed:', auditError.message);
+      console.error('Error details:', {
+        name: auditError.name,
+        code: auditError.code,
+        errors: auditError.errors
+      });
     }
 
     // SessionLog creation

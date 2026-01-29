@@ -1,6 +1,7 @@
 const AuditLog = require('../models/AuditModel');
 const mongoose = require('mongoose');
 // ==================== GET ALL AUDIT LOGS (ADMIN ONLY) ====================
+
 exports.getAllAuditLogs = async (req, res) => {
   try {
     // Check if user is admin
