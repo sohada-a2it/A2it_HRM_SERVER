@@ -479,25 +479,59 @@ router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);
 router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
 
 // ==================== SessionLog Routes====================  
-router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
+// ==================== COMMON ROUTES (ALL ROLES) ====================
+router.get('/my-sessions', protect, sessionController.getMySessions);
 router.get('/my-current-session', protect, sessionController.getMyCurrentSession);
-router.get('/my-session-state', protect, sessionController.getMyCurrentSession);
-router.get('/sessions/stats/attendance', protect, sessionController.getSessionAttendanceStats);
-router.get('/stats', protect, sessionController.getSessionStatistics);
-router.get(' /sessions/statistics', protect, sessionController.getMySessionStats);
+router.get('/dashboard', protect, sessionController.getRoleDashboard);
+router.get('/analytics', protect, sessionController.getRoleAnalytics);
+router.get('/export', protect, sessionController.exportSessions);
+router.get('/theme-settings', protect, sessionController.getThemeSettings);
+
+// ==================== EMPLOYEE SPECIFIC ====================
 router.post('/clock-in', protect, sessionController.clockIn);
 router.post('/clock-out', protect, sessionController.clockOut);
-router.get('/export', protect, sessionController.exportMySessions); 
-router.get('/allSession', protect, adminOnly, sessionController.getAllSessions);
+router.get('/my-statistics', protect, sessionController.getMySessionStats);
+
+// ==================== MODERATOR SPECIFIC ====================
+// router.get('/moderator/sessions', protect, moderatorOnly, sessionController.getAllSessions);
+// router.get('/moderator/review', protect, moderatorOnly, sessionController.getSessionsForReview);
+// router.post('/moderator/review/:id', protect, moderatorOnly, sessionController.reviewSession);
+
+// ==================== ADMIN SPECIFIC ====================
+router.get('/admin/all', protect, adminOnly, sessionController.getAllSessions); 
 router.get('/admin/session/:id', protect, adminOnly, sessionController.getSessionById);
-router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
 router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById);
-router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions); 
+router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
+router.get('/admin/export-all', protect, adminOnly, sessionController.exportAllSessions);
+router.get('/admin/deletion-queue', protect, adminOnly, sessionController.getSessionsNearingDeletion);
+router.post('/admin/extend/:id', protect, adminOnly, sessionController.extendSessionRetention);
+router.post('/admin/bulk-extend', protect, adminOnly, sessionController.bulkExtendRetention);
+router.post('/admin/trigger-cleanup', protect, adminOnly, sessionController.triggerAutoDelete);
+
+// ==================== ANALYTICS ROUTES ====================
 router.get('/analytics/daily', protect, adminOnly, sessionController.getDailyAnalytics);
 router.get('/analytics/devices', protect, adminOnly, sessionController.getDeviceAnalytics);
-router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics); 
-router.get('/export', sessionController.exportMySessions);
-router.get('/admin/export', adminOnly, sessionController.exportAllSessions);
+router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics);
+router.get('/analytics/role-distribution', protect, adminOnly, sessionController.getRoleDistribution);
+
+// ==================== AUTO-DELETE MANAGEMENT ====================
+router.get('/deletion-status', protect, sessionController.getSessionsNearingDeletion);
+router.get('/retention-settings', protect, adminOnly, (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Retention settings',
+    theme: 'purple',
+    settings: {
+      defaultRetention: 30,
+      autoDeleteEnabled: true,
+      deletionSchedule: 'daily',
+      notificationThreshold: 7,
+      canExtend: true,
+      maxExtension: 90,
+      cleanupLogs: true
+    }
+  });
+});
 
 
 // =================== WeaklyOff Routes ==================== 
