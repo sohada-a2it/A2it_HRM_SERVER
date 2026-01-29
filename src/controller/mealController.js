@@ -1546,5 +1546,178 @@ exports.getDepartments = async (req, res) => {
     });
   }
 };
+// DailyMeal-এর পরিবর্তে Meal model ব্যবহার করুন
+exports.approveDailyMeal = async (req, res) => {
+  try {
+    const { mealId, note } = req.body;
+    
+    if (!mealId) {
+      return res.status(400).json({
+        success: false,
+        message: "Meal ID is required"
+      });
+    }
+
+    // Find the meal - Meal model ব্যবহার করুন
+    const meal = await Meal.findById(mealId);
+    
+    if (!meal) {
+      return res.status(404).json({
+        success: false,
+        message: "Meal not found"
+      });
+    }
+
+    // Check if already approved
+    if (meal.status === 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: "Meal is already approved"
+      });
+    }
+
+    // Update meal status
+    meal.status = 'approved';
+    meal.approvedBy = req.user._id;
+    meal.approvedAt = new Date();
+    
+    if (note) {
+      meal.adminNote = note;
+    }
+
+    await meal.save();
+
+    // Optional: Send notification
+    // await sendMealNotification(meal.user, {...});
+
+    res.status(200).json({
+      success: true,
+      message: "Meal approved successfully",
+      data: meal
+    });
+  } catch (error) {
+    console.error("Error approving meal:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error approving meal",
+      error: error.message
+    });
+  }
+};
+
+exports.rejectDailyMeal = async (req, res) => {
+  try {
+    const { mealId, note } = req.body;
+    
+    if (!mealId) {
+      return res.status(400).json({
+        success: false,
+        message: "Meal ID is required"
+      });
+    }
+
+    // Find the meal - Meal model ব্যবহার করুন
+    const meal = await Meal.findById(mealId);
+    
+    if (!meal) {
+      return res.status(404).json({
+        success: false,
+        message: "Meal not found"
+      });
+    }
+
+    // Check if already rejected
+    if (meal.status === 'rejected') {
+      return res.status(400).json({
+        success: false,
+        message: "Meal is already rejected"
+      });
+    }
+
+    // Update meal status
+    meal.status = 'rejected';
+    meal.rejectedBy = req.user._id;
+    meal.rejectedAt = new Date();
+    
+    if (note) {
+      meal.adminNote = note;
+    }
+
+    await meal.save();
+
+    // Optional: Send notification
+    // await sendMealNotification(meal.user, {...});
+
+    res.status(200).json({
+      success: true,
+      message: "Meal rejected successfully",
+      data: meal
+    });
+  } catch (error) {
+    console.error("Error rejecting meal:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error rejecting meal",
+      error: error.message
+    });
+  }
+};
+
+exports.updateSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { preference, autoRenew, note } = req.body;
+    
+    // Find subscription - MealSubscription model ব্যবহার করুন
+    const subscription = await MealSubscription.findById(id);
+    
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: "Subscription not found"
+      });
+    }
+
+    // Update fields if provided
+    if (preference) {
+      subscription.preference = preference;
+    }
+    
+    if (autoRenew !== undefined) {
+      subscription.autoRenew = autoRenew;
+    }
+
+    // Add update note (যদি updateHistory field থাকে)
+    if (subscription.updateHistory && note) {
+      subscription.updateHistory.push({
+        updatedBy: req.user._id,
+        updatedAt: new Date(),
+        note: note,
+        changes: {
+          preference: preference || subscription.preference,
+          autoRenew: autoRenew !== undefined ? autoRenew : subscription.autoRenew
+        }
+      });
+    } else if (note) {
+      // যদি updateHistory না থাকে
+      subscription.note = note;
+    }
+
+    await subscription.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Subscription updated successfully",
+      data: subscription
+    });
+  } catch (error) {
+    console.error("Error updating subscription:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating subscription",
+      error: error.message
+    });
+  }
+};
 
 module.exports = exports;

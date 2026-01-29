@@ -471,12 +471,18 @@ router.put('/updateSalaryRule/:id', protect, adminOnly, salaryRuleController.upd
 router.delete('/deleteSalaryRule/:id', protect, adminOnly, salaryRuleController.deleteSalaryRule); 
 
 // ====================AuditLog Admin Routes ==================== 
-router.get('/admin/getAllAudits', protect, adminOnly, auditController.getAllAuditLogs); 
-router.get('/admin/getAllAudits/:userId', protect, adminOnly, auditController.getAuditLogsByUserId); 
-router.delete('/admin/AuditDelete/:id', protect, adminOnly, auditController.deleteAuditLog); 
-router.get('/admin/auditSearch', protect, adminOnly, auditController.searchAuditLogs); 
-router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);  
-router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
+// Admin routes - ALL logs access
+router.get('/admin/audit-logs', protect, adminOnly, auditController.getAllAuditLogs);
+router.get('/admin/audit-logs/user/:userId', protect, auditController.getAuditLogsByUserId);
+router.get('/admin/audit/my-logs', protect, adminOnly, auditController.getAdminAuditLogs); // নতুন রাউট
+router.delete('/admin/audit-logs/:id', protect, adminOnly, auditController.deleteAuditLog);
+router.get('/admin/audit/search', protect, adminOnly, auditController.searchAuditLogs);
+router.get('/admin/audit/stats', protect, adminOnly, auditController.getAuditStats);
+router.post('/admin/audit/clean', protect, adminOnly, auditController.cleanOldLogs);
+router.get('/admin/audit/export', protect, adminOnly, auditController.exportAuditLogs);
+
+// User routes - Own logs only
+router.get('/audit/my-logs', protect, auditController.getMyAuditLogs);  
 
 // ==================== SessionLog Routes====================  
 router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
@@ -623,25 +629,19 @@ router.get('/miscellaneous/stats',protect, miscellaneousExpense.getExtraExpenseS
 // router.get('/admin/payroll-export', protect, adminOnly, mealController.exportMealDataForPayroll);
 // router.put('/admin/update-meal-days', protect, adminOnly, mealController.updateMealDaysFromPayroll);
 
-// ============================
 // DAILY MEAL ROUTES (EMPLOYEE)
-// ============================
 router.post('/daily/request', protect, mealController.requestDailyMeal);
 router.get('/daily/my-meals', protect, mealController.getMyDailyMeals);
 router.post('/daily/cancel', protect, mealController.cancelDailyMeal);
 
-// ============================
 // SUBSCRIPTION ROUTES (EMPLOYEE)
-// ============================
 router.post('/subscription/setup', protect, mealController.setupMonthlySubscription);
 router.post('/subscription/cancel', protect, mealController.cancelSubscription);
 router.put('/subscription/update-preference', protect, mealController.updateSubscriptionPreference);
 router.put('/subscription/update-auto-renew', protect, mealController.updateAutoRenew);
 router.get('/subscription/my-details', protect, mealController.getMySubscription);
 
-// ============================
 // ADMIN/MODERATOR ROUTES
-// ============================ 
 router.get('/admin/subscriptions/all', protect, adminOnly, mealController.getAllSubscriptions);
 router.get('/admin/subscriptions/pending', protect, adminOnly, mealController.getPendingApprovals);
 router.post('/admin/subscription/create', protect, adminOnly, mealController.adminCreateSubscription);
@@ -649,10 +649,15 @@ router.put('/admin/subscription/approve', protect, adminOnly, mealController.app
 router.put('/admin/subscription/update/:id', protect, adminOnly, mealController.updateSubscription);
 router.delete('/admin/subscription/:id', protect, adminOnly, mealController.deleteSubscription);
 router.get('/admin/meals/all', protect, adminOnly, mealController.getAllMeals);
-router.post('/admin/create-meal', protect, adminOnly, mealController.adminCreateMeal); 
-router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport); 
+router.post('/admin/create-meal', protect, adminOnly, mealController.adminCreateMeal);
+router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthlyMealReport);
+
+// NEW ROUTES FOR MEAL APPROVAL/REJECTION
+router.put('/admin/meal/approve', protect, adminOnly, mealController.approveDailyMeal);
+router.put('/admin/meal/reject', protect, adminOnly, mealController.rejectDailyMeal);
+
+// DASHBOARD & UTILITIES
 router.get('/dashboard/stats', protect, mealController.getDashboardStats);
 router.get('/departments', protect, mealController.getDepartments);
-
 
 module.exports = router;  
