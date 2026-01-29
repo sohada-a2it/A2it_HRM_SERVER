@@ -471,18 +471,12 @@ router.put('/updateSalaryRule/:id', protect, adminOnly, salaryRuleController.upd
 router.delete('/deleteSalaryRule/:id', protect, adminOnly, salaryRuleController.deleteSalaryRule); 
 
 // ====================AuditLog Admin Routes ==================== 
-// Admin routes - ALL logs access
-router.get('/admin/audit-logs', protect, adminOnly, auditController.getAllAuditLogs);
-router.get('/admin/audit-logs/user/:userId', protect, auditController.getAuditLogsByUserId);
-router.get('/admin/audit/my-logs', protect, adminOnly, auditController.getAdminAuditLogs); // নতুন রাউট
-router.delete('/admin/audit-logs/:id', protect, adminOnly, auditController.deleteAuditLog);
-router.get('/admin/audit/search', protect, adminOnly, auditController.searchAuditLogs);
-router.get('/admin/audit/stats', protect, adminOnly, auditController.getAuditStats);
-router.post('/admin/audit/clean', protect, adminOnly, auditController.cleanOldLogs);
-router.get('/admin/audit/export', protect, adminOnly, auditController.exportAuditLogs);
-
-// User routes - Own logs only
-router.get('/audit/my-logs', protect, auditController.getMyAuditLogs);  
+router.get('/admin/getAllAudits', protect, adminOnly, auditController.getAllAuditLogs); 
+router.get('/admin/getAllAudits/:userId', protect, adminOnly, auditController.getAuditLogsByUserId); 
+router.delete('/admin/AuditDelete/:id', protect, adminOnly, auditController.deleteAuditLog); 
+router.get('/admin/auditSearch', protect, adminOnly, auditController.searchAuditLogs); 
+router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);  
+router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
 
 // ==================== SessionLog Routes====================  
 router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
