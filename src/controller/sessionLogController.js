@@ -3035,3 +3035,198 @@ exports.getMyCurrentSession = async (req, res) => {
     });
   }
 };
+// Add this new function for getting all sessions with proper pagination:
+
+exports.getAllSessionsAdmin = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    
+    // Build filter
+    const filter = {};
+    
+    // Status filter
+    if (req.query.status && req.query.status !== 'all') {
+      filter.sessionStatus = req.query.status;
+    }
+    
+    // Role filter
+    if (req.query.role && req.query.role !== 'all') {
+      filter.userRole = req.query.role;
+    }
+    
+    // Date range filter
+    if (req.query.startDate && req.query.endDate) {
+      filter.loginAt = {
+        $gte: new Date(req.query.startDate),
+        $lte: new Date(req.query.endDate)
+      };
+    }
+    
+    // Search filter
+    if (req.query.search) {
+      filter.$or = [
+        { userName: { $regex: req.query.search, $options: 'i' } },
+        { userEmail: { $regex: req.query.search, $options: 'i' } },
+        { device: { $regex: req.query.search, $options: 'i' } },
+        { browser: { $regex: req.query.search, $options: 'i' } },
+        { ip: { $regex: req.query.search, $options: 'i' } }
+      ];
+    }
+    
+    // Get total count and sessions
+    const total = await SessionLog.countDocuments(filter);
+    
+    const sessions = await SessionLog.find(filter)
+      .sort({ loginAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    
+    // Format sessions with all details
+    const formattedSessions = sessions.map(session => {
+      const statusBadge = getStatusBadge(session.sessionStatus);
+      const roleColor = getRoleColor(session.userRole);
+      const daysUntilDeletion = Math.ceil((session.autoDeleteDate - new Date()) / (1000 * 60 * 60 * 24));
+      
+      return {
+        id: session._id,
+        sessionNumber: `SESS-${session._id.toString().slice(-6).toUpperCase()}`,
+        
+        // User Information
+        userId: session.userId,
+        userName: session.userName,
+        userEmail: session.userEmail,
+        userRole: session.userRole,
+        userDepartment: session.userDepartment,
+        roleColor: roleColor,
+        
+        // Session Information
+        loginAt: session.loginAt,
+        logoutAt: session.logoutAt,
+        formattedLogin: formatDatePurple(session.loginAt),
+        formattedLogout: session.logoutAt ? formatDatePurple(session.logoutAt) : 'Active',
+        
+        // Attendance Data
+        clockIn: session.clockIn,
+        clockOut: session.clockOut,
+        formattedClockIn: session.clockIn ? formatDatePurple(session.clockIn) : 'Not Clocked In',
+        formattedClockOut: session.clockOut ? formatDatePurple(session.clockOut) : 'Not Clocked Out',
+        
+        // Duration & Hours
+        totalHours: session.totalHours || 0,
+        durationMinutes: session.durationMinutes || 0,
+        formattedDuration: formatDurationPurple(session.durationMinutes),
+        hoursWorked: session.hoursWorked || 0,
+        dailyEarnings: session.dailyEarnings || 0,
+        
+        // Status
+        status: session.sessionStatus,
+        statusBadge: statusBadge,
+        isActive: session.isActive || false,
+        isClockedIn: !!session.clockIn && !session.clockOut,
+        isClockedOut: !!session.clockOut,
+        
+        // Device Info (FULL DETAILS)
+        ip: session.ip,
+        device: session.device || 'Unknown',
+        browser: session.browser || 'Unknown',
+        os: session.os || 'Unknown',
+        location: session.location || {},
+        userAgent: session.userAgent,
+        
+        // Activities
+        activityCount: session.activities?.length || 0,
+        lastActivity: session.activities?.length > 0 ? 
+          session.activities[session.activities.length - 1] : null,
+        
+        // Auto-Delete Info
+        autoDeleteDate: session.autoDeleteDate,
+        daysUntilDeletion: daysUntilDeletion > 0 ? daysUntilDeletion : 0,
+        deletionStatusColor: daysUntilDeletion <= 7 ? 'red' : 
+                           daysUntilDeletion <= 14 ? 'orange' : 
+                           daysUntilDeletion <= 21 ? 'yellow' : 'green',
+        
+        // Metadata
+        flagged: session.flagged || false,
+        autoLogout: session.autoLogout || false,
+        
+        // Timestamps
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt
+      };
+    });
+
+    // Get statistics
+    const activeSessions = await SessionLog.countDocuments({ 
+      ...filter, 
+      sessionStatus: 'active' 
+    });
+    
+    const totalHoursAgg = await SessionLog.aggregate([
+      { $match: filter },
+      { $group: { _id: null, total: { $sum: '$totalHours' } } }
+    ]);
+    
+    const avgDurationAgg = await SessionLog.aggregate([
+      { $match: filter },
+      { $group: { _id: null, avg: { $avg: '$durationMinutes' } } }
+    ]);
+    
+    const uniqueUsers = await SessionLog.distinct('userId', filter);
+
+    res.status(200).json({
+      success: true,
+      message: `Found ${sessions.length} sessions`,
+      theme: 'purple',
+      userInfo: {
+        id: req.user._id,
+        name: `${req.user.firstName} ${req.user.lastName}`,
+        email: req.user.email,
+        role: req.user.role,
+        roleColor: getRoleColor(req.user.role)
+      },
+      data: formattedSessions,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1
+      },
+      statistics: {
+        totalSessions: total,
+        activeSessions,
+        completedSessions: await SessionLog.countDocuments({ 
+          ...filter, 
+          sessionStatus: 'completed' 
+        }),
+        expiredSessions: await SessionLog.countDocuments({ 
+          ...filter, 
+          sessionStatus: 'expired' 
+        }),
+        terminatedSessions: await SessionLog.countDocuments({ 
+          ...filter, 
+          sessionStatus: 'terminated' 
+        }),
+        totalHours: totalHoursAgg[0]?.total || 0,
+        avgDuration: avgDurationAgg[0]?.avg || 0,
+        uniqueUsers: uniqueUsers.length,
+        deletionCount: await SessionLog.countDocuments({
+          ...filter,
+          autoDeleteDate: { $lte: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
+        })
+      }
+    });
+  } catch (error) {
+    console.error('❌ getAllSessionsAdmin error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch sessions',
+      error: error.message,
+      theme: 'purple'
+    });
+  }
+};

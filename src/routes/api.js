@@ -479,25 +479,35 @@ router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);
 router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
 
 // ==================== SessionLog Routes====================  
-router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
+router.get('/my-sessions', protect, sessionController.getMySessions);
 router.get('/my-current-session', protect, sessionController.getMyCurrentSession);
-router.get('/my-session-state', protect, sessionController.getMyCurrentSession);
-// router.get('/sessions/stats/attendance', protect, sessionController.getSessionAttendanceStats);
-// router.get('/stats', protect, sessionController.getSessionStatistics);
-router.get(' /sessions/statistics', protect, sessionController.getMySessionStats);
+router.get('/statistics', protect, sessionController.getMySessionStats);
 router.post('/clock-in', protect, sessionController.clockIn);
 router.post('/clock-out', protect, sessionController.clockOut);
-// router.get('/export', protect, sessionController.exportMySessions); 
-router.get('/allSession', protect, adminOnly, sessionController.getAllSessions);
+
+// For moderators and admins
+// router.get('/moderator/sessions', protect, moderatorOnly, sessionController.getAllSessions);
+// router.get('/moderator/review', protect, moderatorOnly, sessionController.getSessionsForReview);
+// router.post('/moderator/review/:id', protect, moderatorOnly, sessionController.reviewSession);
+
+// For admins only
+router.get('/admin/all', protect, adminOnly, sessionController.getAllSessionsAdmin);
 router.get('/admin/session/:id', protect, adminOnly, sessionController.getSessionById);
-router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
 router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById);
-router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions); 
+router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
+router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions);
+router.post('/admin/bulk-extend', protect, adminOnly, sessionController.bulkExtendRetention);
+router.post('/admin/trigger-delete', protect, adminOnly, sessionController.triggerAutoDelete);
+
+// Analytics routes (for admins and moderators)
 router.get('/analytics/daily', protect, adminOnly, sessionController.getDailyAnalytics);
 router.get('/analytics/devices', protect, adminOnly, sessionController.getDeviceAnalytics);
-router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics); 
-// router.get('/export', sessionController.exportMySessions);
-router.get('/admin/export', adminOnly, sessionController.exportAllSessions);
+router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics);
+router.get('/analytics/roles', protect, adminOnly, sessionController.getRoleDistribution);
+
+// Auto-deletion routes
+router.get('/deletion-status', protect, sessionController.getSessionsNearingDeletion);
+router.post('/extend-retention/:id', protect, adminOnly, sessionController.extendSessionRetention);
 
 
 // =================== WeaklyOff Routes ==================== 
