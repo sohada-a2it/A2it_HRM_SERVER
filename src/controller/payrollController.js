@@ -19,7 +19,133 @@ const formatCurrency = (amount) => {
     maximumFractionDigits: 0
   }).format(amount || 0).replace('BDT', '৳');
 };
-
+// ১. প্রথমে এই ফাংশনটি কম্পোনেন্টের ভিতরে যোগ করুন
+const handleDownloadPDF = async () => {
+  try {
+    // jsPDF ডায়নামিক ইমপোর্ট
+    const { jsPDF } = await import('jspdf');
+    const autoTable = await import('jspdf-autotable').then(module => module.default);
+    
+    // PDF ডকুমেন্ট তৈরি
+    const doc = new jsPDF();
+    
+    // PDF কন্টেন্ট তৈরি
+    const pageWidth = doc.internal.pageSize.width;
+    const pageHeight = doc.internal.pageSize.height;
+    
+    // Header
+    doc.setFontSize(24);
+    doc.setTextColor(100, 100, 255);
+    doc.text("Attendance Report", pageWidth / 2, 20, { align: 'center' });
+    
+    // Subtitle
+    doc.setFontSize(12);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, pageWidth / 2, 30, { align: 'center' });
+    
+    // Employee Info
+    doc.setFontSize(14);
+    doc.setTextColor(0, 0, 0);
+    let yPos = 45;
+    
+    const employee = isAdmin && filters.employeeId 
+      ? employees.find(e => e._id === filters.employeeId)
+      : userData;
+    
+    doc.text(`Employee: ${employee?.firstName} ${employee?.lastName}`, 20, yPos);
+    yPos += 8;
+    doc.text(`Employee ID: ${employee?.employeeId || 'N/A'}`, 20, yPos);
+    yPos += 8;
+    doc.text(`Department: ${employee?.department || 'N/A'}`, 20, yPos);
+    yPos += 8;
+    doc.text(`Date Range: ${dateRange.startDate} to ${dateRange.endDate}`, 20, yPos);
+    yPos += 15;
+    
+    // Summary Box
+    doc.setDrawColor(200, 200, 255);
+    doc.setFillColor(240, 240, 255);
+    doc.rect(20, yPos, pageWidth - 40, 40, 'F');
+    
+    doc.setFontSize(12);
+    doc.setTextColor(0, 0, 0);
+    
+    if (summary) {
+      const summaryData = [
+        [`Present Days: ${summary.presentDays || 0}`, `Absent Days: ${summary.absentDays || 0}`],
+        [`Total Hours: ${summary.totalHours?.toFixed(2) || '0.00'}`, `Attendance Rate: ${summary.attendanceRate?.toFixed(1) || '0.0'}%`]
+      ];
+      
+      autoTable(doc, {
+        startY: yPos + 5,
+        head: [['Summary Statistics']],
+        body: summaryData,
+        theme: 'grid',
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [100, 100, 255], textColor: [255, 255, 255] },
+        margin: { left: 25, right: 25 }
+      });
+    }
+    
+    yPos += 50;
+    
+    // Attendance Table
+    if (attendance.length > 0) {
+      // Table Header
+      doc.setFontSize(16);
+      doc.setTextColor(100, 100, 255);
+      doc.text("Attendance Records", 20, yPos);
+      yPos += 10;
+      
+      // Prepare table data
+      const tableData = attendance.map(record => {
+        const date = new Date(record.date);
+        return [
+          date.toLocaleDateString('en-GB'),
+          date.toLocaleDateString('en-US', { weekday: 'short' }),
+          record.status,
+          record.clockIn ? new Date(record.clockIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '-',
+          record.clockOut ? new Date(record.clockOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '-',
+          record.totalHours?.toFixed(2) || '0.00'
+        ];
+      });
+      
+      // Add table using autoTable
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours']],
+        body: tableData,
+        theme: 'striped',
+        headStyles: { fillColor: [100, 100, 255], textColor: [255, 255, 255] },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        styles: { fontSize: 9, cellPadding: 3 },
+        margin: { left: 20, right: 20 }
+      });
+    } else {
+      doc.setFontSize(12);
+      doc.setTextColor(150, 150, 150);
+      doc.text("No attendance records found", pageWidth / 2, yPos, { align: 'center' });
+    }
+    
+    // Footer
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Page ${i} of ${totalPages}`, pageWidth - 30, pageHeight - 10);
+      doc.text("Attendance Management System", 20, pageHeight - 10);
+    }
+    
+    // Save PDF
+    const fileName = `attendance_report_${employee?.employeeId || 'all'}_${dateRange.startDate}_${dateRange.endDate}.pdf`;
+    doc.save(fileName);
+    
+    toast.success("PDF downloaded successfully!");
+  } catch (error) {
+    console.error("PDF generation error:", error);
+    toast.error("Failed to generate PDF");
+  }
+};
 // Get month name
 const getMonthName = (month) => {
   const months = [

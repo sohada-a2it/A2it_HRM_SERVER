@@ -479,12 +479,22 @@ router.get('/admin/auditSearch', protect, adminOnly, auditController.searchAudit
 router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);  
 router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
 
-// Admin routes
-router.get('/sessions/admin/all', protect, adminOnly, sessionController.getAllSessions);
-router.get('/sessions/details/:id', protect, sessionController.getSessionDetails);
-router.post('/sessions/admin/terminate/:id', protect, adminOnly, sessionController.terminateSession);
-router.delete('/sessions/admin/delete/:id', protect, adminOnly, sessionController.deleteSession);  
-router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
+// ✅ Public routes (login-based)
+router.post('/create', protect, sessionController.createSession);
+router.get('/my-sessions', protect, sessionController.getMySessions);
+router.get('/my/details/:id', protect, sessionController.getSessionDetails);
+router.put('/update-activity', protect, sessionController.updateSessionActivity);
+router.post('/logout', protect, sessionController.logoutSession);
+
+// ✅ Admin routes
+router.get('/admin/all', protect, adminOnly, sessionController.getAllSessions);
+router.get('/admin/details/:id', protect, adminOnly, sessionController.getSessionDetails);
+router.post('/admin/terminate/:id', protect, adminOnly, sessionController.terminateSession);
+router.delete('/admin/delete/:id', protect, adminOnly, sessionController.deleteSession); 
+
+
+// ✅ Statistics (available for all authenticated users)
+router.get('/stats', protect, sessionController.getRealTimeStats);
 
 // =================== WeaklyOff Routes ==================== 
 router.get('/weekly-off', protect, OfficeSchedule.getWeeklyOff); 

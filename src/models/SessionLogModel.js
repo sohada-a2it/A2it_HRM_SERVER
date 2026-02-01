@@ -1,4 +1,4 @@
-// models/SessionLogModel.js - Purple Theme Design with Auto Delete
+// models/SessionLogModel.js - UPDATED
 const mongoose = require('mongoose');
 
 const activitySchema = new mongoose.Schema({
@@ -6,10 +6,8 @@ const activitySchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: [
-      'clock_in', 'clock_out', 'break_start', 'break_end', 
-      'login', 'logout', 'password_change', 'profile_update',
-      'session_expired', 'auto_logout', 'manual_logout',
-      'session_created', 'device_change', 'location_change'
+      'login', 'logout', 'activity_update', 'session_created',
+      'device_change', 'location_change', 'session_terminated'
     ]
   },
   details: {
@@ -27,10 +25,6 @@ const activitySchema = new mongoose.Schema({
   timestamp: {
     type: Date,
     default: Date.now
-  },
-  color: {
-    type: String,
-    default: 'purple'
   }
 });
 
@@ -42,325 +36,209 @@ const sessionLogSchema = new mongoose.Schema({
     index: true
   },
   
-  // ✅ User details (purple theme style)
+  // ✅ User details at time of session creation
   userName: {
     type: String,
-    index: true
+    required: true
   },
   userEmail: {
-    type: String
+    type: String,
+    required: true
   },
   userRole: {
     type: String,
     enum: ['admin', 'superAdmin', 'employee', 'moderator'],
-    index: true
-  },
-  userDepartment: {
-    type: String
+    required: true
   },
   
-  // Session timings with purple theme
+  // Session timings
   loginAt: {
     type: Date,
     default: Date.now,
     index: true
   },
   logoutAt: {
-    type: Date,
-    index: true
-  },
-  
-  // ✅ Attendance tracking
-  clockIn: {
-    type: Date,
-    index: true
-  },
-  clockOut: {
     type: Date
   },
-  totalHours: {
-    type: Number,
-    default: 0
-  },
-  dailyRate: {
-    type: Number,
-    default: 0
+  
+  lastActivity: {
+    type: Date,
+    default: Date.now
   },
   
   // Device information
   ip: {
     type: String,
-    index: true
+    required: true
   },
   device: {
-    type: String
+    type: String,
+    default: 'Desktop'
   },
   browser: {
+    type: String,
+    default: 'Unknown'
+  },
+  browserVersion: {
     type: String
   },
   os: {
-    type: String
+    type: String,
+    default: 'Unknown'
   },
   location: {
-    city: String,
-    country: String,
-    coordinates: {
-      lat: Number,
-      lng: Number
+    type: Object,
+    default: {
+      city: 'Unknown',
+      country: 'Unknown',
+      region: 'Unknown'
     }
   },
   
   // Activities log
   activities: [activitySchema],
   
-  // Auto logout flag
-  autoLogout: {
-    type: Boolean,
-    default: false
+  userAgent: {
+    type: String,
+    default: ''
   },
   
-  // ✅ Session status with color codes
+  // Session status
   sessionStatus: {
     type: String,
     enum: ['active', 'completed', 'expired', 'terminated'],
     default: 'active',
     index: true
   },
-    // ✅ userAgent যোগ করুন
-  userAgent: {
-    type: String
-  },
   
-  // ✅ Purple theme status colors
-  statusColor: {
+  // Session number
+  sessionNumber: {
     type: String,
-    enum: ['purple', 'pink', 'indigo', 'violet'],
-    default: 'purple'
+    unique: true,
+    required: true
   },
   
-  // ✅ Auto delete settings
+  // Auto delete
   autoDeleteDate: {
     type: Date,
-    default: () => {
+    default: function() {
       const date = new Date();
-      date.setDate(date.getDate() + 30); // 30 days from creation
+      date.setDate(date.getDate() + 30);
       return date;
     }
-  },
-  
-  // ✅ Session metadata for analytics
-  metadata: {
-    isMobile: Boolean,
-    isTablet: Boolean,
-    isDesktop: Boolean,
-    screenResolution: String,
-    timezone: String,
-    language: String
   }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
-// In SessionLog model, add pre-save middleware
-// models/SessionLogModel.js
 
-// ✅ Combine both pre-save middleware into one
-sessionLogSchema.pre('save', async function(next) {
-  try {
-    // 1. Parse device info from userAgent
-    if (this.userAgent && (!this.device || !this.browser || !this.os)) {
-      const ua = this.userAgent.toLowerCase();
-      
-      // Parse device
-      if (ua.includes('mobile')) {
-        this.device = 'Mobile';
-      } else if (ua.includes('tablet')) {
-        this.device = 'Tablet';
-      } else {
-        this.device = 'Desktop';
-      }
-      
-      // Parse browser
-      if (ua.includes('chrome') && !ua.includes('edge')) this.browser = 'Chrome';
-      else if (ua.includes('firefox')) this.browser = 'Firefox';
-      else if (ua.includes('safari') && !ua.includes('chrome')) this.browser = 'Safari';
-      else if (ua.includes('edge')) this.browser = 'Edge';
-      else this.browser = 'Unknown';
-      
-      // Parse OS
-      if (ua.includes('windows')) this.os = 'Windows';
-      else if (ua.includes('mac os')) this.os = 'macOS';
-      else if (ua.includes('linux')) this.os = 'Linux';
-      else if (ua.includes('android')) this.os = 'Android';
-      else if (ua.includes('ios') || ua.includes('iphone')) this.os = 'iOS';
-      else this.os = 'Unknown';
-    }
-    
-    // 2. Populate user info if missing
-    if (!this.userName || !this.userEmail || !this.userRole) {
-      const User = mongoose.model('User');
-      const user = await User.findById(this.userId).select('firstName lastName email role department');
-      
-      if (user) {
-        this.userName = `${user.firstName} ${user.lastName}`;
-        this.userEmail = user.email;
-        this.userRole = user.role;
-        this.userDepartment = user.department || 'Not assigned';
-        
-        // Set status color based on role
-        if (user.role === 'admin' || user.role === 'superAdmin') {
-          this.statusColor = 'indigo';
-        } else if (user.role === 'moderator') {
-          this.statusColor = 'violet';
-        } else {
-          this.statusColor = 'purple';
-        }
-      }
-    }
-    
-    // 3. Set autoDeleteDate if not set
-    if (!this.autoDeleteDate) {
-      const deleteDate = new Date();
-      deleteDate.setDate(deleteDate.getDate() + 30);
-      this.autoDeleteDate = deleteDate;
-    }
-    
-    next();
-  } catch (error) {
-    console.error('SessionLog pre-save error:', error);
-    next(error);
+// ✅ FIXED: Generate session number BEFORE saving
+sessionLogSchema.pre('save', function(next) {
+  if (!this.sessionNumber) {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).substr(2, 6).toUpperCase();
+    this.sessionNumber = `SESS-${timestamp}-${random}`;
   }
-});
-// Indexes for better performance
-sessionLogSchema.index({ userId: 1, loginAt: -1 });
-sessionLogSchema.index({ sessionStatus: 1, loginAt: -1 });
-sessionLogSchema.index({ autoDeleteDate: 1 });
-sessionLogSchema.index({ clockIn: 1 });
-sessionLogSchema.index({ userRole: 1, loginAt: -1 });
-
-// ✅ Virtual for duration in minutes
-sessionLogSchema.virtual('durationMinutes').get(function() {
-  if (!this.loginAt) return 0;
   
-  const endTime = this.logoutAt || new Date();
-  const durationMs = endTime - this.loginAt;
-  return Math.round(durationMs / (1000 * 60));
-});
-
-// ✅ Virtual for formatted duration with purple theme
-sessionLogSchema.virtual('formattedDuration').get(function() {
-  const minutes = this.durationMinutes;
-  if (minutes >= 1440) {
-    const days = Math.floor(minutes / 1440);
-    const hours = Math.floor((minutes % 1440) / 60);
-    return `${days}d ${hours}h`;
-  }
-  if (minutes >= 60) {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}h ${mins}m`;
-  }
-  return `${minutes}m`;
-});
-
-// ✅ Virtual for isActive with purple theme style
-sessionLogSchema.virtual('isActive').get(function() {
-  return !this.logoutAt && this.sessionStatus === 'active';
-});
-
-// ✅ Virtual for hours worked
-sessionLogSchema.virtual('hoursWorked').get(function() {
-  if (this.clockIn && this.clockOut) {
-    const diffMs = this.clockOut - this.clockIn;
-    return (diffMs / (1000 * 60 * 60)).toFixed(2);
-  }
-  return 0;
-});
-
-// ✅ Virtual for daily earnings
-sessionLogSchema.virtual('dailyEarnings').get(function() {
-  const hours = parseFloat(this.hoursWorked);
-  if (hours > 0 && this.dailyRate > 0) {
-    return (hours * (this.dailyRate / 8)).toFixed(2); // Assuming 8 hour work day
-  }
-  return 0;
-});
-
-// ✅ Virtual for remaining days before auto-delete
-sessionLogSchema.virtual('daysUntilDeletion').get(function() {
-  if (!this.autoDeleteDate) return null;
-  const now = new Date();
-  const diffTime = this.autoDeleteDate - now;
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return diffDays > 0 ? diffDays : 0;
-});
-
-// ✅ Virtual for deletion status color
-sessionLogSchema.virtual('deletionStatusColor').get(function() {
-  const days = this.daysUntilDeletion;
-  if (days === null) return 'gray';
-  if (days <= 7) return 'red';
-  if (days <= 14) return 'orange';
-  if (days <= 21) return 'yellow';
-  return 'green';
-});
-
-
-
-// ✅ Middleware to auto-delete expired sessions
-sessionLogSchema.statics.cleanupExpiredSessions = async function() {
-  try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  // Parse userAgent
+  if (this.userAgent) {
+    const ua = this.userAgent.toLowerCase();
     
-    const result = await this.deleteMany({
-      loginAt: { $lt: thirtyDaysAgo },
-      sessionStatus: { $in: ['completed', 'expired', 'terminated'] }
+    // Device
+    if (ua.includes('mobile') && !ua.includes('tablet')) {
+      this.device = 'Mobile';
+    } else if (ua.includes('tablet') || ua.includes('ipad')) {
+      this.device = 'Tablet';
+    } else {
+      this.device = 'Desktop';
+    }
+    
+    // Browser
+    if (ua.includes('chrome') && !ua.includes('edge')) {
+      this.browser = 'Chrome';
+    } else if (ua.includes('firefox')) {
+      this.browser = 'Firefox';
+    } else if (ua.includes('safari') && !ua.includes('chrome')) {
+      this.browser = 'Safari';
+    } else if (ua.includes('edge')) {
+      this.browser = 'Edge';
+    }
+    
+    // OS
+    if (ua.includes('windows')) this.os = 'Windows';
+    else if (ua.includes('mac os')) this.os = 'macOS';
+    else if (ua.includes('linux')) this.os = 'Linux';
+    else if (ua.includes('android')) this.os = 'Android';
+    else if (ua.includes('ios') || ua.includes('iphone')) this.os = 'iOS';
+  }
+  
+  next();
+});
+
+// ✅ FIXED: Create new session method
+sessionLogSchema.statics.createNewSession = async function(userId, userData = {}) {
+  try {
+    console.log('🔧 Creating session for userId:', userId);
+    
+    // Get user info first
+    const User = mongoose.model('User');
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    // Check for existing active session
+    const existingActive = await this.findOne({
+      userId,
+      sessionStatus: 'active'
     });
     
-    console.log(`✅ Cleaned up ${result.deletedCount} expired sessions`);
-    return result.deletedCount;
-  } catch (error) {
-    console.error('Error cleaning up expired sessions:', error);
-    return 0;
-  }
-};
-
-// ✅ Method to check if session should be auto-deleted
-sessionLogSchema.methods.shouldAutoDelete = function() {
-  if (!this.autoDeleteDate) return false;
-  const now = new Date();
-  return now > this.autoDeleteDate;
-};
-
-// ✅ Static method to get role-based statistics
-sessionLogSchema.statics.getRoleStatistics = async function(role, period = '30days') {
-  const dateFilter = {};
-  const now = new Date();
-  
-  if (period === '7days') {
-    dateFilter.loginAt = { $gte: new Date(now.setDate(now.getDate() - 7)) };
-  } else if (period === '30days') {
-    dateFilter.loginAt = { $gte: new Date(now.setDate(now.getDate() - 30)) };
-  }
-  
-  dateFilter.userRole = role;
-  
-  return await this.aggregate([
-    { $match: dateFilter },
-    {
-      $group: {
-        _id: null,
-        totalSessions: { $sum: 1 },
-        activeSessions: { $sum: { $cond: [{ $eq: ['$sessionStatus', 'active'] }, 1, 0] } },
-        totalHours: { $sum: '$totalHours' },
-        avgDuration: { $avg: '$durationMinutes' },
-        uniqueUsers: { $addToSet: '$userId' },
-        totalEarnings: { $sum: '$dailyEarnings' }
-      }
+    if (existingActive) {
+      console.log('⚠️ Active session exists, updating last activity');
+      existingActive.lastActivity = new Date();
+      await existingActive.save();
+      return existingActive;
     }
-  ]);
+    
+    // Create session data with user info
+    const sessionData = {
+      userId,
+      userName: `${user.firstName} ${user.lastName}`,
+      userEmail: user.email,
+      userRole: user.role,
+      userAgent: userData.userAgent || '',
+      ip: userData.ip || '0.0.0.0',
+      location: userData.location || {},
+      loginAt: new Date(),
+      lastActivity: new Date(),
+      sessionStatus: 'active',
+      activities: [{
+        action: 'login',
+        details: 'User logged in',
+        timestamp: new Date(),
+        ip: userData.ip || '0.0.0.0',
+        location: JSON.stringify(userData.location || {})
+      }]
+    };
+    
+    console.log('📝 Session data prepared:', {
+      userName: sessionData.userName,
+      userEmail: sessionData.userEmail,
+      ip: sessionData.ip
+    });
+    
+    const session = new this(sessionData);
+    await session.save();
+    
+    console.log(`✅ Session created successfully: ${session.sessionNumber}`);
+    return session;
+    
+  } catch (error) {
+    console.error('❌ Create session error:', error);
+    throw error;
+  }
 };
 
 module.exports = mongoose.model('SessionLog', sessionLogSchema);

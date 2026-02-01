@@ -171,93 +171,67 @@ const getClientIP = (req) => {
          '0.0.0.0';
 };
 
-// ==================== CREATE SESSION (WITH REAL-TIME DATA) ====================
+// controllers/sessionController.js - Employee session fix
+
+// ==================== CREATE SESSION (FIXED FOR EMPLOYEE) ====================
 exports.createSession = async (req, res) => {
   try {
-    const { userId, userAgent } = req.body;
+    console.log('🎯 CREATE SESSION called for user:', req.user);
     
-    if (!userId) {
-      return res.status(400).json({
+    // Get user ID from authenticated request
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
         success: false,
-        message: 'User ID is required'
+        message: 'User not authenticated'
       });
     }
     
-    // Get real IP from request
+    const userId = req.user._id;
+    const userAgent = req.body.userAgent || req.headers['user-agent'] || 'Unknown';
     const clientIP = getClientIP(req);
-    
-    // Get location from IP
     const location = getLocationFromIP(clientIP);
     
-    // Parse user agent for detailed info
-    const deviceInfo = parseUserAgent(userAgent || req.headers['user-agent'] || '');
+    console.log(`👤 User ID: ${userId}`);
+    console.log(`📱 User Agent: ${userAgent.substring(0, 100)}...`);
+    console.log(`📍 IP: ${clientIP}, Location: ${location.city}, ${location.country}`);
     
     // Check for existing active session
     const existingSession = await SessionLog.findOne({
-      userId,
+      userId: userId,
       sessionStatus: 'active'
     });
     
     if (existingSession) {
-      // Update existing session with new activity
+      // Update existing session
       existingSession.lastActivity = new Date();
       existingSession.activities.push({
-        action: 'reconnected',
+        action: 'reconnect',
         details: 'User reconnected to session',
-        timestamp: new Date()
+        timestamp: new Date(),
+        ip: clientIP,
+        location: `${location.city}, ${location.country}`
       });
-      
-      // Update IP and location if changed
-      if (clientIP !== existingSession.ip) {
-        existingSession.ip = clientIP;
-        existingSession.location = location;
-      }
       
       await existingSession.save();
       
       return res.status(200).json({
         success: true,
         message: 'Using existing active session',
-        data: existingSession
+        data: existingSession,
+        isNewSession: false
       });
     }
     
-    const sessionData = {
-      userId,
-      userName: req.user?.firstName ? `${req.user.firstName} ${req.user.lastName}` : 'Unknown User',
-      userEmail: req.user?.email || 'No email',
-      userRole: req.user?.role || 'employee',
-      ip: clientIP,
-      device: deviceInfo.device,
-      browser: deviceInfo.browser,
-      browserVersion: deviceInfo.browserVersion,
-      os: deviceInfo.os,
-      location: location,
-      loginAt: new Date(),
-      lastActivity: new Date(),
-      sessionStatus: 'active',
-      isActive: true,
-      activities: [{
-        action: 'login',
-        details: 'User logged in successfully',
-        timestamp: new Date(),
-        ip: clientIP,
-        location: `${location.city}, ${location.country}`
-      }],
-      userAgent: userAgent || req.headers['user-agent'] || ''
-    };
+    // Create new session using model method
+    const session = await SessionLog.createEmployeeSession(userId, userAgent, clientIP, location);
     
-    const session = new SessionLog(sessionData);
-    await session.save();
-    
-    console.log(`✅ New session created: ${session._id} for user: ${userId}`);
-    console.log(`📍 Location: ${location.city}, ${location.country}`);
-    console.log(`💻 Device: ${deviceInfo.device} • ${deviceInfo.os} • ${deviceInfo.browser}`);
+    console.log(`✅ Session created: ${session.sessionNumber}`);
     
     res.status(201).json({
       success: true,
       message: 'Session created successfully',
-      data: session
+      data: session,
+      isNewSession: true
     });
     
   } catch (error) {
@@ -265,11 +239,124 @@ exports.createSession = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to create session',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// ==================== GET MY SESSIONS (FIXED FOR EMPLOYEE) ====================
+exports.getMySessions = async (req, res) => {
+  try {
+    console.log('🔍 GET MY SESSIONS called for user:', req.user);
+    
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+    
+    const userId = req.user._id;
+    
+    // Use model method to get sessions
+    const sessions = await SessionLog.getEmployeeSessions(userId);
+    
+    console.log(`📊 Found ${sessions.length} sessions for user: ${userId}`);
+    
+    // Format sessions
+    const formattedSessions = sessions.map(session => {
+      const isCurrentlyActive = session.sessionStatus === 'active' && 
+        session.loginAt && 
+        (new Date() - new Date(session.loginAt)) < 5 * 60 * 1000;
+      
+      return {
+        ...session,
+        formattedLogin: formatDate(session.loginAt),
+        formattedLogout: session.logoutAt ? formatDate(session.logoutAt) : 
+                       (isCurrentlyActive ? 'Active Now' : 'Inactive'),
+        status: session.sessionStatus,
+        isActive: isCurrentlyActive,
+        locationString: session.location?.city && session.location?.country ? 
+          `${session.location.city}, ${session.location.country}` : 
+          (session.ip || 'Unknown Location')
+      };
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: `Found ${sessions.length} sessions`,
+      data: formattedSessions,
+      total: sessions.length
+    });
+    
+  } catch (error) {
+    console.error('❌ getMySessions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch your sessions',
       error: error.message
     });
   }
 };
 
+// ==================== LOGOUT (FIXED) ====================
+exports.logoutSession = async (req, res) => {
+  try {
+    console.log('🚪 LOGOUT called for user:', req.user);
+    
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+    
+    const userId = req.user._id;
+    const clientIP = getClientIP(req);
+    
+    // Find and update all active sessions
+    const result = await SessionLog.updateMany(
+      {
+        userId: userId,
+        sessionStatus: 'active'
+      },
+      {
+        $set: {
+          sessionStatus: 'completed',
+          logoutAt: new Date(),
+          lastActivity: new Date()
+        },
+        $push: {
+          activities: {
+            action: 'manual_logout',
+            details: 'User manually logged out',
+            timestamp: new Date(),
+            ip: clientIP,
+            location: 'Logout initiated'
+          }
+        }
+      }
+    );
+    
+    console.log(`✅ Logged out ${result.modifiedCount} sessions`);
+    
+    res.status(200).json({
+      success: true,
+      message: `Successfully logged out from ${result.modifiedCount} session(s)`,
+      sessionsEnded: result.modifiedCount,
+      logoutTime: new Date()
+    });
+    
+  } catch (error) {
+    console.error('❌ logoutSession error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to logout',
+      error: error.message
+    });
+  }
+};
 // ==================== UPDATE SESSION ACTIVITY (REAL-TIME) ====================
 exports.updateSessionActivity = async (req, res) => {
   try {
@@ -322,98 +409,7 @@ exports.updateSessionActivity = async (req, res) => {
   }
 };
 
-// ==================== GET MY SESSIONS (EMPLOYEE) - WITH REAL-TIME DATA ====================
-exports.getMySessions = async (req, res) => {
-  try {
-    const userId = validateUserId(req.user);
-    
-    const sessions = await SessionLog.find({ userId })
-      .sort({ loginAt: -1 })
-      .lean();
-    
-    const formattedSessions = sessions.map(session => {
-      const deviceInfo = parseUserAgent(session.userAgent);
-      
-      let locationString = 'Location not available';
-      if (session.location) {
-        if (session.location.city && session.location.country) {
-          locationString = `${session.location.city}, ${session.location.country}`;
-          if (session.location.region && session.location.region !== session.location.city) {
-            locationString = `${session.location.city}, ${session.location.region}, ${session.location.country}`;
-          }
-        } else if (session.ip) {
-          locationString = `IP: ${session.ip}`;
-        }
-      }
-      
-      let durationMinutes = 0;
-      if (session.loginAt && session.logoutAt) {
-        durationMinutes = Math.round((new Date(session.logoutAt) - new Date(session.loginAt)) / (1000 * 60));
-      } else if (session.loginAt && session.sessionStatus === 'active') {
-        durationMinutes = Math.round((new Date() - new Date(session.loginAt)) / (1000 * 60));
-      }
-      
-      // Get current session real-time status
-      const isCurrentlyActive = session.sessionStatus === 'active' && 
-                               session.lastActivity && 
-                               (new Date() - new Date(session.lastActivity) < 5 * 60 * 1000); // 5 minutes
-      
-      return {
-        id: session._id,
-        sessionNumber: `SESS-${session._id.toString().slice(-6).toUpperCase()}`,
-        userId: session.userId,
-        userName: session.userName || `${req.user.firstName} ${req.user.lastName}`,
-        userEmail: session.userEmail || req.user.email,
-        userRole: session.userRole || req.user.role,
-        loginAt: session.loginAt,
-        logoutAt: session.logoutAt,
-        lastActivity: session.lastActivity,
-        formattedLogin: formatDate(session.loginAt),
-        formattedLogout: session.logoutAt ? formatDate(session.logoutAt) : 
-                       (isCurrentlyActive ? 'Active Now' : 'Inactive'),
-        durationMinutes: durationMinutes,
-        formattedDuration: formatDuration(durationMinutes),
-        status: session.sessionStatus,
-        statusColor: getStatusColor(session.sessionStatus),
-        isActive: isCurrentlyActive,
-        ip: session.ip || 'No IP',
-        device: session.device || deviceInfo.device,
-        browser: session.browser || deviceInfo.browser,
-        browserVersion: session.browserVersion || deviceInfo.browserVersion,
-        os: session.os || deviceInfo.os,
-        location: session.location || {},
-        locationString: locationString,
-        userAgent: session.userAgent,
-        activities: session.activities || [],
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        // Real-time indicators
-        realTime: {
-          lastSeen: session.lastActivity ? 
-                   Math.round((new Date() - new Date(session.lastActivity)) / 1000) + ' seconds ago' : 
-                   'Unknown',
-          isOnline: isCurrentlyActive,
-          connectionType: session.device === 'Mobile' ? 'Mobile Data/WiFi' : 
-                         session.device === 'Tablet' ? 'Tablet WiFi' : 'Desktop Ethernet/WiFi'
-        }
-      };
-    });
 
-    res.status(200).json({
-      success: true,
-      message: `Found ${sessions.length} sessions`,
-      data: formattedSessions,
-      total: sessions.length
-    });
-  } catch (error) {
-    console.error('❌ getMySessions error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch your sessions',
-      error: error.message
-    });
-  }
-};
 
 // ==================== GET ALL SESSIONS (ADMIN) - WITH REAL-TIME DATA ====================
 exports.getAllSessions = async (req, res) => {
@@ -643,70 +639,6 @@ exports.getSessionDetails = async (req, res) => {
 };
 
 // ==================== LOGOUT (END SESSION) - FIXED VERSION ====================
-exports.logoutSession = async (req, res) => {
-  try {
-    const userId = validateUserId(req.user);
-    
-    console.log(`🔍 Logging out user: ${userId}`);
-    
-    // Find ALL active sessions for this user
-    const activeSessions = await SessionLog.find({
-      userId,
-      sessionStatus: 'active'
-    });
-    
-    console.log(`📊 Found ${activeSessions.length} active sessions to logout`);
-    
-    if (activeSessions.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: 'No active sessions found to logout',
-        data: null
-      });
-    }
-    
-    // Update all active sessions
-    const updatePromises = activeSessions.map(async (session) => {
-      session.sessionStatus = 'completed';
-      session.logoutAt = new Date();
-      session.isActive = false;
-      session.lastActivity = new Date();
-      
-      session.activities.push({
-        action: 'logout',
-        details: 'User logged out normally',
-        timestamp: new Date(),
-        ip: session.ip,
-        location: `${session.location?.city || 'Unknown'}, ${session.location?.country || 'Unknown'}`
-      });
-      
-      console.log(`✅ Logging out session: ${session._id}`);
-      return session.save();
-    });
-    
-    await Promise.all(updatePromises);
-    
-    console.log(`✅ Successfully logged out ${activeSessions.length} sessions`);
-    
-    res.status(200).json({
-      success: true,
-      message: `Successfully logged out from ${activeSessions.length} session(s)`,
-      data: {
-        sessionsEnded: activeSessions.length,
-        logoutTime: new Date()
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ logoutSession error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to logout',
-      error: error.message,
-      stack: error.stack
-    });
-  }
-};
 
 // ==================== AUTO CLEANUP INACTIVE SESSIONS ====================
 exports.autoCleanupSessions = async () => {
