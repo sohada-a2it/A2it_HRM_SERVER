@@ -276,8 +276,9 @@ router.get('/admin/late-early-statistics', protect, adminOnly, attendanceControl
 router.get('/admin/employee-attendance', protect, adminOnly, attendanceController.getAdminEmployeeAttendance);
 router.get('/admin/shift-timing', protect, adminOnly, attendanceController.getAdminShiftTiming);
 router.get('/admin/export', protect, adminOnly, attendanceController.exportAdminAttendanceData);
-router.get('/admin/auto-clock-out-schedule', protect, adminOnly, attendanceController.getAutoClockOutSchedule);
-
+router.get('/admin/auto-clock-out-schedule', protect, adminOnly, attendanceController.getAutoClockOutSchedule); 
+router.get('/check-weekly-off-config', protect, adminOnly, attendanceController.checkWeeklyOffConfig);
+router.post('/admin/cleanup-duplicates', protect, adminOnly, attendanceController.cleanupDuplicates);
 // Enhanced Admin Routes
 router.get('/admin/employee-calendar', protect, adminOnly, attendanceController.getEmployeeCalendar);
 router.get('/admin/employee-monthly-report', protect, adminOnly, attendanceController.getMonthlyReport);
@@ -400,10 +401,10 @@ router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEm
 router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetEmployeeShift); 
 router.put('/admin/default-shift', protect, adminOnly, userController.updateDefaultShift); 
 router.get('/admin/shift-history/:employeeId', protect, adminOnly, userController.getEmployeeShiftHistory); 
-router.post('/admin/bulk-assign-shifts',protect, adminOnly, userController.bulkAssignShifts); 
+router.post('/admin/bulk-assign-shifts', protect, adminOnly, userController.bulkAssignShifts); 
 router.get('/admin/shift-statistics', protect, adminOnly, userController.getShiftStatistics);  
-router.get('/my-shift',protect, userController.getMyShift); 
-router.get('/employee/:employeeId/shift', protect, userController.getEmployeeShift);
+router.get('/my-shift', protect, userController.getMyShift); 
+router.get('/employee/:employeeId/shift', protect, userController.getEmployeeShift); // ✅ নতুন
 router.put('/employee/:employeeId/shift', protect, adminOnly, userController.updateEmployeeShift);
 
 
@@ -478,37 +479,12 @@ router.get('/admin/auditSearch', protect, adminOnly, auditController.searchAudit
 router.get('/admin/stats', protect, adminOnly, auditController.getAuditStats);  
 router.get('/user/my-logs', protect, auditController.getMyAuditLogs);  
 
-// ==================== SessionLog Routes====================  
-router.get('/my-sessions', protect, sessionController.getMySessions);
-router.get('/my-current-session', protect, sessionController.getMyCurrentSession);
-router.get('/statistics', protect, sessionController.getMySessionStats);
-router.post('/clock-in', protect, sessionController.clockIn);
-router.post('/clock-out', protect, sessionController.clockOut);
-
-// For moderators and admins
-// router.get('/moderator/sessions', protect, moderatorOnly, sessionController.getAllSessions);
-// router.get('/moderator/review', protect, moderatorOnly, sessionController.getSessionsForReview);
-// router.post('/moderator/review/:id', protect, moderatorOnly, sessionController.reviewSession);
-
-// For admins only
-router.get('/admin/all', protect, adminOnly, sessionController.getAllSessionsAdmin);
-router.get('/admin/session/:id', protect, adminOnly, sessionController.getSessionById);
-router.delete('/admin/session/:id', protect, adminOnly, sessionController.deleteSessionById);
-router.get('/admin/statistics', protect, adminOnly, sessionController.getAdminStatistics);
-router.get('/admin/export', protect, adminOnly, sessionController.exportAllSessions);
-router.post('/admin/bulk-extend', protect, adminOnly, sessionController.bulkExtendRetention);
-router.post('/admin/trigger-delete', protect, adminOnly, sessionController.triggerAutoDelete);
-
-// Analytics routes (for admins and moderators)
-router.get('/analytics/daily', protect, adminOnly, sessionController.getDailyAnalytics);
-router.get('/analytics/devices', protect, adminOnly, sessionController.getDeviceAnalytics);
-router.get('/analytics/trends', protect, adminOnly, sessionController.getTrendAnalytics);
-router.get('/analytics/roles', protect, adminOnly, sessionController.getRoleDistribution);
-
-// Auto-deletion routes
-router.get('/deletion-status', protect, sessionController.getSessionsNearingDeletion);
-router.post('/extend-retention/:id', protect, adminOnly, sessionController.extendSessionRetention);
-
+// Admin routes
+router.get('/sessions/admin/all', protect, adminOnly, sessionController.getAllSessions);
+router.get('/sessions/details/:id', protect, sessionController.getSessionDetails);
+router.post('/sessions/admin/terminate/:id', protect, adminOnly, sessionController.terminateSession);
+router.delete('/sessions/admin/delete/:id', protect, adminOnly, sessionController.deleteSession);  
+router.get('/sessions/my-sessions', protect, sessionController.getMySessions);
 
 // =================== WeaklyOff Routes ==================== 
 router.get('/weekly-off', protect, OfficeSchedule.getWeeklyOff); 

@@ -452,6 +452,7 @@ onsiteBenefits: {
   },
   { 
     timestamps: true,
+    strictPopulate: false,
     toJSON: { 
       transform: function(doc, ret) {
         delete ret.password;

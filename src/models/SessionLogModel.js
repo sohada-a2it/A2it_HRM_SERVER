@@ -126,6 +126,10 @@ const sessionLogSchema = new mongoose.Schema({
     default: 'active',
     index: true
   },
+    // ✅ userAgent যোগ করুন
+  userAgent: {
+    type: String
+  },
   
   // ✅ Purple theme status colors
   statusColor: {
@@ -158,7 +162,76 @@ const sessionLogSchema = new mongoose.Schema({
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
+// In SessionLog model, add pre-save middleware
+// models/SessionLogModel.js
 
+// ✅ Combine both pre-save middleware into one
+sessionLogSchema.pre('save', async function(next) {
+  try {
+    // 1. Parse device info from userAgent
+    if (this.userAgent && (!this.device || !this.browser || !this.os)) {
+      const ua = this.userAgent.toLowerCase();
+      
+      // Parse device
+      if (ua.includes('mobile')) {
+        this.device = 'Mobile';
+      } else if (ua.includes('tablet')) {
+        this.device = 'Tablet';
+      } else {
+        this.device = 'Desktop';
+      }
+      
+      // Parse browser
+      if (ua.includes('chrome') && !ua.includes('edge')) this.browser = 'Chrome';
+      else if (ua.includes('firefox')) this.browser = 'Firefox';
+      else if (ua.includes('safari') && !ua.includes('chrome')) this.browser = 'Safari';
+      else if (ua.includes('edge')) this.browser = 'Edge';
+      else this.browser = 'Unknown';
+      
+      // Parse OS
+      if (ua.includes('windows')) this.os = 'Windows';
+      else if (ua.includes('mac os')) this.os = 'macOS';
+      else if (ua.includes('linux')) this.os = 'Linux';
+      else if (ua.includes('android')) this.os = 'Android';
+      else if (ua.includes('ios') || ua.includes('iphone')) this.os = 'iOS';
+      else this.os = 'Unknown';
+    }
+    
+    // 2. Populate user info if missing
+    if (!this.userName || !this.userEmail || !this.userRole) {
+      const User = mongoose.model('User');
+      const user = await User.findById(this.userId).select('firstName lastName email role department');
+      
+      if (user) {
+        this.userName = `${user.firstName} ${user.lastName}`;
+        this.userEmail = user.email;
+        this.userRole = user.role;
+        this.userDepartment = user.department || 'Not assigned';
+        
+        // Set status color based on role
+        if (user.role === 'admin' || user.role === 'superAdmin') {
+          this.statusColor = 'indigo';
+        } else if (user.role === 'moderator') {
+          this.statusColor = 'violet';
+        } else {
+          this.statusColor = 'purple';
+        }
+      }
+    }
+    
+    // 3. Set autoDeleteDate if not set
+    if (!this.autoDeleteDate) {
+      const deleteDate = new Date();
+      deleteDate.setDate(deleteDate.getDate() + 30);
+      this.autoDeleteDate = deleteDate;
+    }
+    
+    next();
+  } catch (error) {
+    console.error('SessionLog pre-save error:', error);
+    next(error);
+  }
+});
 // Indexes for better performance
 sessionLogSchema.index({ userId: 1, loginAt: -1 });
 sessionLogSchema.index({ sessionStatus: 1, loginAt: -1 });
@@ -233,43 +306,7 @@ sessionLogSchema.virtual('deletionStatusColor').get(function() {
   return 'green';
 });
 
-// ✅ Auto populate user info before save
-sessionLogSchema.pre('save', async function(next) {
-  // If user details are missing, populate them
-  if (!this.userName || !this.userEmail || !this.userRole) {
-    try {
-      const User = mongoose.model('User');
-      const user = await User.findById(this.userId).select('firstName lastName email role department');
-      
-      if (user) {
-        this.userName = `${user.firstName} ${user.lastName}`;
-        this.userEmail = user.email;
-        this.userRole = user.role;
-        this.userDepartment = user.department || 'Not assigned';
-        
-        // Set status color based on role
-        if (user.role === 'admin' || user.role === 'superAdmin') {
-          this.statusColor = 'indigo';
-        } else if (user.role === 'moderator') {
-          this.statusColor = 'violet';
-        } else {
-          this.statusColor = 'purple';
-        }
-      }
-    } catch (error) {
-      console.error('Error populating user info:', error);
-    }
-  }
-  
-  // Set autoDeleteDate if not set
-  if (!this.autoDeleteDate) {
-    const deleteDate = new Date();
-    deleteDate.setDate(deleteDate.getDate() + 30);
-    this.autoDeleteDate = deleteDate;
-  }
-  
-  next();
-});
+
 
 // ✅ Middleware to auto-delete expired sessions
 sessionLogSchema.statics.cleanupExpiredSessions = async function() {

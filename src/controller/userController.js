@@ -3,7 +3,7 @@ const bcrypt = require('bcrypt');
 const generateToken = require("../utility/jwt");
 const AuditLog = require('../models/AuditModel');
 const SessionLog = require('../models/SessionLogModel');
-
+const mongoose = require('mongoose'); 
 // Helper to push activity to session
 const addSessionActivity = async ({ userId, action, target, details }) => {
   try {
@@ -117,29 +117,50 @@ exports.unifiedLogin = async (req, res) => {
       });
     }
 
-    // SessionLog creation
+    // ✅ SessionLog creation with better error handling
     let session = null;
     try {
-      session = await SessionLog.create({
+      console.log('🔄 Creating SessionLog for user:', user._id);
+      
+      // Create minimal session data first
+      const sessionData = {
         userId: user._id,
-        loginAt: new Date(),
+        userAgent: req.headers['user-agent'] || '',
         ip: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
-        device: req.headers['user-agent'] || 'Unknown',
-        userAgent: req.headers['user-agent'],
-        activities: [
-          {
-            action: "Unified Login",
-            target: user._id.toString(),
-            details: {
-              email: user.email,
-              role: user.role
-            },
-            timestamp: new Date()
-          }
-        ]
+        loginAt: new Date(),
+        sessionStatus: 'active',
+        activities: [{
+          action: "login",
+          details: "User logged in",
+          timestamp: new Date(),
+          color: 'purple'
+        }]
+      };
+      
+      console.log('Session data to save:', sessionData);
+      
+      // Save session
+      session = new SessionLog(sessionData);
+      await session.save();
+      
+      console.log('✅ SessionLog created successfully:', session._id);
+      console.log('Session details:', {
+        id: session._id,
+        userId: session.userId,
+        userAgent: session.userAgent,
+        device: session.device,
+        browser: session.browser,
+        os: session.os
       });
+      
     } catch (sessionError) {
-      console.error("Session log error:", sessionError);
+      console.error("❌ Session log creation failed:", sessionError);
+      console.error('Error details:', {
+        name: sessionError.name,
+        message: sessionError.message,
+        stack: sessionError.stack
+      });
+      // Don't fail login if session creation fails
     }
 
     // Update last login
@@ -3392,7 +3413,420 @@ exports.getUserSummary = async (req, res) => {
 };
 
 // ================= SHIFT MANAGEMENT CONTROLLERS =================
+// UserController.js - শেষে যোগ করুন
 
+// Admin: Update specific employee's shift timing
+exports.updateEmployeeShift = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { 
+      startTime, 
+      endTime, 
+      effectiveDate, 
+      reason = 'Shift updated by admin', 
+      shiftType = 'regular',
+      makeDefault = false
+    } = req.body;
+
+    console.log('🚀 UPDATE SHIFT STARTED:', {
+      employeeId,
+      startTime,
+      endTime,
+      adminId: req.user._id,
+      adminEmail: req.user.email
+    });
+
+    // Check if user is admin
+    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.'
+      });
+    }
+
+    // Find employee
+    const employee = await User.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    console.log('👤 Employee Details:', {
+      name: `${employee.firstName} ${employee.lastName}`,
+      email: employee.email,
+      employeeId: employee.employeeId,
+      hasShiftTiming: !!employee.shiftTiming
+    });
+
+    // Validate time format
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid time format. Use HH:mm (24-hour format)'
+      });
+    }
+
+    // Initialize shiftTiming if not exists
+    if (!employee.shiftTiming) {
+      console.log('🆕 Initializing new shiftTiming');
+      employee.shiftTiming = {
+        defaultShift: {
+          name: 'Regular',
+          start: '09:00',
+          end: '18:00',
+          lateThreshold: 5,
+          earlyThreshold: -1,
+          autoClockOutDelay: 10
+        },
+        assignedShift: {
+          name: 'Regular',
+          start: '',
+          end: '',
+          lateThreshold: 5,
+          earlyThreshold: -1,
+          autoClockOutDelay: 10,
+          assignedBy: null,
+          assignedAt: null,
+          effectiveDate: null,
+          isActive: false
+        },
+        shiftHistory: []
+      };
+    }
+
+    // Get shift name
+    let shiftName = 'Regular Shift';
+    if (shiftType === 'morning') shiftName = 'Morning Shift';
+    else if (shiftType === 'evening') shiftName = 'Evening Shift';
+    else if (shiftType === 'night') shiftName = 'Night Shift';
+
+    // Create new shift object
+    const newShift = {
+      name: shiftName,
+      start: startTime,
+      end: endTime,
+      lateThreshold: 5,
+      earlyThreshold: -1,
+      autoClockOutDelay: 10,
+      assignedBy: req.user._id,
+      assignedAt: new Date(),
+      effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date(),
+      isActive: true
+    };
+
+    console.log('📝 New Shift Object:', newShift);
+
+    // Add current shift to history before updating
+    if (employee.shiftTiming.assignedShift && employee.shiftTiming.assignedShift.isActive) {
+      console.log('📋 Adding previous active shift to history');
+      const historyEntry = {
+        ...employee.shiftTiming.assignedShift,
+        endedAt: new Date(),
+        reason: reason
+      };
+      employee.shiftTiming.shiftHistory.unshift(historyEntry);
+    }
+
+    // Update assignedShift
+    employee.shiftTiming.assignedShift = newShift;
+
+    // Also update currentShift for backward compatibility
+    employee.shiftTiming.currentShift = {
+      start: startTime,
+      end: endTime,
+      effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date(),
+      isActive: true
+    };
+
+    // Update defaultShift if requested
+    if (makeDefault) {
+      console.log('⚙️ Updating default shift');
+      employee.shiftTiming.defaultShift = {
+        ...employee.shiftTiming.defaultShift,
+        start: startTime,
+        end: endTime
+      };
+    }
+
+    // Add new shift to history as well
+    const historyEntry = {
+      ...newShift,
+      reason: reason
+    };
+    employee.shiftTiming.shiftHistory.unshift(historyEntry);
+
+    // Keep history limited to 100 entries
+    if (employee.shiftTiming.shiftHistory.length > 100) {
+      employee.shiftTiming.shiftHistory = employee.shiftTiming.shiftHistory.slice(0, 100);
+    }
+
+    console.log('💾 Saving employee...');
+    await employee.save();
+    console.log('✅ Employee saved successfully');
+
+    // Populate assignedBy user details
+    const assignedByUser = await User.findById(req.user._id).select('firstName lastName email');
+
+    // ✅ AuditLog
+    await AuditLog.create({
+      userId: req.user._id,
+      action: "Updated Employee Shift",
+      target: employee._id,
+      details: {
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        employeeId: employee.employeeId,
+        newShift: newShift,
+        reason: reason,
+        makeDefault: makeDefault
+      },
+      ip: req.ip,
+      device: req.headers['user-agent']
+    });
+
+    // ✅ Session activity
+    await addSessionActivity({
+      userId: req.user._id,
+      action: "Updated Employee Shift",
+      target: employee._id,
+      details: {
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        shift: `${startTime} - ${endTime}`
+      }
+    });
+
+    // Prepare detailed response
+    const response = {
+      success: true,
+      message: `Shift updated successfully for ${employee.firstName} ${employee.lastName}`,
+      employee: {
+        _id: employee._id,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        email: employee.email,
+        employeeId: employee.employeeId,
+        department: employee.department,
+        designation: employee.designation,
+        shiftTiming: {
+          assignedShift: employee.shiftTiming.assignedShift,
+          defaultShift: employee.shiftTiming.defaultShift,
+          currentShift: employee.shiftTiming.currentShift,
+          shiftHistoryCount: employee.shiftTiming.shiftHistory.length
+        }
+      },
+      assignedByUser: assignedByUser,
+      updatedAt: new Date()
+    };
+
+    console.log('🎉 Shift update completed successfully');
+    console.log('Response data:', {
+      employeeName: `${employee.firstName} ${employee.lastName}`,
+      shift: `${startTime} - ${endTime}`,
+      isActive: true
+    });
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    console.error('❌ Error updating employee shift:', error);
+    console.error('Error stack:', error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to update shift',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// GetEmployeeShift function আপডেট করুন
+exports.getEmployeeShift = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+
+    console.log(`🔍 Fetching shift for employee ID: ${employeeId}`);
+
+    // Check if user is admin or the employee themselves
+    const isAdmin = ['admin', 'superAdmin'].includes(req.user.role);
+    const isSelf = req.user._id.toString() === employeeId;
+
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin or self-access only.'
+      });
+    }
+
+    // Find employee
+    const employee = await User.findById(employeeId)
+      .select('firstName lastName email employeeId department designation shiftTiming role isActive');
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+
+    console.log('✅ Employee found:', {
+      name: `${employee.firstName} ${employee.lastName}`,
+      employeeId: employee.employeeId,
+      hasShiftTiming: !!employee.shiftTiming
+    });
+
+    // Helper function to get active shift
+    const getActiveShift = (shiftTiming) => {
+      if (!shiftTiming) return null;
+      
+      // Priority 1: assignedShift (isActive: true)
+      if (shiftTiming.assignedShift && shiftTiming.assignedShift.isActive === true) {
+        console.log('Using assignedShift');
+        return {
+          ...shiftTiming.assignedShift,
+          source: 'assignedShift'
+        };
+      }
+      
+      // Priority 2: currentShift (isActive: true)
+      if (shiftTiming.currentShift && shiftTiming.currentShift.isActive === true) {
+        console.log('Using currentShift');
+        return {
+          name: 'Current Shift',
+          start: shiftTiming.currentShift.start,
+          end: shiftTiming.currentShift.end,
+          source: 'currentShift'
+        };
+      }
+      
+      // Priority 3: Check history for today's effective shift
+      const today = new Date().toISOString().split('T')[0];
+      if (shiftTiming.shiftHistory && shiftTiming.shiftHistory.length > 0) {
+        const latestShift = shiftTiming.shiftHistory[0];
+        if (latestShift.effectiveDate && 
+            new Date(latestShift.effectiveDate).toISOString().split('T')[0] === today) {
+          console.log('Using today\'s shift from history');
+          return {
+            name: latestShift.name || 'Recent Shift',
+            start: latestShift.start,
+            end: latestShift.end,
+            effectiveDate: latestShift.effectiveDate,
+            source: 'history'
+          };
+        }
+      }
+      
+      // Priority 4: defaultShift
+      if (shiftTiming.defaultShift) {
+        console.log('Using defaultShift');
+        return {
+          name: 'Default Shift',
+          start: shiftTiming.defaultShift.start,
+          end: shiftTiming.defaultShift.end,
+          source: 'default'
+        };
+      }
+      
+      return null;
+    };
+
+    const activeShift = getActiveShift(employee.shiftTiming);
+    
+    // If no shift data found, create default
+    const shiftInfo = activeShift || {
+      name: 'Default Shift',
+      start: '09:00',
+      end: '18:00',
+      source: 'fallback'
+    };
+
+    console.log('Active shift determined:', {
+      name: shiftInfo.name,
+      time: `${shiftInfo.start} - ${shiftInfo.end}`,
+      source: shiftInfo.source
+    });
+
+    // Get assigned by user details if exists
+    let assignedByUser = null;
+    if (shiftInfo.assignedBy) {
+      assignedByUser = await User.findById(shiftInfo.assignedBy)
+        .select('firstName lastName email')
+        .lean();
+    }
+
+    // Calculate shift duration
+    function calculateShiftDuration(start, end) {
+      try {
+        const [startHour, startMinute] = start.split(':').map(Number);
+        const [endHour, endMinute] = end.split(':').map(Number);
+        
+        let totalMinutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
+        
+        if (totalMinutes < 0) {
+          totalMinutes += 24 * 60;
+        }
+        
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        
+        return `${hours}h ${minutes}m`;
+      } catch (error) {
+        return 'Unknown';
+      }
+    }
+
+    // Prepare comprehensive response
+    const response = {
+      success: true,
+      employee: {
+        _id: employee._id,
+        name: `${employee.firstName} ${employee.lastName}`,
+        email: employee.email,
+        employeeId: employee.employeeId,
+        department: employee.department,
+        designation: employee.designation,
+        role: employee.role,
+        isActive: employee.isActive
+      },
+      shift: {
+        name: shiftInfo.name,
+        start: shiftInfo.start,
+        end: shiftInfo.end,
+        effectiveDate: shiftInfo.effectiveDate,
+        assignedAt: shiftInfo.assignedAt,
+        assignedByUser: assignedByUser,
+        isActive: shiftInfo.source === 'assignedShift' || 
+                 shiftInfo.source === 'currentShift' || 
+                 shiftInfo.source === 'history',
+        source: shiftInfo.source,
+        display: `${shiftInfo.start} - ${shiftInfo.end}`,
+        duration: calculateShiftDuration(shiftInfo.start, shiftInfo.end)
+      },
+      shiftDetails: {
+        assignedShift: employee.shiftTiming?.assignedShift,
+        defaultShift: employee.shiftTiming?.defaultShift,
+        currentShift: employee.shiftTiming?.currentShift,
+        historyCount: employee.shiftTiming?.shiftHistory?.length || 0
+      },
+      permissions: {
+        canUpdate: isAdmin,
+        canViewHistory: isAdmin
+      }
+    };
+
+    console.log('✅ Shift fetch successful for:', employee.email);
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    console.error('❌ Get employee shift error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch employee shift'
+    });
+  }
+};
 // Admin: Get all employees with their shift timings
 exports.getAllEmployeeShifts = async (req, res) => {
   try {
@@ -3480,115 +3914,156 @@ exports.getAllEmployeeShifts = async (req, res) => {
   }
 }; 
 
-// Admin: Reset employee shift to default
+// Admin: Reset employee shift to default 
+
+// backend/controller/userController.js - resetEmployeeShift function
 exports.resetEmployeeShift = async (req, res) => {
   try {
     const { employeeId } = req.params;
-    const { reason = '' } = req.body;
+    const { reason } = req.body;
+    const adminId = req.user._id;
 
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
+    console.log('🔄 Reset shift request:', { 
+      employeeId, 
+      adminId, 
+      reason 
+    });
+
+    // Find user by employeeId or _id
+    let user;
+    
+    // First try to find by employeeId
+    if (employeeId && employeeId !== 'undefined') {
+      user = await User.findOne({ 
+        $or: [
+          { employeeId: employeeId },
+          { _id: employeeId }
+        ]
       });
     }
 
-    // Find employee
-    const employee = await User.findOne({
-      _id: employeeId,
-      role: 'employee'
-    });
-
-    if (!employee) {
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'Employee not found'
       });
     }
 
-    // Store old shift data
-    const oldShiftData = employee.shiftTiming ? { ...employee.shiftTiming.toObject() } : null;
+    console.log('✅ Found user:', {
+      id: user._id,
+      employeeId: user.employeeId,
+      name: `${user.firstName} ${user.lastName}`,
+      hasShiftTiming: !!user.shiftTiming
+    });
 
-    // Check if there's a current shift to reset
-    if (!employee.shiftTiming || !employee.shiftTiming.currentShift || !employee.shiftTiming.currentShift.isActive) {
-      return res.status(400).json({
-        success: false,
-        message: 'Employee does not have an active assigned shift'
-      });
+    // Get admin user details for resetBy
+    const adminUser = await User.findById(adminId).select('firstName lastName email');
+
+    // Get default shift timing - handle undefined case
+    let defaultStart = '09:00';
+    let defaultEnd = '18:00';
+    
+    if (user.shiftTiming && user.shiftTiming.defaultShift) {
+      defaultStart = user.shiftTiming.defaultShift.start || defaultStart;
+      defaultEnd = user.shiftTiming.defaultShift.end || defaultEnd;
     }
 
-    // Add current shift to history
-    employee.shiftTiming.shiftHistory.push({
-      start: employee.shiftTiming.currentShift.start,
-      end: employee.shiftTiming.currentShift.end,
-      assignedBy: employee.shiftTiming.currentShift.assignedBy,
-      assignedAt: employee.shiftTiming.currentShift.assignedAt,
-      effectiveDate: employee.shiftTiming.currentShift.effectiveDate,
-      endedAt: new Date(),
-      reason: reason || 'Reset to default shift'
+    console.log('📅 Default shift:', { 
+      defaultStart, 
+      defaultEnd
     });
 
-    // Reset current shift
-    employee.shiftTiming.currentShift = {
-      start: '',
-      end: '',
-      assignedBy: req.user._id,
-      assignedAt: new Date(),
-      effectiveDate: null,
-      isActive: false
+    // Create reset record WITHOUT populate attempt
+    const resetRecord = {
+      start: defaultStart,
+      end: defaultEnd,
+      reason: reason || 'Shift reset to default by admin',
+      resetBy: {
+        _id: adminId,
+        firstName: adminUser?.firstName || 'Admin',
+        lastName: adminUser?.lastName || 'User',
+        email: adminUser?.email
+      },
+      resetAt: new Date(),
+      action: 'reset',
+      isActive: false,
+      type: 'default'
     };
 
-    await employee.save();
+    // Initialize shiftTiming if it doesn't exist
+    if (!user.shiftTiming) {
+      user.shiftTiming = {};
+    }
 
-    // ✅ AuditLog
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Reset Employee Shift to Default",
-      target: employee._id,
-      details: {
-        employeeName: `${employee.firstName} ${employee.lastName}`,
-        employeeId: employee.employeeId,
-        oldShift: {
-          start: oldShiftData.currentShift.start,
-          end: oldShiftData.currentShift.end,
-          assignedBy: oldShiftData.currentShift.assignedBy,
-          assignedAt: oldShiftData.currentShift.assignedAt
-        },
-        resetBy: req.user.email,
-        reason: reason
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
+    // Initialize shiftHistory array if it doesn't exist
+    if (!user.shiftTiming.shiftHistory) {
+      user.shiftTiming.shiftHistory = [];
+    }
 
-    // ✅ Session activity
-    await addSessionActivity({
-      userId: req.user._id,
-      action: "Reset Shift to Default",
-      target: employee._id,
-      details: {
-        employeeName: `${employee.firstName} ${employee.lastName}`,
-        reason: reason
+    // Update user's shift timing WITHOUT breaking existing structure
+    user.shiftTiming.assignedShift = null; // Remove assigned shift
+    
+    // Ensure currentShift exists
+    user.shiftTiming.currentShift = {
+      start: defaultStart,
+      end: defaultEnd,
+      isActive: false,
+      effectiveDate: new Date().toISOString().split('T')[0],
+      type: 'default'
+    };
+
+    // Ensure defaultShift exists
+    user.shiftTiming.defaultShift = {
+      start: defaultStart,
+      end: defaultEnd,
+      updatedAt: new Date()
+    };
+
+    // Add reset record to history
+    user.shiftTiming.shiftHistory.unshift(resetRecord); // Add to beginning
+
+    // Save without validation if validation fails
+    try {
+      await user.save({ validateBeforeSave: true });
+      console.log('💾 User saved with validation');
+    } catch (saveError) {
+      console.warn('⚠️ Validation failed, saving without validation:', saveError.message);
+      await user.save({ validateBeforeSave: false });
+      console.log('💾 User saved without validation');
+    }
+
+    // Prepare response WITHOUT populate
+    const responseUser = {
+      _id: user._id,
+      employeeId: user.employeeId,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      department: user.department,
+      email: user.email,
+      role: user.role,
+      currentShiftDisplay: `${defaultStart} - ${defaultEnd}`,
+      shiftTiming: {
+        assignedShift: null,
+        currentShift: user.shiftTiming.currentShift,
+        defaultShift: user.shiftTiming.defaultShift,
+        shiftHistory: user.shiftTiming.shiftHistory.slice(0, 10) // Last 10 records
       }
-    });
+    };
 
-    res.status(200).json({
+    console.log('✅ Shift reset successful for:', user.employeeId);
+
+    res.json({
       success: true,
       message: 'Shift reset to default successfully',
-      employee: {
-        _id: employee._id,
-        name: `${employee.firstName} ${employee.lastName}`,
-        employeeId: employee.employeeId,
-        defaultShift: employee.shiftTiming.defaultShift || { start: '09:00', end: '18:00' }
-      }
+      user: responseUser
     });
 
   } catch (error) {
-    console.error('Reset shift error:', error);
+    console.error('❌ Reset shift error:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };
@@ -4470,436 +4945,6 @@ exports.bulkUpdateOnsiteBenefits = async (req, res) => {
   }
 };
 
-// shift
-// ================= SPECIFIC EMPLOYEE SHIFT CHANGE =================
-
-// Admin: Update specific employee's shift timing
-exports.updateEmployeeShift = async (req, res) => {
-  try {
-    const { employeeId } = req.params;
-    const { 
-      shiftType = 'update', // 'update', 'assign', 'reset'
-      startTime, 
-      endTime, 
-      effectiveDate,
-      reason = '',
-      makeDefault = false
-    } = req.body;
-
-    console.log(`🔄 Admin updating shift for employee: ${employeeId}`);
-    console.log('Shift details:', {
-      shiftType,
-      startTime,
-      endTime,
-      effectiveDate,
-      reason,
-      makeDefault
-    });
-
-    // Check if user is admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superAdmin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-
-    // Find employee
-    const employee = await User.findOne({
-      _id: employeeId,
-      role: 'employee'
-    });
-
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-
-    console.log('Employee found:', {
-      name: `${employee.firstName} ${employee.lastName}`,
-      employeeId: employee.employeeId,
-      currentShift: employee.shiftTiming?.currentShift
-    });
-
-    // Store old data for audit
-    const oldShiftData = employee.shiftTiming ? { 
-      ...employee.shiftTiming.toObject ? employee.shiftTiming.toObject() : employee.shiftTiming 
-    } : null;
-
-    // Handle different shift update types
-    let operation = '';
-    let updateDetails = {};
-
-    if (shiftType === 'reset') {
-      // Reset to default shift
-      if (employee.shiftTiming?.currentShift?.isActive) {
-        // Add current shift to history
-        if (employee.shiftTiming.shiftHistory) {
-          employee.shiftTiming.shiftHistory.push({
-            start: employee.shiftTiming.currentShift.start,
-            end: employee.shiftTiming.currentShift.end,
-            assignedBy: employee.shiftTiming.currentShift.assignedBy,
-            assignedAt: employee.shiftTiming.currentShift.assignedAt,
-            effectiveDate: employee.shiftTiming.currentShift.effectiveDate,
-            endedAt: new Date(),
-            reason: reason || 'Reset to default shift'
-          });
-        }
-
-        // Reset current shift
-        employee.shiftTiming.currentShift = {
-          start: '',
-          end: '',
-          assignedBy: req.user._id,
-          assignedAt: new Date(),
-          effectiveDate: null,
-          isActive: false
-        };
-
-        operation = 'reset';
-        updateDetails = {
-          from: oldShiftData?.currentShift,
-          to: 'default shift'
-        };
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: 'Employee does not have an active assigned shift'
-        });
-      }
-
-    } else if (shiftType === 'assign' || shiftType === 'update') {
-      // Assign or update shift
-      if (!startTime || !endTime) {
-        return res.status(400).json({
-          success: false,
-          message: 'Start time and end time are required'
-        });
-      }
-
-      // Validate time format
-      const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-      if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid time format. Use HH:mm (24-hour format)'
-        });
-      }
-
-      // Initialize shiftTiming if not exists
-      if (!employee.shiftTiming) {
-        employee.shiftTiming = {
-          defaultShift: {
-            start: '09:00',
-            end: '18:00'
-          },
-          currentShift: {
-            start: '',
-            end: '',
-            assignedBy: null,
-            assignedAt: null,
-            effectiveDate: null,
-            isActive: false
-          },
-          shiftHistory: []
-        };
-      }
-
-      // Ensure shiftHistory exists
-      if (!employee.shiftTiming.shiftHistory) {
-        employee.shiftTiming.shiftHistory = [];
-      }
-
-      // If updating an existing active shift, add to history first
-      if (employee.shiftTiming.currentShift && employee.shiftTiming.currentShift.isActive) {
-        employee.shiftTiming.shiftHistory.push({
-          start: employee.shiftTiming.currentShift.start,
-          end: employee.shiftTiming.currentShift.end,
-          assignedBy: employee.shiftTiming.currentShift.assignedBy,
-          assignedAt: employee.shiftTiming.currentShift.assignedAt,
-          effectiveDate: employee.shiftTiming.currentShift.effectiveDate,
-          endedAt: new Date(),
-          reason: reason || 'Updated to new shift'
-        });
-      }
-
-      // Update current shift
-      employee.shiftTiming.currentShift = {
-        start: startTime,
-        end: endTime,
-        assignedBy: req.user._id,
-        assignedAt: new Date(),
-        effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date(),
-        isActive: true
-      };
-
-      // Add to history
-      employee.shiftTiming.shiftHistory.push({
-        start: startTime,
-        end: endTime,
-        assignedBy: req.user._id,
-        assignedAt: new Date(),
-        effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date(),
-        reason: reason || (shiftType === 'assign' ? 'Assigned shift' : 'Updated shift')
-      });
-
-      // If makeDefault is true, update default shift as well
-      if (makeDefault) {
-        employee.shiftTiming.defaultShift = {
-          start: startTime,
-          end: endTime
-        };
-      }
-
-      operation = shiftType === 'assign' ? 'assign' : 'update';
-      updateDetails = {
-        from: oldShiftData?.currentShift?.isActive ? oldShiftData.currentShift : 'No previous shift',
-        to: {
-          start: startTime,
-          end: endTime,
-          effectiveDate: effectiveDate || 'Immediate',
-          isDefault: makeDefault
-        }
-      };
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid shiftType. Must be 'assign', 'update', or 'reset'"
-      });
-    }
-
-    // Save employee
-    await employee.save();
-
-    console.log('Shift updated successfully:', {
-      operation,
-      employee: employee.employeeId,
-      newShift: employee.shiftTiming.currentShift
-    });
-
-    // ✅ AuditLog
-    await AuditLog.create({
-      userId: req.user._id,
-      action: operation === 'reset' ? "Reset Employee Shift" : 
-              operation === 'assign' ? "Assigned Shift to Employee" : 
-              "Updated Employee Shift",
-      target: employee._id,
-      details: {
-        employeeName: `${employee.firstName} ${employee.lastName}`,
-        employeeId: employee.employeeId,
-        operation: operation,
-        ...updateDetails,
-        reason: reason,
-        assignedBy: req.user.email
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-
-    // ✅ Session activity
-    await addSessionActivity({
-      userId: req.user._id,
-      action: operation === 'reset' ? "Reset Shift" : 
-              operation === 'assign' ? "Assigned Shift" : 
-              "Updated Shift",
-      target: employee._id,
-      details: {
-        employeeName: `${employee.firstName} ${employee.lastName}`,
-        employeeId: employee.employeeId,
-        ...updateDetails,
-        reason: reason
-      }
-    });
-
-    // Prepare response
-    const response = {
-      success: true,
-      message: operation === 'reset' ? 'Shift reset to default successfully' :
-               operation === 'assign' ? 'Shift assigned successfully' :
-               'Shift updated successfully',
-      data: {
-        employee: {
-          _id: employee._id,
-          name: `${employee.firstName} ${employee.lastName}`,
-          email: employee.email,
-          employeeId: employee.employeeId,
-          department: employee.department,
-          designation: employee.designation
-        },
-        shift: {
-          current: employee.shiftTiming.currentShift,
-          default: employee.shiftTiming.defaultShift || { start: '09:00', end: '18:00' }
-        },
-        operation: operation,
-        timestamp: new Date(),
-        performedBy: req.user.email
-      }
-    };
-
-    // Add shift history count if exists
-    if (employee.shiftTiming.shiftHistory && employee.shiftTiming.shiftHistory.length > 0) {
-      response.data.shiftHistoryCount = employee.shiftTiming.shiftHistory.length;
-    }
-
-    res.status(200).json(response);
-
-  } catch (error) {
-    console.error('Update employee shift error:', error);
-    
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map(val => val.message);
-      return res.status(400).json({
-        success: false,
-        message: `Validation failed: ${messages.join(', ')}`
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to update employee shift'
-    });
-  }
-};
-// ================= GET EMPLOYEE CURRENT SHIFT =================
-
-// Admin: Get specific employee's current shift
-exports.getEmployeeShift = async (req, res) => {
-  try {
-    const { employeeId } = req.params;
-
-    console.log(`🔍 Fetching shift for employee: ${employeeId}`);
-
-    // Check if user is admin or the employee themselves
-    const isAdmin = ['admin', 'superAdmin'].includes(req.user.role);
-    const isSelf = req.user._id.toString() === employeeId;
-
-    if (!isAdmin && !isSelf) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin or self-access only.'
-      });
-    }
-
-    // Find employee
-    const employee = await User.findOne({
-      _id: employeeId,
-      role: 'employee'
-    }).select('firstName lastName email employeeId department designation shiftTiming');
-
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee not found'
-      });
-    }
-
-    // Determine current shift
-    let currentShift = null;
-    let shiftType = 'not-set';
-
-    if (employee.shiftTiming) {
-      if (employee.shiftTiming.currentShift && employee.shiftTiming.currentShift.isActive) {
-        currentShift = {
-          start: employee.shiftTiming.currentShift.start,
-          end: employee.shiftTiming.currentShift.end,
-          assignedBy: employee.shiftTiming.currentShift.assignedBy,
-          assignedAt: employee.shiftTiming.currentShift.assignedAt,
-          effectiveDate: employee.shiftTiming.currentShift.effectiveDate,
-          isActive: true
-        };
-        shiftType = 'assigned';
-      } else if (employee.shiftTiming.defaultShift) {
-        currentShift = {
-          start: employee.shiftTiming.defaultShift.start || '09:00',
-          end: employee.shiftTiming.defaultShift.end || '18:00',
-          isActive: true
-        };
-        shiftType = 'default';
-      } else if (employee.shiftTiming.start && employee.shiftTiming.end) {
-        // Legacy format
-        currentShift = {
-          start: employee.shiftTiming.start,
-          end: employee.shiftTiming.end,
-          isActive: true
-        };
-        shiftType = 'legacy';
-      }
-    }
-
-    // If no shift data found, use default
-    if (!currentShift) {
-      currentShift = {
-        start: '09:00',
-        end: '18:00',
-        isActive: true
-      };
-      shiftType = 'default';
-    }
-
-    // Get assigned by user details if exists
-    let assignedByUser = null;
-    if (currentShift.assignedBy) {
-      assignedByUser = await User.findById(currentShift.assignedBy)
-        .select('firstName lastName email')
-        .lean();
-    }
-
-    // Prepare response
-    const response = {
-      success: true,
-      employee: {
-        _id: employee._id,
-        name: `${employee.firstName} ${employee.lastName}`,
-        email: employee.email,
-        employeeId: employee.employeeId,
-        department: employee.department,
-        designation: employee.designation
-      },
-      shift: {
-        ...currentShift,
-        type: shiftType,
-        assignedByUser: assignedByUser,
-        display: `${currentShift.start} - ${currentShift.end}`,
-        duration: calculateShiftDuration(currentShift.start, currentShift.end)
-      },
-      shiftInfo: {
-        isAssigned: shiftType === 'assigned',
-        canBeUpdated: isAdmin,
-        hasHistory: employee.shiftTiming?.shiftHistory?.length > 0
-      }
-    };
-
-    // Add shift history count
-    if (employee.shiftTiming?.shiftHistory) {
-      response.shiftHistoryCount = employee.shiftTiming.shiftHistory.length;
-    }
-
-    // Session activity for admin
-    if (isAdmin) {
-      await addSessionActivity({
-        userId: req.user._id,
-        action: "Viewed Employee Shift",
-        target: employee._id,
-        details: {
-          employeeName: `${employee.firstName} ${employee.lastName}`,
-          shift: `${currentShift.start} - ${currentShift.end}`,
-          shiftType: shiftType
-        }
-      });
-    }
-
-    res.status(200).json(response);
-
-  } catch (error) {
-    console.error('Get employee shift error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch employee shift'
-    });
-  }
-};
 
 // Helper function to calculate shift duration
 function calculateShiftDuration(start, end) {

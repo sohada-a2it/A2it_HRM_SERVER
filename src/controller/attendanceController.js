@@ -282,13 +282,16 @@ const checkDayStatus = async (employeeId, date) => {
   today.setHours(0, 0, 0, 0);
   const dayName = today.toLocaleString("en-US", { weekday: "long" });
 
-  // Check holiday
+  console.log(`🔍 Checking day status for ${dayName}, ${today.toISOString().split('T')[0]}`);
+
+  // Check holiday FIRST
   const holiday = await Holiday.findOne({
     date: today,
     isActive: true
   });
 
   if (holiday) {
+    console.log(`🎉 Found holiday: ${holiday.name}`);
     return {
       status: holiday.type === "GOVT" ? "Govt Holiday" : "Off Day",
       isWorkingDay: false,
@@ -305,21 +308,22 @@ const checkDayStatus = async (employeeId, date) => {
     endDate: { $gte: today }
   });
 
-  if (override && override.weeklyOffDays.includes(dayName)) {
-    return {
-      status: "Weekly Off",
-      isWorkingDay: false,
-      reason: "Temporary Weekly Off",
-      affectsAttendance: false,
-      recordType: 'weekly_off'
-    };
+  let weeklyOffDays = [];
+  
+  if (override) {
+    console.log(`🔄 Using temporary override schedule`);
+    weeklyOffDays = override.weeklyOffDays || [];
+  } else {
+    // Check default schedule
+    const schedule = await OfficeSchedule.findOne({ isActive: true });
+    weeklyOffDays = schedule?.weeklyOffDays || ["Friday", "Saturday"];
+    console.log(`📅 Using default weekly off days: ${weeklyOffDays.join(', ')}`);
   }
 
-  // Check default schedule
-  const schedule = await OfficeSchedule.findOne({ isActive: true });
-  const weeklyOffDays = schedule?.weeklyOffDays || ["Friday", "Saturday"];
+  console.log(`📆 Day name: ${dayName}, Weekly off days: ${weeklyOffDays.join(', ')}`);
 
   if (weeklyOffDays.includes(dayName)) {
+    console.log(`🏖️ ${dayName} is a weekly off day`);
     return {
       status: "Weekly Off",
       isWorkingDay: false,
@@ -332,6 +336,7 @@ const checkDayStatus = async (employeeId, date) => {
   // Check leave
   const leaveStatus = await checkLeaveStatus(employeeId, date);
   if (leaveStatus) {
+    console.log(`🏖️ Employee is on leave: ${leaveStatus.leaveType}`);
     let status = "Leave";
     if (leaveStatus.payStatus === 'Unpaid') {
       status = "Unpaid Leave";
@@ -350,6 +355,7 @@ const checkDayStatus = async (employeeId, date) => {
   }
 
   // Working day
+  console.log(`💼 ${dayName} is a working day`);
   return {
     status: "Working Day",
     isWorkingDay: true,
@@ -641,134 +647,146 @@ class AutoClockOutService {
   }
 
   async generateTomorrowsNonWorkingDayRecords() {
-    // Prevent duplicate execution on same day
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (this.lastNonWorkingDayGeneration === todayStr) {
-      console.log('✅ [1:00 AM] Non-working day records already generated today');
-      return { message: 'Already generated today', skipped: true };
-    }
-
-    this.isRunning = true;
-    
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const activeEmployees = await User.find({
-        status: 'active',
-        role: 'employee'
-      }).select('_id firstName lastName employeeId department');
-
-      const results = {
-        totalEmployees: activeEmployees.length,
-        recordsCreated: 0,
-        skippedWorkingDay: 0,
-        skippedExists: 0,
-        failed: 0
-      };
-
-      for (const employee of activeEmployees) {
-        try {
-          // Check day status for TOMORROW
-          const dayStatus = await checkDayStatus(employee._id, tomorrow);
-          
-          // ONLY create record for NON-WORKING days
-          if (!dayStatus.isWorkingDay) {
-            // Check existing attendance
-            const existingAttendance = await Attendance.findOne({
-              employee: employee._id,
-              date: tomorrow,
-              isDeleted: false
-            });
-
-            if (!existingAttendance) {
-              const shiftDetails = await getEmployeeShiftDetails(employee._id, tomorrow);
-              
-              // Determine status based on day type
-              let status = 'Absent'; // Default fallback
-              
-              if (dayStatus.status === 'Govt Holiday') {
-                status = 'Govt Holiday';
-              } else if (dayStatus.status === 'Weekly Off') {
-                status = 'Weekly Off';
-              } else if (dayStatus.status === 'Off Day') {
-                status = 'Off Day';
-              } else if (dayStatus.recordType === 'leave') {
-                // Leave type from leaveDetails
-                if (dayStatus.leaveDetails?.payStatus === 'Unpaid') {
-                  status = 'Unpaid Leave';
-                } else if (dayStatus.leaveDetails?.payStatus === 'HalfPaid') {
-                  status = 'Half Paid Leave';
-                } else {
-                  status = 'Leave'; // Paid Leave
-                }
-              }
-
-              const attendance = new Attendance({
-                employee: employee._id,
-                date: tomorrow,
-                status: status,
-                shift: {
-                  name: shiftDetails.name,
-                  start: shiftDetails.start,
-                  end: shiftDetails.end,
-                  lateThreshold: shiftDetails.lateThreshold,
-                  earlyThreshold: shiftDetails.earlyThreshold,
-                  autoClockOutDelay: shiftDetails.autoClockOutDelay,
-                  isNightShift: shiftDetails.isNightShift || false
-                },
-                autoMarked: true,
-                remarks: `Auto-generated at 1:00 AM: ${dayStatus.reason || dayStatus.status}`,
-                ipAddress: 'System',
-                device: { type: 'system', os: 'Auto Generator' },
-                location: 'Office',
-                autoClockOutTime: shiftDetails.autoClockOutTime,
-                autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
-                autoGenerated: true
-              });
-
-              await attendance.save();
-              results.recordsCreated++;
-              
-              // Update leave with attendance record if applicable
-              if (dayStatus.recordType === 'leave' && dayStatus.leaveDetails) {
-                await Leave.findByIdAndUpdate(dayStatus.leaveDetails.leaveId, {
-                  $push: {
-                    attendanceRecords: {
-                      date: tomorrow,
-                      attendanceId: attendance._id,
-                      status: status
-                    }
-                  },
-                  autoGeneratedAttendance: true
-                });
-              }
-            } else {
-              results.skippedExists++;
-            }
-          } else {
-            // Skip WORKING DAYS - NO auto record for working days at 1:00 AM
-            results.skippedWorkingDay++;
-          }
-        } catch (error) {
-          console.error(`Generate record error for ${employee._id}:`, error);
-          results.failed++;
-        }
-      }
-
-      console.log(`📋 [1:00 AM] Created ${results.recordsCreated} non-working day records for tomorrow`);
-      this.lastNonWorkingDayGeneration = todayStr;
-      
-      return results;
-    } catch (error) {
-      console.error('Generate tomorrow records failed:', error);
-      throw error;
-    } finally {
-      this.isRunning = false;
-    }
+  // Prevent duplicate execution on same day with improved check
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().split('T')[0];
+  
+  if (this.lastNonWorkingDayGeneration === todayStr) {
+    console.log('✅ [1:00 AM] Non-working day records already generated today');
+    return { message: 'Already generated today', skipped: true };
   }
+
+  this.isRunning = true;
+  
+  try {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const activeEmployees = await User.find({
+      status: 'active',
+      role: 'employee'
+    }).select('_id firstName lastName employeeId department');
+
+    const results = {
+      totalEmployees: activeEmployees.length,
+      recordsCreated: 0,
+      skippedWorkingDay: 0,
+      skippedExists: 0,
+      failed: 0,
+      duplicatePrevented: 0
+    };
+
+    // Get all existing records for tomorrow in one query
+    const existingRecords = await Attendance.find({
+      date: tomorrow,
+      isDeleted: false
+    }).select('employee date');
+
+    const existingRecordMap = new Map();
+    existingRecords.forEach(record => {
+      existingRecordMap.set(record.employee.toString(), true);
+    });
+
+    for (const employee of activeEmployees) {
+      try {
+        // Check day status for TOMORROW
+        const dayStatus = await checkDayStatus(employee._id, tomorrow);
+        
+        // Check if record already exists
+        const alreadyExists = existingRecordMap.has(employee._id.toString());
+        
+        if (alreadyExists) {
+          results.skippedExists++;
+          continue; // Skip if already exists
+        }
+        
+        // ONLY create record for NON-WORKING days
+        if (!dayStatus.isWorkingDay) {
+          const shiftDetails = await getEmployeeShiftDetails(employee._id, tomorrow);
+          
+          // Determine status based on day type
+          let status = 'Absent'; // Default fallback
+          
+          if (dayStatus.status === 'Govt Holiday') {
+            status = 'Govt Holiday';
+          } else if (dayStatus.status === 'Weekly Off') {
+            status = 'Weekly Off';
+          } else if (dayStatus.status === 'Off Day') {
+            status = 'Off Day';
+          } else if (dayStatus.recordType === 'leave') {
+            if (dayStatus.leaveDetails?.payStatus === 'Unpaid') {
+              status = 'Unpaid Leave';
+            } else if (dayStatus.leaveDetails?.payStatus === 'HalfPaid') {
+              status = 'Half Paid Leave';
+            } else {
+              status = 'Leave'; // Paid Leave
+            }
+          }
+
+          const attendance = new Attendance({
+            employee: employee._id,
+            date: tomorrow,
+            status: status,
+            shift: {
+              name: shiftDetails.name,
+              start: shiftDetails.start,
+              end: shiftDetails.end,
+              lateThreshold: shiftDetails.lateThreshold,
+              earlyThreshold: shiftDetails.earlyThreshold,
+              autoClockOutDelay: shiftDetails.autoClockOutDelay,
+              isNightShift: shiftDetails.isNightShift || false
+            },
+            autoMarked: true,
+            remarks: `Auto-generated at 1:00 AM: ${dayStatus.reason || dayStatus.status}`,
+            ipAddress: 'System',
+            device: { type: 'system', os: 'Auto Generator' },
+            location: 'Office',
+            autoClockOutTime: shiftDetails.autoClockOutTime,
+            autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false,
+            autoGenerated: true,
+            autoGeneratedDate: today // Track when it was auto-generated
+          });
+
+          await attendance.save();
+          results.recordsCreated++;
+          
+          // Update leave with attendance record if applicable
+          if (dayStatus.recordType === 'leave' && dayStatus.leaveDetails) {
+            await Leave.findByIdAndUpdate(dayStatus.leaveDetails.leaveId, {
+              $push: {
+                attendanceRecords: {
+                  date: tomorrow,
+                  attendanceId: attendance._id,
+                  status: status
+                }
+              },
+              autoGeneratedAttendance: true
+            });
+          }
+        } else {
+          // Skip WORKING DAYS - NO auto record for working days at 1:00 AM
+          results.skippedWorkingDay++;
+        }
+      } catch (error) {
+        console.error(`Generate record error for ${employee._id}:`, error);
+        results.failed++;
+      }
+    }
+
+    console.log(`📋 [1:00 AM] Created ${results.recordsCreated} non-working day records for tomorrow`);
+    console.log(`📊 Stats: ${results.skippedExists} already existed, ${results.skippedWorkingDay} working days skipped`);
+    this.lastNonWorkingDayGeneration = todayStr;
+    
+    return results;
+  } catch (error) {
+    console.error('Generate tomorrow records failed:', error);
+    throw error;
+  } finally {
+    this.isRunning = false;
+  }
+}
 
   async triggerManualAutoClockOut() {
     return await this.checkAndExecuteAutoClockOuts();
@@ -4393,6 +4411,207 @@ exports.getAttendanceHistory = async (req, res) => {
           autoMarked: record.autoMarked,
           markedAbsent: record.markedAbsent
         })) : []
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+// Check and fix weekly off configuration
+exports.checkWeeklyOffConfig = async (req, res) => {
+  try {
+    const adminId = req.user._id;
+    const admin = await User.findById(adminId);
+    
+    if (admin.role !== 'admin' && admin.role !== 'superAdmin') {
+      return res.status(403).json({
+        status: "fail",
+        message: "Access denied"
+      });
+    }
+
+    // Get current schedule
+    const schedule = await OfficeSchedule.findOne({ isActive: true });
+    const override = await OfficeScheduleOverride.findOne({
+      isActive: true,
+      startDate: { $lte: new Date() },
+      endDate: { $gte: new Date() }
+    });
+
+    // Get tomorrow's date
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    
+    const dayName = tomorrow.toLocaleString("en-US", { weekday: "long" });
+    const weeklyOffDays = override?.weeklyOffDays || schedule?.weeklyOffDays || ["Friday", "Saturday"];
+
+    // Get employee count
+    const employeeCount = await User.countDocuments({ 
+      status: 'active', 
+      role: 'employee' 
+    });
+
+    // Check existing records for tomorrow
+    const existingRecordsCount = await Attendance.countDocuments({
+      date: tomorrow,
+      isDeleted: false
+    });
+
+    // Test day status for one employee
+    const testEmployee = await User.findOne({ status: 'active', role: 'employee' });
+    let testDayStatus = null;
+    if (testEmployee) {
+      testDayStatus = await checkDayStatus(testEmployee._id, tomorrow);
+    }
+
+    res.status(200).json({
+      status: "success",
+      config: {
+        currentSchedule: {
+          weeklyOffDays: weeklyOffDays,
+          source: override ? 'Temporary Override' : 'Default Schedule',
+          overrideDetails: override || null
+        },
+        tomorrow: {
+          date: tomorrow,
+          dayName: dayName,
+          isWeeklyOff: weeklyOffDays.includes(dayName),
+          existingRecords: existingRecordsCount
+        },
+        system: {
+          totalEmployees: employeeCount,
+          timezone: TIMEZONE,
+          currentTime: moment().tz(TIMEZONE).format(),
+          testEmployeeDayStatus: testDayStatus
+        },
+        autoGeneration: {
+          lastRun: this.lastNonWorkingDayGeneration,
+          nextRun: '1:00 AM tomorrow'
+        }
+      },
+      actionSteps: weeklyOffDays.includes(dayName) ? 
+        `✅ Tomorrow (${dayName}) will be auto-generated as Weekly Off` :
+        `ℹ️ Tomorrow (${dayName}) is a working day, no auto-generation needed`
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: "fail",
+      message: error.message
+    });
+  }
+};
+// attendanceController.js - এ যোগ করুন
+exports.cleanupDuplicates = async (req, res) => {
+  try {
+    const adminId = req.user._id;
+    const admin = await User.findById(adminId);
+    
+    if (admin.role !== 'admin' && admin.role !== 'superAdmin') {
+      return res.status(403).json({
+        status: "fail",
+        message: "Access denied"
+      });
+    }
+
+    const { startDate, endDate } = req.body;
+    
+    const matchCondition = {
+      isDeleted: false
+    };
+
+    if (startDate && endDate) {
+      matchCondition.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Find duplicates
+    const duplicates = await Attendance.aggregate([
+      {
+        $match: matchCondition
+      },
+      {
+        $group: {
+          _id: {
+            employee: "$employee",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }
+          },
+          count: { $sum: 1 },
+          records: { $push: "$$ROOT" }
+        }
+      },
+      {
+        $match: {
+          count: { $gt: 1 }
+        }
+      },
+      {
+        $sort: { "_id.date": -1 }
+      }
+    ]);
+
+    let cleanedCount = 0;
+    
+    // Process each duplicate group
+    for (const group of duplicates) {
+      const records = group.records;
+      
+      // Sort records: keep the most recent non-auto-generated record
+      records.sort((a, b) => {
+        // Prefer non-auto-generated records
+        if (a.autoGenerated && !b.autoGenerated) return 1;
+        if (!a.autoGenerated && b.autoGenerated) return -1;
+        
+        // Then by creation date (newest first)
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+      
+      // Keep the first record, mark others as deleted
+      const [keepRecord, ...deleteRecords] = records;
+      
+      for (const record of deleteRecords) {
+        await Attendance.findByIdAndUpdate(record._id, {
+          $set: {
+            isDeleted: true,
+            deletedBy: adminId,
+            deletedAt: new Date(),
+            remarks: `Duplicate record cleaned up - ${new Date().toISOString()}`
+          }
+        });
+        cleanedCount++;
+      }
+    }
+
+    await addSessionActivity({
+      userId: adminId,
+      action: "Cleaned up duplicates",
+      target: "Attendance",
+      targetType: "System",
+      details: {
+        duplicatesFound: duplicates.length,
+        cleanedCount: cleanedCount,
+        dateRange: { startDate, endDate },
+        adminName: `${admin.firstName} ${admin.lastName}`
+      },
+      ipAddress: req.ip
+    });
+
+    res.status(200).json({
+      status: "success",
+      message: `Cleaned up ${cleanedCount} duplicate records`,
+      cleaned: cleanedCount,
+      duplicateGroups: duplicates.length,
+      summary: {
+        totalRecordsChecked: duplicates.reduce((sum, group) => sum + group.count, 0),
+        uniqueRecords: duplicates.length,
+        duplicatesRemoved: cleanedCount
       }
     });
 
