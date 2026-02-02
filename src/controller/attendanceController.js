@@ -65,7 +65,20 @@ const addMinutesToTime = (timeStr, minutesToAdd) => {
 };
 
 // Improved checkLateEarlyForEmployee function
+// Improved checkLateEarlyForEmployee function
 const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
+  if (!clockInDateTime || !employeeShift) {
+    return {
+      isLate: false,
+      isEarly: false,
+      lateMinutes: 0,
+      earlyMinutes: 0,
+      difference: 0,
+      isNightShift: false,
+      status: 'Unknown'
+    };
+  }
+
   // Parse shift start time
   const shiftStartTime = parseTimeString(employeeShift.start);
   const clockInTime = parseTimeString(clockInDateTime);
@@ -100,13 +113,29 @@ const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
   const earlyThreshold = employeeShift.earlyThreshold || -1;
   
   let isLate = false, isEarly = false, lateMinutes = 0, earlyMinutes = 0;
+  let status = 'Present';
+  
+  console.log('🔍 Late/Early Calculation:');
+  console.log('Clock In:', `${clockInTime.hours}:${clockInTime.minutes}`);
+  console.log('Shift Start:', `${shiftStartTime.hours}:${shiftStartTime.minutes}`);
+  console.log('Difference:', difference, 'minutes');
+  console.log('Late Threshold:', lateThreshold);
+  console.log('Early Threshold:', earlyThreshold);
   
   if (difference > lateThreshold) {
     isLate = true;
-    lateMinutes = difference - lateThreshold;
-  } else if (difference < earlyThreshold) {
+    lateMinutes = difference;
+    status = 'Late';
+    console.log('✅ Result: LATE -', lateMinutes, 'minutes');
+  } else if (difference < 0 && Math.abs(difference) >= Math.abs(earlyThreshold)) {
     isEarly = true;
-    earlyMinutes = Math.abs(difference - earlyThreshold);
+    earlyMinutes = Math.abs(difference);
+    status = 'Early';
+    console.log('✅ Result: EARLY -', earlyMinutes, 'minutes');
+  } else {
+    // On time
+    status = 'Present';
+    console.log('✅ Result: ON TIME - Present');
   }
   
   return { 
@@ -115,7 +144,8 @@ const checkLateEarlyForEmployee = (clockInDateTime, employeeShift) => {
     lateMinutes, 
     earlyMinutes, 
     difference,
-    isNightShift
+    isNightShift,
+    status  // ✅ এই লাইনটি যোগ করুন
   };
 };
 
@@ -873,9 +903,8 @@ if (attendance && attendance.clockIn) {
       earlyThreshold: shiftDetails.earlyThreshold
     });
 
-    let status = "Present";
-    if (lateEarlyCheck.isLate) status = "Late";
-    else if (lateEarlyCheck.isEarly) status = "Early";
+    // ✅ DIRECTLY USE CALCULATED STATUS
+    let status = lateEarlyCheck.status; // This will be 'Present', 'Late', or 'Early'
 
     if (!attendance) {
       attendance = new Attendance({
@@ -892,6 +921,7 @@ if (attendance && attendance.clockIn) {
           autoClockOutDelay: shiftDetails.autoClockOutDelay,
           isNightShift: shiftDetails.isNightShift || false
         },
+        status: status,
         lateMinutes: lateEarlyCheck.lateMinutes,
         earlyMinutes: lateEarlyCheck.earlyMinutes,
         isLate: lateEarlyCheck.isLate,
@@ -916,6 +946,7 @@ if (attendance && attendance.clockIn) {
         autoClockOutDelay: shiftDetails.autoClockOutDelay,
         isNightShift: shiftDetails.isNightShift || false
       };
+      attendance.status = status;
       attendance.lateMinutes = lateEarlyCheck.lateMinutes;
       attendance.earlyMinutes = lateEarlyCheck.earlyMinutes;
       attendance.isLate = lateEarlyCheck.isLate;
@@ -1382,8 +1413,7 @@ exports.createManualAttendance = async (req, res) => {
       employeeId, 
       date, 
       clockIn, 
-      clockOut, 
-      status,
+      clockOut,  
       shiftStart,
       shiftEnd,
       remarks
@@ -1419,11 +1449,12 @@ exports.createManualAttendance = async (req, res) => {
     const finalShiftStart = shiftStart || shiftDetails.start;
     const finalShiftEnd = shiftEnd || shiftDetails.end;
 
-    let totalHours = 0;
+        let totalHours = 0;
     let lateMinutes = 0;
     let earlyMinutes = 0;
     let isLate = false;
     let isEarly = false;
+    let status = req.body.status || 'Present';
 
     if (clockIn) {
       const clockInTime = new Date(clockIn);
@@ -1438,6 +1469,11 @@ exports.createManualAttendance = async (req, res) => {
       earlyMinutes = lateEarlyCheck.earlyMinutes;
       isLate = lateEarlyCheck.isLate;
       isEarly = lateEarlyCheck.isEarly;
+      
+      // ✅ OVERRIDE STATUS BASED ON CALCULATION
+      if (lateEarlyCheck.status !== 'Present' && (!req.body.status || req.body.status === 'Present')) {
+        status = lateEarlyCheck.status;
+      }
     }
 
     if (clockIn && clockOut) {
@@ -1466,6 +1502,7 @@ exports.createManualAttendance = async (req, res) => {
         autoClockOutDelay: autoClockOutDelay,
         isNightShift: shiftDetails.isNightShift || false
       },
+      status: status,
       lateMinutes,
       earlyMinutes,
       isLate,
@@ -1573,6 +1610,11 @@ exports.updateAttendance = async (req, res) => {
         attendance.earlyMinutes = lateEarlyCheck.earlyMinutes;
         attendance.isLate = lateEarlyCheck.isLate;
         attendance.isEarly = lateEarlyCheck.isEarly;
+        
+        // ✅ Update status based on calculation
+        if (!req.body.status) {
+          attendance.status = lateEarlyCheck.status;
+        }
       }
       
       attendance.adminAdjustedShift = true;

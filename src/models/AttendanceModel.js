@@ -11,6 +11,17 @@ const attendanceSchema = new mongoose.Schema({
     employeeId: {
     type: String, 
   },
+    calculatedStatus: {  // ✅ এই ফিল্ড যোগ করুন
+    type: String,
+    enum: ['Present', 'Late', 'Early'],
+    default: 'Present'
+  },
+  lateEarlyDetails: {  // ✅ এই ফিল্ড যোগ করুন
+    differenceMinutes: Number,
+    lateThreshold: { type: Number, default: 5 },
+    earlyThreshold: { type: Number, default: -1 },
+    calculatedAt: Date
+  },
   date: { 
     type: Date, 
     required: true,
