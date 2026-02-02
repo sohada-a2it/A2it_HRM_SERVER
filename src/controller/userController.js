@@ -1069,6 +1069,29 @@ exports.createUser = async (req, res) => {
       contractType: contractType || 'Not provided',
       hasBankDetails: !!bankDetails
     });
+        // ============ PREPARE BASE USER DATA ============
+    const userData = {
+      firstName: firstName?.trim() || email.split('@')[0] || 'User',
+      lastName: lastName?.trim() || 'User',
+      email: email.toLowerCase().trim(),
+      password: password,
+      role: role,
+      isActive: true,
+      status: 'active',
+      phone: phone?.trim() || '',
+      address: address?.trim() || '',
+      department: department?.trim() || '',
+      designation: designation?.trim() || getDefaultDesignation(role),
+      picture: picture?.trim() || '',
+      salaryType: salaryType || 'monthly',
+      rate: rate || 0,
+      basicSalary: basicSalary || 0,
+      salary: salary || 0,
+      joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
+      // ============ WORK TYPE FIELDS ============
+      workLocationType: workLocationType || (role === 'admin' ? 'onsite' : 'onsite'),
+      workArrangement: workArrangement || (role === 'admin' ? 'full-time' : 'full-time')
+    };
     // ============ ONSITE BENEFITS AUTO-SET ============
     // Check if employee is onsite
     if (role === 'employee' && workLocationType === 'onsite') {
@@ -1130,29 +1153,6 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    // ============ PREPARE BASE USER DATA ============
-    const userData = {
-      firstName: firstName?.trim() || email.split('@')[0] || 'User',
-      lastName: lastName?.trim() || 'User',
-      email: email.toLowerCase().trim(),
-      password: password,
-      role: role,
-      isActive: true,
-      status: 'active',
-      phone: phone?.trim() || '',
-      address: address?.trim() || '',
-      department: department?.trim() || '',
-      designation: designation?.trim() || getDefaultDesignation(role),
-      picture: picture?.trim() || '',
-      salaryType: salaryType || 'monthly',
-      rate: rate || 0,
-      basicSalary: basicSalary || 0,
-      salary: salary || 0,
-      joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
-      // ============ WORK TYPE FIELDS ============
-      workLocationType: workLocationType || (role === 'admin' ? 'onsite' : 'onsite'),
-      workArrangement: workArrangement || (role === 'admin' ? 'full-time' : 'full-time')
-    };
 
     // Helper function for default designation
     function getDefaultDesignation(userRole) {
