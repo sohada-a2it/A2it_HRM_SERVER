@@ -1302,65 +1302,291 @@ exports.getAllAttendanceRecords = async (req, res) => {
       department, 
       status, 
       page = 1, 
-      limit = 50 
+      limit = 50,
+      search
     } = req.query;
 
-    const matchCondition = { isDeleted: false };
-    const skip = (page - 1) * limit;
+    console.log("📊 [API] Fetching ALL attendance records");
+    console.log("🔍 Query Params:", { 
+      startDate, endDate, employeeId, department, status, page, limit, search 
+    });
 
-    if (employeeId) {
-      matchCondition.employee = employeeId;
+    // ✅ ফিক্স 1: বেসিক কন্ডিশন
+    const matchCondition = {};
+    
+    // ✅ ফিক্স 2: isDeleted কন্ডিশন সরিয়ে দিন অথবা true/false দুটোই রাখুন
+    // Option 1: সব রেকর্ড দেখাবে (deleted সহ)
+    // matchCondition.isDeleted = { $in: [false, true] };
+    
+    // Option 2: শুধু non-deleted দেখাবে (এটাই ডিফল্ট)
+    matchCondition.isDeleted = false;
+    
+    // Option 3: কমেন্ট আউট করুন (সব রেকর্ড দেখাবে)
+    // delete matchCondition.isDeleted;
+
+    console.log("🔍 Base matchCondition:", matchCondition);
+
+    // ✅ ফিক্স 3: Employee ID ফিল্টার
+    if (employeeId && employeeId.trim() !== '' && employeeId !== 'all') {
+      console.log("🔍 Filtering by employeeId:", employeeId);
+      
+      try {
+        // Check if valid ObjectId
+        if (mongoose.Types.ObjectId.isValid(employeeId)) {
+          matchCondition.employee = new mongoose.Types.ObjectId(employeeId);
+        }
+      } catch (error) {
+        console.log("⚠️ Invalid employeeId format:", error.message);
+      }
     }
 
-    if (department) {
-      const employees = await User.find({ department }).select('_id');
-      matchCondition.employee = { $in: employees.map(e => e._id) };
+    // ✅ ফিক্স 4: Department ফিল্টার
+    if (department && department.trim() !== '' && department !== 'all') {
+      console.log("🔍 Filtering by department:", department);
+      
+      try {
+        const employees = await User.find({ 
+          department: { $regex: department, $options: 'i' },
+          status: 'active'
+        }).select('_id');
+        
+        if (employees.length > 0) {
+          const employeeIds = employees.map(e => e._id);
+          
+          if (matchCondition.employee) {
+            // Check if employee is in this department
+            if (mongoose.Types.ObjectId.isValid(matchCondition.employee)) {
+              const employeeInDept = employees.some(e => e._id.equals(matchCondition.employee));
+              if (!employeeInDept) {
+                // Employee not in department, return empty
+                return res.status(200).json({
+                  status: "success",
+                  count: 0,
+                  total: 0,
+                  page: parseInt(page),
+                  totalPages: 0,
+                  records: [],
+                  message: "Employee not found in this department"
+                });
+              }
+            }
+          } else {
+            matchCondition.employee = { $in: employeeIds };
+          }
+        } else {
+          // No employees in this department
+          return res.status(200).json({
+            status: "success",
+            count: 0,
+            total: 0,
+            page: parseInt(page),
+            totalPages: 0,
+            records: [],
+            message: "No employees found in this department"
+          });
+        }
+      } catch (error) {
+        console.error("❌ Department filter error:", error);
+      }
     }
 
-    if (status) {
-      matchCondition.status = status;
-    }
-
-    if (startDate && endDate) {
-      matchCondition.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
+    // ✅ ফিক্স 5: Status ফিল্টার
+    if (status && status.trim() !== '' && status !== 'all') {
+      console.log("🔍 Filtering by status:", status);
+      
+      const statusMap = {
+        'Present': ['Present', 'Present (On Time)', 'Present (Late)', 'Present (Early)'],
+        'Absent': ['Absent'],
+        'Late': ['Late', 'Present (Late)'],
+        'Early': ['Early', 'Present (Early)'],
+        'Leave': ['Leave', 'Unpaid Leave', 'Half Paid Leave'],
+        'Govt Holiday': ['Govt Holiday'],
+        'Weekly Off': ['Weekly Off'],
+        'Off Day': ['Off Day']
       };
-    } else {
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
       
-      const endOfMonth = new Date();
-      endOfMonth.setMonth(endOfMonth.getMonth() + 1);
-      endOfMonth.setDate(0);
-      endOfMonth.setHours(23, 59, 59, 999);
-      
-      matchCondition.date = { $gte: startOfMonth, $lte: endOfMonth };
+      const statusValues = statusMap[status] || [status];
+      matchCondition.status = { $in: statusValues };
     }
 
-    const total = await Attendance.countDocuments(matchCondition);
-    const records = await Attendance.find(matchCondition)
-      .sort({ date: -1 })
+    // ✅ ফিক্স 6: Date Range - সবচেয়ে গুরুত্বপূর্ণ ফিক্স
+    if (startDate && endDate) {
+      console.log("📅 Date range from frontend:", startDate, "to", endDate);
+      
+      try {
+        // Parse dates properly
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        // Fix timezone issues
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+        
+        console.log("📅 Parsed dates (local):", start.toLocaleString(), "to", end.toLocaleString());
+        console.log("📅 Parsed dates (ISO):", start.toISOString(), "to", end.toISOString());
+        
+        // Use $gte and $lte with proper dates
+        matchCondition.date = {
+          $gte: start,
+          $lte: end
+        };
+        
+      } catch (error) {
+        console.error("❌ Date parsing error:", error);
+        // Fallback: show all records without date filter
+        console.log("⚠️ Using fallback: no date filter");
+      }
+    } else {
+      // ✅ DEFAULT: Last 365 days (সব রেকর্ড দেখানোর জন্য)
+      console.log("📅 No date range specified, showing ALL records");
+      // Remove date condition to show all records
+      // matchCondition.date = { $exists: true }; // বা সব রেকর্ডের জন্য এই লাইনটা রিমুভ করুন
+    }
+
+    // ✅ ফিক্স 7: Search ফিল্টার
+    if (search && search.trim() !== '') {
+      console.log("🔍 Searching for:", search);
+      
+      try {
+        const searchEmployees = await User.find({
+          $or: [
+            { firstName: { $regex: search, $options: 'i' } },
+            { lastName: { $regex: search, $options: 'i' } },
+            { employeeId: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } }
+          ],
+          status: 'active'
+        }).select('_id');
+        
+        if (searchEmployees.length > 0) {
+          const searchEmployeeIds = searchEmployees.map(e => e._id);
+          
+          if (matchCondition.employee) {
+            // Check if current employee matches search
+            if (mongoose.Types.ObjectId.isValid(matchCondition.employee)) {
+              const matchesSearch = searchEmployees.some(e => 
+                e._id.equals(matchCondition.employee)
+              );
+              if (!matchesSearch) {
+                return res.status(200).json({
+                  status: "success",
+                  count: 0,
+                  total: 0,
+                  page: parseInt(page),
+                  totalPages: 0,
+                  records: []
+                });
+              }
+            }
+          } else {
+            matchCondition.employee = { $in: searchEmployeeIds };
+          }
+        } else {
+          return res.status(200).json({
+            status: "success",
+            count: 0,
+            total: 0,
+            page: parseInt(page),
+            totalPages: 0,
+            records: []
+          });
+        }
+      } catch (error) {
+        console.error("❌ Search filter error:", error);
+      }
+    }
+
+    // ✅ ফিক্স 8: ডিবাগ কুয়েরি
+    console.log("🔍 Final Query Conditions:", JSON.stringify(matchCondition, null, 2));
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // ✅ First, get total count
+    const totalCount = await Attendance.countDocuments(matchCondition);
+    console.log("📊 Total matching records:", totalCount);
+
+    // ✅ If total is 0, check what's in database
+    if (totalCount === 0) {
+      console.log("⚠️ No records found. Checking database...");
+      
+      // Check total records in database
+      const totalInDB = await Attendance.countDocuments({});
+      console.log("📊 Total records in database (all):", totalInDB);
+      
+      // Check by isDeleted status
+      const activeCount = await Attendance.countDocuments({ isDeleted: false });
+      const deletedCount = await Attendance.countDocuments({ isDeleted: true });
+      console.log("📊 Active records:", activeCount);
+      console.log("📊 Deleted records:", deletedCount);
+      
+      // Check date range
+      const sampleRecord = await Attendance.findOne({}).sort({ date: 1 });
+      console.log("📅 Sample record date:", sampleRecord?.date);
+    }
+
+    // ✅ Get the records
+    let records = await Attendance.find(matchCondition)
+      .sort({ date: -1, createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('employee', 'firstName lastName employeeId department designation')
+      .populate({
+        path: 'employee',
+        select: 'firstName lastName employeeId department designation email phone',
+        // Remove match condition to get all employees (even if null)
+        // match: { status: 'active' } // এই লাইন রিমুভ করুন
+      })
       .populate('correctedBy', 'firstName lastName')
       .lean();
 
+    console.log("📊 Raw records fetched:", records.length);
+
+    // ✅ ফিক্স 9: Handle null employees
+    const filteredRecords = records.map(record => {
+      // If employee is null, add placeholder
+      if (!record.employee) {
+        return {
+          ...record,
+          employee: {
+            _id: 'deleted',
+            firstName: 'Deleted',
+            lastName: 'Employee',
+            employeeId: 'N/A',
+            department: 'N/A'
+          }
+        };
+      }
+      return record;
+    });
+
+    console.log("📊 Final records to send:", filteredRecords.length);
+
+    // ✅ Send response
     res.status(200).json({
       status: "success",
-      count: records.length,
-      total,
+      count: filteredRecords.length,
+      total: totalCount,
       page: parseInt(page),
-      totalPages: Math.ceil(total / limit),
-      records
+      totalPages: Math.ceil(totalCount / parseInt(limit)),
+      records: filteredRecords,
+      queryInfo: {
+        conditions: Object.keys(matchCondition),
+        dateRange: matchCondition.date || 'All dates',
+        employeeFilter: !!employeeId,
+        statusFilter: !!status
+      }
     });
 
   } catch (error) {
+    console.error("❌ [CRITICAL] Error in getAllAttendanceRecords:", error);
+    console.error("❌ Error stack:", error.stack);
+    
     res.status(500).json({
       status: "fail",
-      message: error.message
+      message: `Internal server error: ${error.message}`,
+      errorDetails: process.env.NODE_ENV === 'development' ? {
+        stack: error.stack,
+        query: req.query
+      } : undefined
     });
   }
 };
@@ -1644,49 +1870,110 @@ exports.deleteAttendance = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
 
-    const attendance = await Attendance.findById(id);
+    console.log(`🗑️ [HARD DELETE] Request to delete attendance: ${id}`);
+    console.log(`👤 Deleting admin: ${adminId}`);
+    console.log(`📅 Reason: ${reason || 'No reason provided'}`);
+
+    // 1. প্রথমে রেকর্ডটি খুঁজে বের করুন (ডিলিট করার আগে)
+    const attendance = await Attendance.findById(id)
+      .populate('employee', 'firstName lastName employeeId');
+    
     if (!attendance) {
+      console.log(`❌ Attendance record not found: ${id}`);
       return res.status(404).json({
         status: "fail",
-        message: "Attendance not found"
+        message: "Attendance record not found"
       });
     }
 
-    if (attendance.isDeleted) {
-      return res.status(400).json({
-        status: "fail",
-        message: "Already deleted"
-      });
-    }
+    // 2. ডিবাগ লগ
+    console.log(`📊 Record to delete:`);
+    console.log(`   - Date: ${attendance.date}`);
+    console.log(`   - Status: ${attendance.status}`);
+    console.log(`   - Employee: ${attendance.employee?.firstName} ${attendance.employee?.lastName}`);
+    console.log(`   - Clock In: ${attendance.clockIn}`);
+    console.log(`   - Clock Out: ${attendance.clockOut}`);
+    console.log(`   - Created At: ${attendance.createdAt}`);
 
-    attendance.isDeleted = true;
-    attendance.deletedBy = adminId;
-    attendance.deletedAt = new Date();
-    await attendance.save();
+    // 3. Optional: Backup important data before deletion
+    const backupData = {
+      _id: attendance._id,
+      employeeId: attendance.employee?._id || attendance.employee,
+      employeeName: attendance.employee ? 
+        `${attendance.employee.firstName} ${attendance.employee.lastName}` : 
+        'Unknown',
+      date: attendance.date,
+      status: attendance.status,
+      clockIn: attendance.clockIn,
+      clockOut: attendance.clockOut,
+      totalHours: attendance.totalHours,
+      deletedBy: adminId,
+      deletedAt: new Date(),
+      reason: reason || "No reason provided",
+      deletedByAdmin: `${admin.firstName} ${admin.lastName}`
+    };
 
+    // 4. Session activity লগ করুন (ডিলিট করার আগে)
     await addSessionActivity({
       userId: adminId,
-      action: "Deleted Attendance",
+      action: "Hard Delete Attendance",
       target: id,
       targetType: "Attendance",
       details: {
-        employeeId: attendance.employee,
-        date: attendance.date,
-        reason: reason || "No reason provided",
-        adminName: `${admin.firstName} ${admin.lastName}`
+        ...backupData,
+        backupCreated: true
       },
       ipAddress: req.ip
     });
 
+    // 5. Option 1: সরাসরি ডিলিট (পুরোপুরি মুছে ফেলবে)
+    const deleteResult = await Attendance.findByIdAndDelete(id);
+    
+    // 6. Option 2: যদি backup রাখতে চান
+    // await AttendanceBackup.create(backupData); // যদি backup collection থাকে
+
+    if (!deleteResult) {
+      console.log(`⚠️ Delete operation failed for: ${id}`);
+      return res.status(500).json({
+        status: "fail",
+        message: "Failed to delete attendance record"
+      });
+    }
+
+    console.log(`✅ Successfully hard deleted attendance: ${id}`);
+
+    // 7. Verify deletion
+    const verifyDelete = await Attendance.findById(id);
+    if (verifyDelete) {
+      console.error(`❌ Record still exists after deletion: ${id}`);
+      return res.status(500).json({
+        status: "fail",
+        message: "Record still exists after deletion attempt"
+      });
+    }
+
+    // 8. Success response
     res.status(200).json({
       status: "success",
-      message: "Attendance deleted"
+      message: "Attendance record permanently deleted",
+      deletedRecord: {
+        id: id,
+        date: attendance.date,
+        employee: backupData.employeeName,
+        deletedAt: new Date(),
+        deletedBy: `${admin.firstName} ${admin.lastName}`
+      },
+      backup: backupData // Optional: frontend জানার জন্য
     });
 
   } catch (error) {
+    console.error("❌ Hard delete attendance error:", error);
+    console.error("❌ Error stack:", error.stack);
+    
     res.status(500).json({
       status: "fail",
-      message: error.message
+      message: `Failed to delete attendance: ${error.message}`,
+      errorDetails: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
