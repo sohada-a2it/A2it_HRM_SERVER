@@ -3914,156 +3914,93 @@ exports.getAllEmployeeShifts = async (req, res) => {
   }
 }; 
 
-// Admin: Reset employee shift to default 
-
-// backend/controller/userController.js - resetEmployeeShift function
-exports.resetEmployeeShift = async (req, res) => {
+// Admin: Reset employee shift to default  
+exports.resetUserShift = async (req, res) => {
   try {
-    const { employeeId } = req.params;
-    const { reason } = req.body;
-    const adminId = req.user._id;
+    const { userId, employeeId, reason = 'Shift reset by admin' } = req.body;
 
-    console.log('🔄 Reset shift request:', { 
-      employeeId, 
-      adminId, 
-      reason 
-    });
-
-    // Find user by employeeId or _id
-    let user;
-    
-    // First try to find by employeeId
-    if (employeeId && employeeId !== 'undefined') {
-      user = await User.findOne({ 
-        $or: [
-          { employeeId: employeeId },
-          { _id: employeeId }
-        ]
+    if (!userId && !employeeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID or Employee ID is required'
       });
+    }
+
+    // Find user by either userId or employeeId
+    let user;
+    if (userId) {
+      user = await User.findById(userId);
+    } else if (employeeId) {
+      user = await User.findOne({ employeeId });
     }
 
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'Employee not found'
+        message: 'User not found'
       });
     }
 
-    console.log('✅ Found user:', {
-      id: user._id,
-      employeeId: user.employeeId,
-      name: `${user.firstName} ${user.lastName}`,
-      hasShiftTiming: !!user.shiftTiming
-    });
+    // Store old shift data for audit
+    const oldShiftData = user.shiftTiming?.assignedShift;
 
-    // Get admin user details for resetBy
-    const adminUser = await User.findById(adminId).select('firstName lastName email');
-
-    // Get default shift timing - handle undefined case
-    let defaultStart = '09:00';
-    let defaultEnd = '18:00';
-    
-    if (user.shiftTiming && user.shiftTiming.defaultShift) {
-      defaultStart = user.shiftTiming.defaultShift.start || defaultStart;
-      defaultEnd = user.shiftTiming.defaultShift.end || defaultEnd;
-    }
-
-    console.log('📅 Default shift:', { 
-      defaultStart, 
-      defaultEnd
-    });
-
-    // Create reset record WITHOUT populate attempt
-    const resetRecord = {
-      start: defaultStart,
-      end: defaultEnd,
-      reason: reason || 'Shift reset to default by admin',
-      resetBy: {
-        _id: adminId,
-        firstName: adminUser?.firstName || 'Admin',
-        lastName: adminUser?.lastName || 'User',
-        email: adminUser?.email
-      },
-      resetAt: new Date(),
-      action: 'reset',
-      isActive: false,
-      type: 'default'
-    };
-
-    // Initialize shiftTiming if it doesn't exist
-    if (!user.shiftTiming) {
-      user.shiftTiming = {};
-    }
-
-    // Initialize shiftHistory array if it doesn't exist
-    if (!user.shiftTiming.shiftHistory) {
-      user.shiftTiming.shiftHistory = [];
-    }
-
-    // Update user's shift timing WITHOUT breaking existing structure
-    user.shiftTiming.assignedShift = null; // Remove assigned shift
-    
-    // Ensure currentShift exists
-    user.shiftTiming.currentShift = {
-      start: defaultStart,
-      end: defaultEnd,
-      isActive: false,
-      effectiveDate: new Date().toISOString().split('T')[0],
-      type: 'default'
-    };
-
-    // Ensure defaultShift exists
-    user.shiftTiming.defaultShift = {
-      start: defaultStart,
-      end: defaultEnd,
-      updatedAt: new Date()
-    };
-
-    // Add reset record to history
-    user.shiftTiming.shiftHistory.unshift(resetRecord); // Add to beginning
-
-    // Save without validation if validation fails
-    try {
-      await user.save({ validateBeforeSave: true });
-      console.log('💾 User saved with validation');
-    } catch (saveError) {
-      console.warn('⚠️ Validation failed, saving without validation:', saveError.message);
-      await user.save({ validateBeforeSave: false });
-      console.log('💾 User saved without validation');
-    }
-
-    // Prepare response WITHOUT populate
-    const responseUser = {
-      _id: user._id,
-      employeeId: user.employeeId,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      department: user.department,
-      email: user.email,
-      role: user.role,
-      currentShiftDisplay: `${defaultStart} - ${defaultEnd}`,
-      shiftTiming: {
-        assignedShift: null,
-        currentShift: user.shiftTiming.currentShift,
-        defaultShift: user.shiftTiming.defaultShift,
-        shiftHistory: user.shiftTiming.shiftHistory.slice(0, 10) // Last 10 records
+    // Reset to default shift
+    const resetData = {
+      'shiftTiming.assignedShift': null,
+      'shiftTiming.currentShift': {
+        start: user.shiftTiming?.defaultShift?.start || '09:00',
+        end: user.shiftTiming?.defaultShift?.end || '18:00',
+        isActive: false,
+        effectiveDate: new Date().toISOString().split('T')[0],
+        type: 'default'
       }
     };
 
-    console.log('✅ Shift reset successful for:', user.employeeId);
+    // Add to shift history
+    if (user.shiftTiming?.assignedShift) {
+      resetData['shiftTiming.shiftHistory'] = [
+        {
+          ...user.shiftTiming.assignedShift,
+          endDate: new Date(),
+          reason: reason,
+          resetBy: req.user._id,
+          resetAt: new Date()
+        },
+        ...(user.shiftTiming.shiftHistory || [])
+      ];
+    }
+
+    await User.findByIdAndUpdate(user._id, { $set: resetData });
+
+    // Audit Log
+    await AuditLog.create({
+      userId: req.user._id,
+      userRole: req.user.role,
+      action: 'Reset User Shift',
+      target: user._id,
+      details: {
+        user: `${user.firstName} ${user.lastName}`,
+        oldShift: oldShiftData,
+        newShift: resetData['shiftTiming.currentShift'],
+        reason: reason,
+        resetBy: req.user.email
+      },
+      ip: req.ip,
+      device: req.headers['user-agent'],
+      status: 'success'
+    });
 
     res.json({
       success: true,
-      message: 'Shift reset to default successfully',
-      user: responseUser
+      message: 'Shift reset successfully',
+      user: await User.findById(user._id).select('-password')
     });
 
   } catch (error) {
-    console.error('❌ Reset shift error:', error);
+    console.error('Reset shift error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
-      error: error.message
+      message: error.message
     });
   }
 };
@@ -4334,176 +4271,153 @@ exports.getMyShift = async (req, res) => {
   }
 };
 
-// Admin: Bulk assign shifts to multiple employees
-exports.bulkAssignShifts = async (req, res) => {
+// Admin: Bulk assign shifts to multiple employees 
+exports.bulkAssignShiftToUsers = async (req, res) => {
   try {
-    const { employeeIds, startTime, endTime, effectiveDate, reason = '' } = req.body;
+    const { 
+      userIds, 
+      startTime, 
+      endTime, 
+      effectiveDate, 
+      shiftType = 'regular',
+      makeDefault = false,
+      reason = 'Bulk assigned by admin'
+    } = req.body;
 
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin only.'
-      });
-    }
-
-    // Validate required fields
-    if (!employeeIds || !Array.isArray(employeeIds) || employeeIds.length === 0) {
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Employee IDs array is required'
+        message: 'User IDs array is required'
       });
     }
 
-    if (!startTime || !endTime) {
+    if (!startTime || !endTime || !effectiveDate) {
       return res.status(400).json({
         success: false,
-        message: 'Start time and end time are required'
+        message: 'startTime, endTime, and effectiveDate are required'
       });
     }
 
-    // Validate time format
-    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid time format. Use HH:mm (24-hour format)'
-      });
-    }
-
-    // Find employees
-    const employees = await User.find({
-      _id: { $in: employeeIds },
-      role: 'employee'
-    });
-
-    if (employees.length === 0) {
+    const users = await User.find({ _id: { $in: userIds } });
+    
+    if (users.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No employees found'
+        message: 'No users found'
       });
     }
 
-    const results = [];
-    const errors = [];
+    const results = {
+      successful: [],
+      failed: []
+    };
 
-    // Assign shift to each employee
-    for (const employee of employees) {
+    for (const user of users) {
       try {
-        // Initialize shiftTiming if not exists
-        if (!employee.shiftTiming) {
-          employee.shiftTiming = {
-            defaultShift: {
-              start: '09:00',
-              end: '18:00'
+        // Update user's shift
+        const updateData = {
+          'shiftTiming.assignedShift': {
+            name: shiftType === 'morning' ? 'Morning Shift' : 
+                  shiftType === 'evening' ? 'Evening Shift' : 
+                  shiftType === 'night' ? 'Night Shift' : 'Regular Shift',
+            start: startTime,
+            end: endTime,
+            lateThreshold: 5,
+            earlyThreshold: -1,
+            autoClockOutDelay: 10,
+            assignedBy: req.user._id,
+            assignedAt: new Date(),
+            effectiveDate: new Date(effectiveDate),
+            isActive: true,
+            reason: reason
+          },
+          'shiftTiming.currentShift': {
+            start: startTime,
+            end: endTime,
+            effectiveDate: new Date(effectiveDate),
+            isActive: true
+          },
+          'shiftTiming.shiftHistory': [
+            {
+              name: shiftType === 'morning' ? 'Morning Shift' : 
+                    shiftType === 'evening' ? 'Evening Shift' : 
+                    shiftType === 'night' ? 'Night Shift' : 'Regular Shift',
+              start: startTime,
+              end: endTime,
+              assignedBy: req.user._id,
+              assignedAt: new Date(),
+              effectiveDate: new Date(effectiveDate),
+              reason: reason
             },
-            currentShift: {
-              start: '',
-              end: '',
-              assignedBy: null,
-              assignedAt: null,
-              effectiveDate: null,
-              isActive: false
-            },
-            shiftHistory: []
+            ...(user.shiftTiming?.shiftHistory || [])
+          ]
+        };
+
+        // Update default shift if requested
+        if (makeDefault) {
+          updateData['shiftTiming.defaultShift'] = {
+            start: startTime,
+            end: endTime,
+            updatedAt: new Date(),
+            updatedBy: req.user._id
           };
         }
 
-        // Add current shift to history before updating
-        if (employee.shiftTiming.currentShift && employee.shiftTiming.currentShift.isActive) {
-          employee.shiftTiming.shiftHistory.push({
-            start: employee.shiftTiming.currentShift.start,
-            end: employee.shiftTiming.currentShift.end,
-            assignedBy: employee.shiftTiming.currentShift.assignedBy,
-            assignedAt: employee.shiftTiming.currentShift.assignedAt,
-            effectiveDate: employee.shiftTiming.currentShift.effectiveDate,
-            endedAt: new Date(),
-            reason: reason || 'Bulk reassignment'
-          });
-        }
+        await User.findByIdAndUpdate(user._id, { $set: updateData });
 
-        // Update current shift
-        employee.shiftTiming.currentShift = {
-          start: startTime,
-          end: endTime,
-          assignedBy: req.user._id,
-          assignedAt: new Date(),
-          effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date(),
-          isActive: true
-        };
-
-        // Add to shift history
-        employee.shiftTiming.shiftHistory.push({
-          start: startTime,
-          end: endTime,
-          assignedBy: req.user._id,
-          assignedAt: new Date(),
-          effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date(),
-          reason: reason || 'Bulk shift assignment'
+        results.successful.push({
+          userId: user._id,
+          name: `${user.firstName} ${user.lastName}`,
+          employeeId: user.employeeId
         });
 
-        await employee.save();
-
-        results.push({
-          employeeId: employee._id,
-          name: `${employee.firstName} ${employee.lastName}`,
-          email: employee.email,
-          success: true
+        // Audit log for each user
+        await AuditLog.create({
+          userId: req.user._id,
+          userRole: req.user.role,
+          action: 'Bulk Assigned Shift',
+          target: user._id,
+          details: {
+            user: `${user.firstName} ${user.lastName}`,
+            shiftTime: `${startTime} - ${endTime}`,
+            effectiveDate: effectiveDate,
+            reason: reason,
+            assignedBy: req.user.email
+          },
+          ip: req.ip,
+          device: req.headers['user-agent'],
+          status: 'success'
         });
 
       } catch (error) {
-        errors.push({
-          employeeId: employee._id,
-          name: `${employee.firstName} ${employee.lastName}`,
+        results.failed.push({
+          userId: user._id,
+          name: `${user.firstName} ${user.lastName}`,
           error: error.message
         });
       }
     }
 
-    // ✅ AuditLog
-    await AuditLog.create({
-      userId: req.user._id,
-      action: "Bulk Assigned Shifts",
-      target: null,
-      details: {
-        shift: `${startTime} - ${endTime}`,
-        totalEmployees: employeeIds.length,
-        successfulAssignments: results.length,
-        failedAssignments: errors.length,
-        effectiveDate: effectiveDate || 'Immediate',
-        reason: reason,
-        assignedBy: req.user.email
-      },
-      ip: req.ip,
-      device: req.headers['user-agent']
-    });
-
-    // ✅ Session activity
+    // Session activity
     await addSessionActivity({
       userId: req.user._id,
-      action: "Bulk Assigned Shifts",
+      action: 'Bulk Assigned Shifts',
       target: null,
       details: {
-        shift: `${startTime} - ${endTime}`,
-        successful: results.length,
-        failed: errors.length
+        total: userIds.length,
+        successful: results.successful.length,
+        failed: results.failed.length
       }
     });
 
-    res.status(200).json({
+    res.json({
       success: true,
-      message: 'Bulk shift assignment completed',
-      summary: {
-        totalProcessed: employeeIds.length,
-        successful: results.length,
-        failed: errors.length
-      },
-      results: results,
-      errors: errors.length > 0 ? errors : undefined
+      message: `Bulk assignment completed: ${results.successful.length} successful, ${results.failed.length} failed`,
+      results
     });
 
   } catch (error) {
-    console.error('Bulk assign shifts error:', error);
+    console.error('Bulk assign shift error:', error);
     res.status(500).json({
       success: false,
       message: error.message

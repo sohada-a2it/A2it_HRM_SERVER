@@ -421,7 +421,8 @@ exports.cancelSubscription = async (req, res) => {
   try {
     const { reason } = req.body;
     
-    const subscription = await MealSubscription.findOne({
+    // Find and DELETE permanently
+    const subscription = await MealSubscription.findOneAndDelete({
       user: req.user._id,
       isDeleted: false
     });
@@ -433,32 +434,40 @@ exports.cancelSubscription = async (req, res) => {
       });
     }
     
-    subscription.status = 'cancelled';
-    subscription.autoRenew = false;
-    subscription.cancelledAt = new Date();
-    subscription.cancellationReason = reason || '';
-    
-    await subscription.save();
-    
+    // Create audit log for permanent deletion
     await AuditLog.create({
       userId: req.user._id,
-      action: "Subscription Cancelled",
+      action: "Subscription Permanently Deleted",
       target: subscription._id,
       details: {
-        reason: reason,
-        employeeId: req.user.employeeId
+        reason: reason || 'Cancelled by user',
+        employeeId: req.user.employeeId,
+        subscriptionId: subscription._id,
+        preference: subscription.preference,
+        autoRenew: subscription.autoRenew,
+        permanentDelete: true
       },
       ip: req.ip,
       device: req.headers['user-agent']
     });
     
+    // REMOVE THIS PART IF MonthlyApproval MODEL DOESN'T EXIST
+    // await MonthlyApproval.deleteMany({
+    //   subscription: subscription._id,
+    //   status: 'pending'
+    // });
+    
     res.status(200).json({
       success: true,
-      message: 'Meal subscription cancelled successfully',
+      message: 'Meal subscription permanently deleted',
       data: {
         subscriptionId: subscription._id,
-        status: 'cancelled',
-        cancelledAt: subscription.cancelledAt
+        status: 'deleted',
+        deletedAt: new Date(),
+        user: {
+          id: req.user._id,
+          name: `${req.user.firstName} ${req.user.lastName}`
+        }
       }
     });
     
@@ -470,7 +479,6 @@ exports.cancelSubscription = async (req, res) => {
     });
   }
 };
-
 // Employee: Update subscription preference
 exports.updateSubscriptionPreference = async (req, res) => {
   try {

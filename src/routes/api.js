@@ -267,7 +267,7 @@ router.get('/schedule', protect, attendanceController.getEmployeeSchedule);
 router.post('/quick-action', protect, attendanceController.quickClockAction);
 router.get('/notifications', protect, attendanceController.getAttendanceNotifications);
 router.get('/history', protect, attendanceController.getAttendanceHistory);
-
+router.get('/date-range', protect, attendanceController.getAttendanceDateRange);
 // Admin Routes
 router.get('/admin/all-records', protect, adminOnly, attendanceController.getAllAttendanceRecords);
 router.get('/admin/summary', protect, adminOnly, attendanceController.getDashboardStats);
@@ -310,10 +310,56 @@ router.post('/auto-mark-absent', protect, async (req, res) => {
     const userId = req.user.id;
     const { date, reason, shiftTiming, ruleType } = req.body;
     
-    // Check if already marked
+    const currentDate = new Date(date);
+    const day = currentDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    
+    // ✅ ১. Weekend model থেকে weekend check
+    const Weekend = require('../models/OfficeScheduleModel'); // আপনার Weekend model
+    
+    // উপায় ১: Day number দিয়ে check
+    const weekendDay = await Weekend.findOne({
+      dayNumber: day
+    });
+    
+    // উপায় ২: Day name দিয়ে check
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const weekendByName = await Weekend.findOne({
+      dayName: dayNames[day]
+    });
+    
+    // উপায় ৩: isWeekend flag দিয়ে check
+    const weekendCheck = await Weekend.findOne({
+      dayNumber: day,
+      isWeekend: true
+    });
+    
+    if (weekendDay || weekendByName || weekendCheck) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot mark absent on ${dayNames[day]} (Weekend)`
+      });
+    }
+    
+    // ✅ ২. Holiday check
+    const Holiday = require('../models/HolidayModel');
+    const startOfDay = new Date(currentDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(currentDate.setHours(23, 59, 59, 999));
+    
+    const holidayCheck = await Holiday.findOne({
+      date: { $gte: startOfDay, $lte: endOfDay }
+    });
+    
+    if (holidayCheck) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot mark absent on ${holidayCheck.name || 'Holiday'}`
+      });
+    }
+    
+    // ✅ ৩. Check existing attendance
     const existingRecord = await Attendance.findOne({
       employee: userId,
-      date: { $gte: new Date(date), $lt: new Date(date + 'T23:59:59.999Z') }
+      date: { $gte: startOfDay, $lte: endOfDay }
     });
     
     if (existingRecord) {
@@ -323,63 +369,21 @@ router.post('/auto-mark-absent', protect, async (req, res) => {
       });
     }
     
-    // Get day status
-    const day = new Date(date).getDay();
-    const isWeekend = day === 5 || day === 6; // Friday or Saturday
-    
-    if (isWeekend) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot mark absent on weekend'
-      });
-    }
-    
-    // Determine status based on rule type
-    let status = 'Absent';
-    let remarks = '';
-    
-    if (ruleType === '5_hour_rule') {
-      remarks = 'Auto-marked by system (5-hour rule: No clock in within 5 hours of shift start)';
-    } else if (ruleType === 'shift_start_rule') {
-      remarks = 'Auto-marked by system (No clock in within 10 minutes of shift start)';
-    } else {
-      remarks = 'Auto-marked by system due to no clock in';
-    }
-    
-    // Create auto absent record
+    // ✅ ৪. এখনই শুধু absent মার্ক করুন
     const absentRecord = new Attendance({
       employee: userId,
-      date: new Date(date),
-      status: status,
+      date: currentDate,
+      status: 'Absent',
       clockIn: null,
       clockOut: null,
       totalHours: 0,
-      overtimeHours: 0,
-      isLate: false,
-      isEarly: false,
       markedAbsent: true,
       autoMarked: true,
-      markedBy: 'System Auto',
-      markedAt: new Date(),
-      reason: reason,
-      absentReason: remarks,
-      ruleType: ruleType,
-      shiftStart: shiftTiming?.start || '09:00',
-      shiftEnd: shiftTiming?.end || '18:00',
-      shiftName: shiftTiming?.name || 'Regular Shift',
-      remarks: remarks
+      reason: reason || 'No clock-in',
+      remarks: `Auto-marked absent (${ruleType || 'system rule'})`
     });
     
     await absentRecord.save();
-    
-    // Send notification to user
-    await Notification.create({
-      user: userId,
-      title: 'Auto Absent Marked',
-      message: `You have been marked as Absent for ${date}. Reason: ${reason}`,
-      type: 'attendance',
-      read: false
-    });
     
     res.json({
       success: true,
@@ -394,14 +398,15 @@ router.post('/auto-mark-absent', protect, async (req, res) => {
       message: 'Failed to mark auto absent'
     });
   }
-}); 
+});
+
 
 // ================= Shift ROUTES ================= 
 router.get('/admin/employee-shifts', protect, adminOnly, userController.getAllEmployeeShifts);  
-router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetEmployeeShift); 
+router.post('/admin/reset-shift/:employeeId', protect, adminOnly, userController.resetUserShift); 
 router.put('/admin/default-shift', protect, adminOnly, userController.updateDefaultShift); 
 router.get('/admin/shift-history/:employeeId', protect, adminOnly, userController.getEmployeeShiftHistory); 
-router.post('/admin/bulk-assign-shifts', protect, adminOnly, userController.bulkAssignShifts); 
+router.post('/admin/bulk-assign-shifts', protect, adminOnly, userController.bulkAssignShiftToUsers); 
 router.get('/admin/shift-statistics', protect, adminOnly, userController.getShiftStatistics);  
 router.get('/my-shift', protect, userController.getMyShift); 
 router.get('/employee/:employeeId/shift', protect, userController.getEmployeeShift); // ✅ নতুন
@@ -645,7 +650,59 @@ router.get('/admin/monthly-report', protect, adminOnly, mealController.getMonthl
 // NEW ROUTES FOR MEAL APPROVAL/REJECTION
 router.put('/admin/meal/approve', protect, adminOnly, mealController.approveDailyMeal);
 router.put('/admin/meal/reject', protect, adminOnly, mealController.rejectDailyMeal);
-
+// Backend code (example)
+router.post('/setup', async (req, res) => {
+  try {
+    const { preference, autoRenew, note } = req.body;
+    const userId = req.user._id;
+    
+    // Check if user had cancelled subscription before
+    const previousSubscription = await Subscription.findOne({
+      user: userId,
+      status: 'cancelled'
+    }).sort({ createdAt: -1 });
+    
+    // If previous subscription was cancelled, force pending status
+    let status = 'active';
+    let finalAutoRenew = autoRenew;
+    
+    if (previousSubscription) {
+      status = 'pending'; // Force pending for cancelled users
+      finalAutoRenew = false; // Force auto-renew false
+      
+      // Send notification to admin
+      await sendAdminNotification({
+        type: 'NEW_SUBSCRIPTION_AFTER_CANCELLATION',
+        userId,
+        message: `User ${req.user.firstName} ${req.user.lastName} requested new subscription after cancellation`
+      });
+    }
+    
+    const subscription = new Subscription({
+      user: userId,
+      preference,
+      autoRenew: finalAutoRenew,
+      status,
+      note: previousSubscription ? 
+        `New subscription after cancellation - ${note || ''}` : 
+        note,
+      startDate: new Date()
+    });
+    
+    await subscription.save();
+    
+    res.json({
+      success: true,
+      message: previousSubscription ? 
+        'Subscription requested. Waiting for admin approval.' : 
+        'Subscription activated successfully.',
+      data: subscription
+    });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 // DASHBOARD & UTILITIES
 router.get('/dashboard/stats', protect, mealController.getDashboardStats);
 router.get('/departments', protect, mealController.getDepartments);

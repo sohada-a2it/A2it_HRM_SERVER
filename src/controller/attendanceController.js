@@ -535,116 +535,147 @@ class AutoClockOutService {
     });
   }
 
-  async markWorkingDayAbsent() {
-    // Prevent duplicate execution on same day
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (this.lastAbsentMarking === todayStr) {
-      console.log('✅ [12:10 PM] Absent marking already done today');
-      return { message: 'Already marked today', skipped: true };
-    }
+  // Improved markWorkingDayAbsent function
+async markWorkingDayAbsent() {
+  // Prevent duplicate execution on same day
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (this.lastAbsentMarking === todayStr) {
+    console.log('✅ [12:10 PM] Absent marking already done today');
+    return { message: 'Already marked today', skipped: true };
+  }
 
-    this.isRunning = true;
+  this.isRunning = true;
+  
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+    // 🚨 গুরুত্বপূর্ণ: Get day status BEFORE checking employees
+    console.log(`🔍 Checking if today is a working day at 12:10 PM`);
 
-      const activeEmployees = await User.find({
-        status: 'active',
-        role: 'employee'
-      }).select('_id firstName lastName employeeId department position');
+    const activeEmployees = await User.find({
+      status: 'active',
+      role: 'employee'
+    }).select('_id firstName lastName employeeId department position');
 
-      const results = {
-        totalEmployees: activeEmployees.length,
-        markedAbsent: 0,
-        nonWorkingDaySkipped: 0,
-        alreadyClockedIn: 0,
-        failed: 0
-      };
+    const results = {
+      totalEmployees: activeEmployees.length,
+      markedAbsent: 0,
+      nonWorkingDaySkipped: 0,
+      alreadyClockedIn: 0,
+      holidaySkipped: 0,
+      weeklyOffSkipped: 0,
+      failed: 0
+    };
 
-      for (const employee of activeEmployees) {
-        try {
-          // Check if TODAY is a working day
-          const dayStatus = await checkDayStatus(employee._id, today);
-          
-          // Only process WORKING DAYS at 12:10 PM
-          if (dayStatus.isWorkingDay) {
-            // Check existing attendance
-            const existingAttendance = await Attendance.findOne({
+    for (const employee of activeEmployees) {
+      try {
+        // ✅ প্রথমে checkDayStatus() কল করুন
+        const dayStatus = await checkDayStatus(employee._id, today);
+        
+        console.log(`👤 ${employee.firstName}: ${dayStatus.status}, Working: ${dayStatus.isWorkingDay}`);
+        
+        // ✅ শুধুমাত্র WORKING DAY-এ absent মার্ক করুন
+        if (dayStatus.isWorkingDay) {
+          // Check existing attendance
+          const existingAttendance = await Attendance.findOne({
+            employee: employee._id,
+            date: today,
+            isDeleted: false
+          });
+
+          // ✅ শর্ত:
+          // 1. যদি attendance record না থাকে
+          // 2. বা record আছে কিন্তু clockIn নেই
+          // 3. এবং status Absent না হয়
+          if (!existingAttendance) {
+            // Create new absent record
+            const shiftDetails = await getEmployeeShiftDetails(employee._id, today);
+            
+            const attendance = new Attendance({
               employee: employee._id,
               date: today,
-              isDeleted: false
+              status: 'Absent',
+              shift: {
+                name: shiftDetails.name,
+                start: shiftDetails.start,
+                end: shiftDetails.end,
+                lateThreshold: shiftDetails.lateThreshold,
+                earlyThreshold: shiftDetails.earlyThreshold,
+                autoClockOutDelay: shiftDetails.autoClockOutDelay,
+                isNightShift: shiftDetails.isNightShift || false
+              },
+              markedAbsent: true,
+              absentMarkedAt: new Date(),
+              autoMarked: true,
+              remarks: `Auto-marked as Absent at 12:10 PM (no clock in on working day)`,
+              ipAddress: 'System',
+              device: { type: 'system', os: 'Auto Attendance' },
+              location: 'Office',
+              autoClockOutTime: shiftDetails.autoClockOutTime,
+              autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
             });
 
-            // Only mark absent if:
-            // 1. No attendance record exists, OR
-            // 2. Record exists but employee hasn't clocked in
-            if (!existingAttendance) {
-              const shiftDetails = await getEmployeeShiftDetails(employee._id, today);
-              
-              const attendance = new Attendance({
-                employee: employee._id,
-                date: today,
-                status: 'Absent',
-                shift: {
-                  name: shiftDetails.name,
-                  start: shiftDetails.start,
-                  end: shiftDetails.end,
-                  lateThreshold: shiftDetails.lateThreshold,
-                  earlyThreshold: shiftDetails.earlyThreshold,
-                  autoClockOutDelay: shiftDetails.autoClockOutDelay,
-                  isNightShift: shiftDetails.isNightShift || false
-                },
-                markedAbsent: true,
-                absentMarkedAt: new Date(),
-                autoMarked: true,
-                remarks: `Auto-marked as Absent at 12:10 PM (no clock in on working day)`,
-                ipAddress: 'System',
-                device: { type: 'system', os: 'Auto Attendance' },
-                location: 'Office',
-                autoClockOutTime: shiftDetails.autoClockOutTime,
-                autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
-              });
-
-              await attendance.save();
-              results.markedAbsent++;
-            } 
-            else if (existingAttendance && !existingAttendance.clockIn) {
-              // Update existing record to Absent if no clock in
-              existingAttendance.status = 'Absent';
-              existingAttendance.markedAbsent = true;
-              existingAttendance.absentMarkedAt = new Date();
-              existingAttendance.autoMarked = true;
-              existingAttendance.remarks = `Auto-marked as Absent at 12:10 PM (no clock in)`;
-              
-              await existingAttendance.save();
-              results.markedAbsent++;
-            }
-            else if (existingAttendance && existingAttendance.clockIn) {
-              // Employee already clocked in - skip
-              results.alreadyClockedIn++;
-            }
-          } else {
-            // Skip non-working days at 12:10 PM
-            results.nonWorkingDaySkipped++;
+            await attendance.save();
+            results.markedAbsent++;
+            
+            console.log(`⚠️ Marked absent: ${employee.firstName} ${employee.lastName}`);
+          } 
+          else if (existingAttendance && !existingAttendance.clockIn && existingAttendance.status !== 'Absent') {
+            // Update existing record to Absent
+            existingAttendance.status = 'Absent';
+            existingAttendance.markedAbsent = true;
+            existingAttendance.absentMarkedAt = new Date();
+            existingAttendance.autoMarked = true;
+            existingAttendance.remarks = `Auto-marked as Absent at 12:10 PM (no clock in)`;
+            
+            await existingAttendance.save();
+            results.markedAbsent++;
           }
-        } catch (error) {
-          console.error(`Mark absent error for ${employee._id}:`, error);
-          results.failed++;
+          else if (existingAttendance && existingAttendance.clockIn) {
+            // Already clocked in - skip
+            results.alreadyClockedIn++;
+          }
+          else if (existingAttendance && existingAttendance.status === 'Absent') {
+            // Already absent - skip
+            console.log(`⏩ Already absent: ${employee.firstName}`);
+          }
+        } else {
+          // ✅ NON-WORKING DAY হলে SKIP করুন
+          results.nonWorkingDaySkipped++;
+          
+          if (dayStatus.status === 'Govt Holiday') {
+            results.holidaySkipped++;
+          } else if (dayStatus.status === 'Weekly Off') {
+            results.weeklyOffSkipped++;
+          }
+          
+          console.log(`⏭️ Skipped (${dayStatus.status}): ${employee.firstName}`);
         }
+      } catch (error) {
+        console.error(`Mark absent error for ${employee._id}:`, error);
+        results.failed++;
       }
-
-      console.log(`📋 [12:10 PM] Marked ${results.markedAbsent} employees as absent`);
-      this.lastAbsentMarking = todayStr;
-      
-      return results;
-    } catch (error) {
-      console.error('Mark working day absent failed:', error);
-      throw error;
-    } finally {
-      this.isRunning = false;
     }
+
+    console.log(`📋 [12:10 PM] Results:`);
+    console.log(`   - Total Employees: ${results.totalEmployees}`);
+    console.log(`   - Marked Absent: ${results.markedAbsent}`);
+    console.log(`   - Skipped (Non-Working): ${results.nonWorkingDaySkipped}`);
+    console.log(`   - Holidays Skipped: ${results.holidaySkipped}`);
+    console.log(`   - Weekly Off Skipped: ${results.weeklyOffSkipped}`);
+    console.log(`   - Already Clocked In: ${results.alreadyClockedIn}`);
+    
+    this.lastAbsentMarking = todayStr;
+    
+    return results;
+  } catch (error) {
+    console.error('Mark working day absent failed:', error);
+    throw error;
+  } finally {
+    this.isRunning = false;
   }
+}
 
   async generateTomorrowsNonWorkingDayRecords() {
   // Prevent duplicate execution on same day with improved check
@@ -1283,88 +1314,179 @@ exports.getAttendanceSummary = async (req, res) => {
 // ===================== ADMIN FUNCTIONS =====================
 
 // Get All Attendance Records (Admin)
+// attendanceController.js - getAllAttendanceRecords ফাংশন সম্পূর্ণ পরিবর্তন
+
 exports.getAllAttendanceRecords = async (req, res) => {
   try {
-    const adminId = req.user._id;
-    const admin = await User.findById(adminId);
+    console.log("🔥 API Called: /admin/all-records");
     
+    // Admin চেক
+    const admin = await User.findById(req.user._id);
     if (admin.role !== 'admin' && admin.role !== 'superAdmin') {
-      return res.status(403).json({
-        status: "fail",
-        message: "Access denied"
-      });
+      return res.status(403).json({ status: "fail", message: "Access denied" });
     }
 
     const { 
       startDate, 
       endDate, 
       employeeId, 
-      department, 
       status, 
       page = 1, 
-      limit = 50 
+      limit = 100,
+      search = ''
     } = req.query;
 
-    const matchCondition = { isDeleted: false };
-    const skip = (page - 1) * limit;
+    console.log("📥 Query Params:", { startDate, endDate, employeeId, status, page, limit });
 
-    if (employeeId) {
-      matchCondition.employee = employeeId;
-    }
-
-    if (department) {
-      const employees = await User.find({ department }).select('_id');
-      matchCondition.employee = { $in: employees.map(e => e._id) };
-    }
-
-    if (status) {
-      matchCondition.status = status;
-    }
+    // ✅ ১. ডিফল্ট ডেট রেঞ্জ (LAST 365 DAYS)
+    let dateFilter = {};
+    const today = new Date();
+    const defaultStartDate = new Date(today);
+    defaultStartDate.setDate(today.getDate() - 365); // ১ বছর আগ পর্যন্ত
 
     if (startDate && endDate) {
-      matchCondition.date = {
+      dateFilter.date = {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
       };
     } else {
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
-      
-      const endOfMonth = new Date();
-      endOfMonth.setMonth(endOfMonth.getMonth() + 1);
-      endOfMonth.setDate(0);
-      endOfMonth.setHours(23, 59, 59, 999);
-      
-      matchCondition.date = { $gte: startOfMonth, $lte: endOfMonth };
+      dateFilter.date = {
+        $gte: defaultStartDate,
+        $lte: today
+      };
     }
 
+    // ✅ ২. বেসিক ফিল্টার
+    const matchCondition = {
+      ...dateFilter
+    };
+
+    // isDeleted ফিল্টার
+    matchCondition.$or = [
+      { isDeleted: false },
+      { isDeleted: { $exists: false } }
+    ];
+
+    // ✅ ৩. Employee ফিল্টার
+    if (employeeId && employeeId !== 'all') {
+      matchCondition.employee = employeeId;
+    }
+
+    // ✅ ৪. Status ফিল্টার
+    if (status && status !== 'all') {
+      matchCondition.status = status;
+    }
+
+    // ✅ ৫. Search ফিল্টার
+    if (search) {
+      // Employee নাম দিয়ে খুঁজতে হলে
+      const employees = await User.find({
+        $or: [
+          { firstName: { $regex: search, $options: 'i' } },
+          { lastName: { $regex: search, $options: 'i' } },
+          { employeeId: { $regex: search, $options: 'i' } }
+        ]
+      }).select('_id');
+      
+      if (employees.length > 0) {
+        matchCondition.employee = { $in: employees.map(e => e._id) };
+      }
+    }
+
+    // ✅ ৬. কাউন্ট এবং ফেচ
     const total = await Attendance.countDocuments(matchCondition);
+    const skip = (page - 1) * limit;
+
+    console.log(`📊 Database Query: Found ${total} total records`);
+    console.log(`📅 Date Filter: ${JSON.stringify(dateFilter)}`);
+
     const records = await Attendance.find(matchCondition)
-      .sort({ date: -1 })
+      .sort({ date: -1, createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('employee', 'firstName lastName employeeId department designation')
-      .populate('correctedBy', 'firstName lastName')
+      .populate({
+        path: 'employee',
+        select: 'firstName lastName employeeId department designation',
+        options: { strictPopulate: false }
+      })
       .lean();
 
+    console.log(`✅ Returning ${records.length} records`);
+
+    // ✅ ৭. রেসপন্স
     res.status(200).json({
       status: "success",
-      count: records.length,
+      message: "Records fetched successfully",
       total,
+      count: records.length,
       page: parseInt(page),
+      limit: parseInt(limit),
       totalPages: Math.ceil(total / limit),
-      records
+      records: records
     });
 
   } catch (error) {
+    console.error("❌ Error in getAllAttendanceRecords:", error);
     res.status(500).json({
-      status: "fail",
+      status: "error",
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+// attendanceController.js - নতুন API এন্ডপয়েন্ট যোগ করুন
+
+exports.getAttendanceDateRange = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user = await User.findById(userId);
+    
+    let matchCondition = { isDeleted: false };
+    
+    // Employee এর জন্য শুধু নিজের রেকর্ড
+    if (user.role === 'employee') {
+      matchCondition.employee = userId;
+    }
+
+    // ডাটাবেজ থেকে প্রথম এবং শেষ তারিখ বের করুন
+    const result = await Attendance.aggregate([
+      { $match: matchCondition },
+      {
+        $group: {
+          _id: null,
+          minDate: { $min: "$date" },
+          maxDate: { $max: "$date" },
+          totalRecords: { $sum: 1 }
+        }
+      }
+    ]);
+
+    if (result.length === 0) {
+      // কোনো রেকর্ড না থাকলে ডিফল্ট
+      const today = new Date();
+      return res.status(200).json({
+        status: "success",
+        minDate: today,
+        maxDate: today,
+        totalRecords: 0
+      });
+    }
+
+    res.status(200).json({
+      status: "success",
+      minDate: result[0].minDate,
+      maxDate: result[0].maxDate,
+      totalRecords: result[0].totalRecords
+    });
+
+  } catch (error) {
+    console.error("Error getting date range:", error);
+    res.status(500).json({
+      status: "error",
       message: error.message
     });
   }
 };
-
 // Create Manual Attendance (Admin)
 exports.createManualAttendance = async (req, res) => {
   try {
@@ -1644,6 +1766,7 @@ exports.deleteAttendance = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
 
+    // প্রথমে attendance টি fetch করুন যাতে log এর জন্য ডেটা পেতে পারেন
     const attendance = await Attendance.findById(id);
     if (!attendance) {
       return res.status(404).json({
@@ -1652,35 +1775,27 @@ exports.deleteAttendance = async (req, res) => {
       });
     }
 
-    if (attendance.isDeleted) {
-      return res.status(400).json({
-        status: "fail",
-        message: "Already deleted"
-      });
-    }
-
-    attendance.isDeleted = true;
-    attendance.deletedBy = adminId;
-    attendance.deletedAt = new Date();
-    await attendance.save();
+    // Hard delete করুন
+    await Attendance.findByIdAndDelete(id);
 
     await addSessionActivity({
       userId: adminId,
-      action: "Deleted Attendance",
+      action: "Permanently Deleted Attendance",
       target: id,
       targetType: "Attendance",
       details: {
         employeeId: attendance.employee,
         date: attendance.date,
         reason: reason || "No reason provided",
-        adminName: `${admin.firstName} ${admin.lastName}`
+        adminName: `${admin.firstName} ${admin.lastName}`,
+        deletionType: "Hard Delete"
       },
       ipAddress: req.ip
     });
 
     res.status(200).json({
       status: "success",
-      message: "Attendance deleted"
+      message: "Attendance permanently deleted"
     });
 
   } catch (error) {
@@ -2044,6 +2159,7 @@ exports.triggerAutoClockOut = async (req, res) => {
 
 exports.triggerAbsentMarking = async (req, res) => {
   try {
+    // Admin verification
     const adminId = req.user._id;
     const admin = await User.findById(adminId);
     
@@ -2054,18 +2170,183 @@ exports.triggerAbsentMarking = async (req, res) => {
       });
     }
 
+    const today = new Date();
+    const dateStr = today.toISOString().split('T')[0];
+    const formattedDate = today.toLocaleDateString('en-BD');
+    
+    console.log(`📅 Admin ${admin.name} triggered absent marking for: ${formattedDate}`);
+
+    // =============== STEP 1: CHECK HOLIDAY ===============
+    const holiday = await Holiday.findOne({
+      date: {
+        $gte: new Date(dateStr + 'T00:00:00.000Z'),
+        $lt: new Date(dateStr + 'T23:59:59.999Z')
+      },
+      status: 'active'
+    });
+    
+    if (holiday) {
+      console.log(`🎉 Today is holiday: ${holiday.name} - Skipping absent marking`);
+      
+      // Audit log
+      await AuditLog.create({
+        userId: adminId,
+        action: 'TRIGGER_ABSENT_MARKING_SKIPPED',
+        description: `Admin triggered absent marking but skipped due to holiday: ${holiday.name}`,
+        metadata: {
+          holidayName: holiday.name,
+          date: formattedDate,
+          adminName: admin.name,
+          adminEmail: admin.email
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      
+      return res.status(200).json({
+        status: "success",
+        message: `Skipping absent marking - Today is holiday: ${holiday.name}`,
+        markedCount: 0,
+        holiday: {
+          name: holiday.name,
+          date: holiday.date
+        }
+      });
+    }
+
+    // =============== STEP 2: CHECK WEEKLY OFF ===============
+    const officeSchedule = await OfficeSchedule.findOne();
+    const dayOfWeek = today.getDay();
+    
+    let isWeeklyOff = false;
+    
+    if (officeSchedule && officeSchedule.weeklyOff && officeSchedule.weeklyOff.days) {
+      isWeeklyOff = officeSchedule.weeklyOff.days.includes(dayOfWeek);
+    }
+    
+    // =============== STEP 3: CHECK DATE-SPECIFIC OVERRIDE ===============
+    let isOverrideNonWorking = false;
+    
+    if (officeSchedule && officeSchedule.overrides && officeSchedule.overrides.length > 0) {
+      const override = officeSchedule.overrides.find(o => {
+        const overrideDate = new Date(o.date);
+        return overrideDate.toDateString() === today.toDateString();
+      });
+      
+      if (override && !override.isWorkingDay) {
+        isOverrideNonWorking = true;
+      }
+    }
+    
+    // যদি ওয়েকলি অফ বা ওভাররাইড নন-ওয়ার্কিং ডে হয়
+    if (isWeeklyOff || isOverrideNonWorking) {
+      const skipReason = isWeeklyOff ? 'Weekly off day' : 'Date-specific non-working day';
+      console.log(`⏸️ ${skipReason} - Skipping absent marking`);
+      
+      await AuditLog.create({
+        userId: adminId,
+        action: 'TRIGGER_ABSENT_MARKING_SKIPPED',
+        description: `Admin triggered absent marking but skipped: ${skipReason}`,
+        metadata: {
+          date: formattedDate,
+          isWeeklyOff,
+          isOverrideNonWorking,
+          dayOfWeek,
+          skipReason,
+          adminName: admin.name
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      
+      return res.status(200).json({
+        status: "success",
+        message: `Skipping absent marking - ${skipReason}`,
+        markedCount: 0,
+        skipReason
+      });
+    }
+
+    // =============== STEP 4: PROCEED WITH ABSENT MARKING ===============
+    console.log('✅ Proceeding with absent marking...');
+    
+    // Call your autoClockOutService
     const results = await autoClockOutService.triggerManualAbsentMarking();
+
+    // Add holiday check info to results
+    results.holidayCheck = {
+      isHoliday: false,
+      isWeeklyOff,
+      isOverrideNonWorking,
+      date: formattedDate
+    };
+
+    // Audit log for successful triggering
+    await AuditLog.create({
+      userId: adminId,
+      action: 'TRIGGER_ABSENT_MARKING',
+      description: `Admin triggered manual absent marking for ${formattedDate}`,
+      metadata: {
+        date: formattedDate,
+        results: results,
+        adminName: admin.name,
+        adminEmail: admin.email,
+        totalMarked: results.markedCount || 0
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
+    console.log(`✅ Absent marking completed. Results:`, results);
+
+    // Send notification to admin
+    try {
+      const notificationMessage = `Absent marking triggered manually by ${admin.name} on ${formattedDate}. ${results.markedCount || 0} users marked as absent.`;
+      
+      await Notification.create({
+        user: adminId,
+        title: 'Manual Absent Marking Triggered',
+        message: notificationMessage,
+        type: 'admin_action',
+        read: false
+      });
+    } catch (notificationError) {
+      console.error('Failed to create notification:', notificationError);
+    }
 
     res.status(200).json({
       status: "success",
-      message: "Absent marking triggered",
-      results
+      message: "Absent marking triggered successfully",
+      results: results,
+      date: formattedDate,
+      triggeredBy: {
+        name: admin.name,
+        email: admin.email,
+        role: admin.role
+      }
     });
 
   } catch (error) {
+    console.error('❌ Error in triggerAbsentMarking:', error);
+    
+    // Error audit log
+    await AuditLog.create({
+      userId: req.user?._id || 'unknown',
+      action: 'TRIGGER_ABSENT_MARKING_FAILED',
+      description: `Failed to trigger absent marking: ${error.message}`,
+      metadata: {
+        error: error.message,
+        stack: error.stack,
+        date: new Date().toISOString()
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+    
     res.status(500).json({
       status: "fail",
-      message: error.message
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
