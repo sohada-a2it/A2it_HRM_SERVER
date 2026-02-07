@@ -2,35 +2,20 @@
 require('dotenv').config();
 const express = require('express'); 
 const route = require('./src/routes/api');
-const path = require('path');
+
 const app = express();
-const apiRoutes = require('./src/routes/api')
-// 1. সব HEAD রিকোয়েস্টের জন্য রেসপন্স দিন
-app.head('*', (req, res) => {
-  res.status(200).end();
-});
 
-// 2. Static files
-app.use(express.static(path.join(__dirname, 'build')));
-
-// 3. API রাউটস
-app.use('/api', apiRoutes);
-
-// 4. সব রিকোয়েস্ট index.html এ পাঠান
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
-});
-
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => {
-//   console.log(`Server running on port ${PORT}`);
-// });
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const cors = require('cors');
 
-app.use(cors());
+app.use(cors({
+  origin: ['https://hrm.a2itltd.com', 'http://localhost:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
+}));
 
 // Logging middleware
 app.use((req, res, next) => {
