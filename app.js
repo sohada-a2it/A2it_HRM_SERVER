@@ -1,7 +1,6 @@
 // app.js - SIMPLE VERSION WITHOUT MONGODB OPTIONS
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
+const express = require('express'); 
 const route = require('./src/routes/api');
 
 const app = express();
@@ -9,7 +8,14 @@ const app = express();
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+const cors = require('cors');
+
+app.use(cors({
+  origin: ['https://hrm.a2itltd.com', 'http://localhost:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
+}));
 
 // Logging middleware
 app.use((req, res, next) => {

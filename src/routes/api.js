@@ -706,5 +706,16 @@ router.post('/setup', async (req, res) => {
 // DASHBOARD & UTILITIES
 router.get('/dashboard/stats', protect, mealController.getDashboardStats);
 router.get('/departments', protect, mealController.getDepartments);
-
+// আপনার router ফাইলের শুরুতে বা শেষে যোগ করুন
+router.head('/profile', (req, res) => res.status(200).end());
+router.head('/leave', (req, res) => res.status(200).end());
+router.head('/dashboard', (req, res) => res.status(200).end());
+router.head('/attendance', (req, res) => res.status(200).end());
+router.head('/payroll', (req, res) => res.status(200).end());
+router.head('/officeSchedule', (req, res) => res.status(200).end());
+router.head('/holiday', (req, res) => res.status(200).end());
+router.head('/shift-schedule', (req, res) => res.status(200).end());
+router.head('/audit', (req, res) => res.status(200).end());
+router.head('/user-roles', (req, res) => res.status(200).end());
+router.head('/meal', (req, res) => res.status(200).end());
 module.exports = router;  
