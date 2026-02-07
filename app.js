@@ -10,24 +10,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const cors = require('cors');
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  // credentials: true, // REMOVED because origin is '*'
-  optionsSuccessStatus: 200
-}));
-// =========== Handle OPTIONS requests ===========
-app.options('*', cors()); // Preflight requests
+app.use(cors());
 
-// =========== Handle HEAD requests globally ===========
-app.use((req, res, next) => {
-  if (req.method === 'HEAD') {
-    console.log(`✅ HEAD request to ${req.path} - Allowing without auth`);
-    return res.status(200).end();
-  }
-  next();
-});
 // Logging middleware
 app.use((req, res, next) => {
   console.log(`\n📨 ${new Date().toISOString()} - ${req.method} ${req.url}`);
