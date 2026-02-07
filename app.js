@@ -2,8 +2,9 @@
 require('dotenv').config();
 const express = require('express'); 
 const route = require('./src/routes/api');
-
+const path = require('path');
 const app = express();
+const apiRoutes = require('./src/routes/api')
 // 1. সব HEAD রিকোয়েস্টের জন্য রেসপন্স দিন
 app.head('*', (req, res) => {
   res.status(200).end();
@@ -20,10 +21,10 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => {
+//   console.log(`Server running on port ${PORT}`);
+// });
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
