@@ -1,54 +1,6 @@
+
 const express = require('express')
-const router = express.Router()
-
-// ===================== FIRST: Handle HEAD & OPTIONS requests =====================
-// এই middleware টি সব routes এর আগে রাখতে হবে
-router.use((req, res, next) => {
-  console.log(`🌐 ${req.method} ${req.path}`);
-  
-  // Handle HEAD requests
-  if (req.method === 'HEAD') {
-    console.log('✅ API HEAD request handled');
-    
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    
-    return res.status(200).end();
-  }
-  
-  // Handle OPTIONS requests (CORS preflight)
-  if (req.method === 'OPTIONS') {
-    console.log('✅ API OPTIONS request handled');
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    return res.status(200).end();
-  }
-  
-  next();
-});
-
-// ===================== Public test routes (no auth required) =====================
-router.get('/test', (req, res) => {
-  console.log('✅ Test route accessed');
-  res.json({
-    success: true,
-    message: 'API is working!',
-    timestamp: new Date().toISOString(),
-    method: req.method
-  });
-});
-
-router.head('/test-head', (req, res) => {
-  console.log('✅ Test HEAD route accessed');
-  res.status(200).end();
-});
-
-
+const router = express.Router() 
 const userController = require("../controller/userController")
 const authController = require("../controller/authController")
 const payrollController = require('../controller/payrollController'); 

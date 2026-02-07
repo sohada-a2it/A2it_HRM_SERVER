@@ -1,51 +1,44 @@
-// middleware/AuthVerifyMiddleWare.js - FINAL CORRECT VERSION
+
+// middleware/AuthVerifyMiddleWare.js - UPDATED
 const jwt = require("jsonwebtoken");
 const User = require("../models/UsersModel");
 
 exports.protect = async (req, res, next) => {
-  console.log(`🔐 Protect Middleware: ${req.method} ${req.path}`);
-  
-  // Skip authentication for HEAD and OPTIONS requests
-  if (req.method === 'HEAD' || req.method === 'OPTIONS') {
-    console.log('✅ Skipping auth for HEAD/OPTIONS request');
-    return next();
-  }
-  
-  // Skip authentication for public routes
-  const publicRoutes = [
-    '/api/v1/test',
-    '/api/v1/test-head',
-    '/api/v1/unified-login',
-    '/api/v1/admin/request-otp',
-    '/api/v1/admin/verify-otp',
-    '/api/v1/health'
-  ];
-  
-  if (publicRoutes.includes(req.path)) {
-    console.log('✅ Public route, skipping auth');
-    return next();
-  }
+  console.log('🔐 Protect Middleware Called');
+  console.log('🔍 Full Authorization Header:', req.headers.authorization);
   
   let token;
 
-  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
     try {
       token = req.headers.authorization.split(" ")[1];
       
-      // Clean token
+      // ✅ CRITICAL FIX: Remove all whitespace (newlines, spaces, tabs)
       token = token.replace(/\s+/g, '');
       
-      console.log('🔐 Token cleaned, length:', token.length);
+      console.log('🔐 Token after cleaning:');
+      console.log('Length:', token.length);
+      console.log('First 50 chars:', token.substring(0, 50));
+      console.log('Contains dot?', token.includes('.'));
+      console.log('Number of dots:', token.split('.').length);
       
-      // Check JWT format
+      // Check if it's a valid JWT format (should have 2 dots)
       if (token.split('.').length !== 3) {
-        console.log('❌ Invalid JWT format');
+        console.log('❌ Invalid JWT format - wrong number of parts');
         return res.status(401).json({ message: "Invalid token format" });
       }
       
+      console.log('🔐 JWT_SECRET exists?', !!process.env.JWT_SECRET);
       const secret = process.env.JWT_SECRET || 'fallback_secret_for_dev_123';
+      
+      console.log('🔄 Verifying token...');
       const decoded = jwt.verify(token, secret);
-      console.log('✅ Token verified for user:', decoded.id);
+      console.log('✅ Token verified successfully!');
+      console.log('Decoded user ID:', decoded.id);
+      console.log('Decoded email:', decoded.email);
       
       req.user = await User.findById(decoded.id).select("-password");
       
@@ -56,20 +49,26 @@ exports.protect = async (req, res, next) => {
       
       console.log('✅ User authenticated:', req.user.email);
       next();
-      
     } catch (error) {
-      console.log('❌ Token verification failed:', error.name);
+      console.log('❌ Token verification FAILED!');
+      console.log('Error name:', error.name);
+      console.log('Error message:', error.message);
+      console.log('Token that failed:', token ? token.substring(0, 100) : 'No token');
       
+      // Send specific error messages
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({ message: "Token expired" });
       } else if (error.name === 'JsonWebTokenError') {
         return res.status(401).json({ message: "Invalid token" });
+      } else if (error.name === 'SyntaxError') {
+        return res.status(401).json({ message: "Malformed token" });
       }
       
       return res.status(401).json({ message: "Unauthorized" });
     }
   } else {
     console.log('❌ No Bearer token in headers');
+    console.log('Available headers:', Object.keys(req.headers));
     return res.status(401).json({ message: "No token found" });
   }
 };
@@ -84,3 +83,4 @@ exports.adminOnly = (req, res, next) => {
   console.log('✅ Admin access granted');
   next();
 };
+ 
