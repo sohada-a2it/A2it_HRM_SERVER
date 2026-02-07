@@ -10,12 +10,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const cors = require('cors');
 
-app.use(cors({
-  origin: ['https://hrm.a2itltd.com', 'http://localhost:3000'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
-}));
+app.use(cors());
 
 // Logging middleware
 app.use((req, res, next) => {
