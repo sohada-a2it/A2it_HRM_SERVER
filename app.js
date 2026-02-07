@@ -10,7 +10,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const cors = require('cors');
 
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  // credentials: true, // REMOVED because origin is '*'
+  optionsSuccessStatus: 200
+}));
 // =========== Handle OPTIONS requests ===========
 app.options('*', cors()); // Preflight requests
 
