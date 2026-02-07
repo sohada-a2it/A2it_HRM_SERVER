@@ -4,7 +4,26 @@ const express = require('express');
 const route = require('./src/routes/api');
 
 const app = express();
+// 1. সব HEAD রিকোয়েস্টের জন্য রেসপন্স দিন
+app.head('*', (req, res) => {
+  res.status(200).end();
+});
 
+// 2. Static files
+app.use(express.static(path.join(__dirname, 'build')));
+
+// 3. API রাউটস
+app.use('/api', apiRoutes);
+
+// 4. সব রিকোয়েস্ট index.html এ পাঠান
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
