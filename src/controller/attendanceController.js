@@ -845,35 +845,58 @@ exports.clockIn = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // ✅ আপনার existing কোডের এই অংশ:
-let attendance = await Attendance.findOne({ 
-  employee: userId, 
-  date: today,
-  isDeleted: false 
-});
-
-// ✅ এরপরই এই Absent চেক যোগ করুন:
-// Check if marked as absent (NEW CODE TO ADD)
-if (attendance && attendance.status === 'Absent') {
-  return res.status(400).json({
-    status: "fail",
-    message: "Cannot clock in - You are marked as absent today",
-    details: {
-      markedAbsent: attendance.markedAbsent || false,
-      autoMarkedAbsentReason: attendance.autoMarkedAbsentReason || "Manually marked as absent",
-      markedAt: attendance.absentMarkedAt || attendance.updatedAt
+    // ✅ FIXED: Parse location properly
+    let locationString = "Office";
+    let locationObject = null;
+    
+    // Check if location is a string or object
+    if (location) {
+      if (typeof location === 'string') {
+        locationString = location;
+      } else if (typeof location === 'object') {
+        // If it's an object, extract address
+        if (location.address) {
+          locationString = location.address;
+        } else if (location.location) {
+          locationString = location.location;
+        } else if (location.latitude && location.longitude) {
+          locationString = `Lat: ${location.latitude}, Long: ${location.longitude}`;
+        } else {
+          locationString = "Office";
+        }
+        locationObject = location; // Save the object separately
+      }
     }
-  });
-}
 
-// ✅ এরপর আপনার existing চেক থাকে:
-// If attendance exists and has clockIn already
-if (attendance && attendance.clockIn) {
-  return res.status(400).json({
-    status: "fail",
-    message: "Already clocked in today"
-  });
-}
+    // ✅ আপনার existing কোডের এই অংশ:
+    let attendance = await Attendance.findOne({ 
+      employee: userId, 
+      date: today,
+      isDeleted: false 
+    });
+
+    // ✅ এরপরই এই Absent চেক যোগ করুন:
+    // Check if marked as absent (NEW CODE TO ADD)
+    if (attendance && attendance.status === 'Absent') {
+      return res.status(400).json({
+        status: "fail",
+        message: "Cannot clock in - You are marked as absent today",
+        details: {
+          markedAbsent: attendance.markedAbsent || false,
+          autoMarkedAbsentReason: attendance.autoMarkedAbsentReason || "Manually marked as absent",
+          markedAt: attendance.absentMarkedAt || attendance.updatedAt
+        }
+      });
+    }
+
+    // ✅ এরপর আপনার existing চেক থাকে:
+    // If attendance exists and has clockIn already
+    if (attendance && attendance.clockIn) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Already clocked in today"
+      });
+    }
     
     // If attendance exists and has Absent status from auto-marking, update it
     if (attendance && attendance.clockIn) {
@@ -929,7 +952,10 @@ if (attendance && attendance.clockIn) {
         isEarly: lateEarlyCheck.isEarly,
         ipAddress: req.ip,
         device: deviceInfo,
-        location: location || "Office",
+        // ✅ FIXED: শুধুমাত্র string হিসেবে save করুন
+        location: locationString,
+        // ✅ Optional: location object কে device field-এ save করুন (যদি চান)
+        // device: { ...deviceInfo, locationDetails: locationObject },
         remarks: `Clocked in at ${clockInTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE })}`,
         autoClockOutTime: shiftDetails.autoClockOutTime,
         autoClockOutIsNextDay: shiftDetails.autoClockOutIsNextDay || false
@@ -953,7 +979,8 @@ if (attendance && attendance.clockIn) {
       attendance.isEarly = lateEarlyCheck.isEarly;
       attendance.ipAddress = req.ip;
       attendance.device = deviceInfo;
-      attendance.location = location || "Office";
+      // ✅ FIXED: শুধুমাত্র string হিসেবে save করুন
+      attendance.location = locationString;
       attendance.remarks = `Clocked in at ${clockInTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE })}`;
       attendance.autoClockOutTime = shiftDetails.autoClockOutTime;
       attendance.autoClockOutIsNextDay = shiftDetails.autoClockOutIsNextDay || false;
@@ -977,7 +1004,8 @@ if (attendance && attendance.clockIn) {
         clockInTime: clockInTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE }),
         isLate: lateEarlyCheck.isLate,
         isEarly: lateEarlyCheck.isEarly,
-        location: location || "Office",
+        location: locationString,
+        locationDetails: locationObject,
         isNightShift: shiftDetails.isNightShift || false
       },
       ipAddress: req.ip,
@@ -1051,11 +1079,36 @@ exports.clockOut = async (req, res) => {
     const diffMs = clockOutTime - new Date(attendance.clockIn);
     const totalHours = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(4));
 
+    // ✅ FIXED: Parse location properly - object থেকে string extract করুন
+    let locationString = "Office";
+    
+    if (location) {
+      if (typeof location === 'string') {
+        locationString = location;
+      } else if (typeof location === 'object' && location !== null) {
+        // If it's an object, extract address string
+        if (location.address) {
+          locationString = location.address;
+        } else if (location.location) {
+          locationString = location.location;
+        } else if (location.latitude && location.longitude) {
+          locationString = `Lat: ${location.latitude}, Long: ${location.longitude}`;
+        } else if (typeof location === 'object') {
+          // Try to get any string value from the object
+          const values = Object.values(location).filter(val => typeof val === 'string');
+          if (values.length > 0) {
+            locationString = values[0];
+          }
+        }
+      }
+    }
+
     attendance.clockOut = clockOutTime;
     attendance.totalHours = totalHours;
     attendance.ipAddress = req.ip;
     attendance.device = deviceInfo;
-    attendance.location = location || "Office";
+    // ✅ FIXED: শুধুমাত্র string হিসেবে save করুন
+    attendance.location = locationString;
     
     if (attendance.status === 'Clocked In' || attendance.status === 'Late' || attendance.status === 'Early') {
       attendance.status = 'Present';
@@ -1071,7 +1124,7 @@ exports.clockOut = async (req, res) => {
       details: {
         totalHours: totalHours,
         clockOutTime: clockOutTime.toLocaleTimeString('en-US', { hour12: false, timeZone: TIMEZONE }),
-        location: location || "Office"
+        location: locationString
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent']
